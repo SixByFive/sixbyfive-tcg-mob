@@ -1,18 +1,19 @@
-import { gql, useQuery } from "@apollo/client";
-import { Button, Text, View } from "react-native";
+// app/index.js
+import { router } from "expo-router";
+import { useEffect } from "react";
+import { ActivityIndicator, View } from "react-native";
+import { getToken } from "../lib/auth";
 
-const PING = gql`query Ping { __typename }`;
-
-export default function Home() {
-  const { data, loading, error, refetch } = useQuery(PING);
-
+export default function Index() {
+  useEffect(() => {
+    (async () => {
+      const token = await getToken();
+      router.replace(token ? "/home" : "/auth");
+    })();
+  }, []);
   return (
-    <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 12 }}>
-      <Text style={{ fontSize: 18, fontWeight: "600" }}>SixByFive TCG Mobile</Text>
-      {loading && <Text>Loading…</Text>}
-      {error && <Text style={{ color: "red" }}>{String(error.message)}</Text>}
-      {data && <Text>GraphQL OK: {data.__typename}</Text>}
-      <Button title="Refetch" onPress={() => refetch()} />
+    <View style={{ flex:1, justifyContent:"center", alignItems:"center", backgroundColor:"#16171c" }}>
+      <ActivityIndicator size="large" color="#2963FF" />
     </View>
   );
 }
