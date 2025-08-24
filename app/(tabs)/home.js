@@ -13,7 +13,7 @@ export default function Home() {
   const user = data?.me;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: COLORS.bg }} contentContainerStyle={{ padding: 16 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: COLORS.bg }} contentContainerStyle={{ padding: 16, paddingTop: 25 }}>
       <Text style={styles.h1}>{loading ? "…" : `Hey ${user?.username || "Trainer"} 👋`}</Text>
       <Text style={styles.sub}>Track your collection, check prices, and build binders.</Text>
 
