@@ -16,7 +16,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.sixbyfive.sbftcgmobile"
     },
     "web": {
       "bundler": "metro",
@@ -45,6 +46,6 @@
         "projectId": "941ffa41-876d-4f3b-83aa-f66b7f1bb442"
       }
     },
-    "owner": "falconchipp"
+    "owner": "sixbyfive"
   }
 }
