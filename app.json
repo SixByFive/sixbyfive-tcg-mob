@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "tcg-mobile",
-    "slug": "tcg-mobile",
+    "slug": "sbf-tcg-mobile",
     "version": "0.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -39,7 +39,12 @@
       "typedRoutes": false
     },
     "extra": {
-      "EXPO_PUBLIC_GRAPHQL_ENDPOINT": "https://backendtcg.sixbyfive.com/graphql"
-    }
+      "EXPO_PUBLIC_GRAPHQL_ENDPOINT": "https://backendtcg.sixbyfive.com/graphql",
+      "router": {},
+      "eas": {
+        "projectId": "941ffa41-876d-4f3b-83aa-f66b7f1bb442"
+      }
+    },
+    "owner": "falconchipp"
   }
 }

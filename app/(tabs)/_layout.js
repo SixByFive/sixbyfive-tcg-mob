@@ -32,6 +32,13 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="albums" color={color} size={size} />,
         }}
       />
+      <Tabs.Screen 
+        name="market"
+        options={{
+          title: "Card Exchange",
+          tabBarIcon: ({ color, size }) => <Ionicons name="swap-horizontal" color={color} size={size} />
+        }}
+      />
       <Tabs.Screen
         name="profile"
         options={{
