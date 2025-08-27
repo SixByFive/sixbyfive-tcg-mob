@@ -1,4 +1,5 @@
 // components/profile/ProfileTopCard.js
+// CHANGED: "Log out" button → "Edit Profile" button
 
 import Avatar from "../../components/common/Avatar";
 import Stat from "../../components/common/Stat";
@@ -7,7 +8,7 @@ import { COLORS } from "../../theme/colors";
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-export default function ProfileTopCard({ me, onAddCards, onLogout }) {
+export default function ProfileTopCard({ me, onAddCards, onEditProfile }) {
   return (
     <View style={styles.card}>
       <View style={styles.row}>
@@ -36,8 +37,8 @@ export default function ProfileTopCard({ me, onAddCards, onLogout }) {
         >
           <Text style={styles.ctaText}>Add Cards</Text>
         </Pressable>
-        <Pressable onPress={onLogout} style={[styles.ctaOutline, { flex: 1 }]}>
-          <Text style={styles.ctaOutlineText}>Log out</Text>
+        <Pressable onPress={onEditProfile} style={[styles.ctaOutline, { flex: 1 }]}>
+          <Text style={styles.ctaOutlineText}>Edit Profile</Text>
         </Pressable>
       </View>
     </View>

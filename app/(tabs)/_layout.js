@@ -35,7 +35,7 @@ export default function TabsLayout() {
       <Tabs.Screen 
         name="market"
         options={{
-          title: "Card Exchange",
+          title: "Exchange",
           tabBarIcon: ({ color, size }) => <Ionicons name="swap-horizontal" color={color} size={size} />
         }}
       />
@@ -44,6 +44,15 @@ export default function TabsLayout() {
         options={{
           title: "Profile",
           tabBarIcon: ({ color, size }) => <Ionicons name="person" color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="messages"
+        options={{
+          title: "Messages",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="chatbubble-ellipses" color={color} size={size} />
+          ),
         }}
       />
     </Tabs>
