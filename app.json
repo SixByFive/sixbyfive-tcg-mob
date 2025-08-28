@@ -2,7 +2,7 @@
   "expo": {
     "name": "tcg-mobile",
     "slug": "sbf-tcg-mobile",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "tcgmobile",
