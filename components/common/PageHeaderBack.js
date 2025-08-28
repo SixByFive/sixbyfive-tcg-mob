@@ -55,7 +55,7 @@ export default function PageHeaderBack({
 }
 
 const styles = StyleSheet.create({
-  wrap: { paddingHorizontal: 16, paddingTop: 25, paddingBottom: 6 },
+  wrap: { paddingHorizontal: 16, paddingTop: 35, paddingBottom: 6 },
   row: { flexDirection: "row", alignItems: "center" },
 
   userBlock: { flexDirection: "row", alignItems: "center", flex: 1, gap: 10 },

@@ -20,6 +20,7 @@ import ProfileEditForm from "../../components/profile/ProfileEditForm"; // NEW
 import RecentBinders from "../../components/profile/ProfileRecentBinders";
 import ProfileTopCard from "../../components/profile/ProfileTopCard";
 import WishlistGrid from "../../components/profile/WishlistGrid";
+import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";
 
 const avatarPlaceholder = (nameOrUsername) =>
@@ -30,6 +31,7 @@ export default function ProfileTab() {
   const [refreshing, setRefreshing] = useState(false);
   const [editMode, setEditMode] = useState(false); // NEW
   const [saving, setSaving] = useState(false);     // NEW
+  const toast = useToast;
 
   const { data, loading, error, refetch, networkStatus } = useQuery(MeDocument, {
     notifyOnNetworkStatusChange: true,
@@ -103,6 +105,9 @@ export default function ProfileTab() {
             //   avatarUrl: values.avatarUrl,
             // }}})
             // await refetch();
+            toast.show("Profile updated", { type: "success" });
+          } catch (e) {
+            toast.show("Failed to save profile", { type: "error" });
           } finally {
             setSaving(false);
             setEditMode(false);

@@ -8,22 +8,44 @@
     "scheme": "tcgmobile",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.sixbyfive.sbftcgmobile",
+      "associatedDomains": [
+        "applinks:tcg.sixbyfive.com"
+      ]
     },
+
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.sixbyfive.sbftcgmobile"
+      "package": "com.sixbyfive.sbftcgmobile",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "tcg.sixbyfive.com",
+              "pathPrefix": "/reset-password"
+            }
+          ]
+        }
+      ]
     },
+
     "web": {
       "bundler": "metro",
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+
     "plugins": [
       "expo-router",
       [
@@ -36,9 +58,11 @@
         }
       ]
     ],
+
     "experiments": {
       "typedRoutes": false
     },
+
     "extra": {
       "EXPO_PUBLIC_GRAPHQL_ENDPOINT": "https://backendtcg.sixbyfive.com/graphql",
       "router": {},
@@ -46,6 +70,7 @@
         "projectId": "941ffa41-876d-4f3b-83aa-f66b7f1bb442"
       }
     },
+
     "owner": "sixbyfive"
   }
 }

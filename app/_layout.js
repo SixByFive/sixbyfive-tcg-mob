@@ -18,6 +18,7 @@ import { StatusBar } from "expo-status-bar";
 import React from "react";
 import { ActivityIndicator, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler"; // ✅ ADDED
+import { ToastProvider } from "../components/ui/ToastProvider";
 import { client } from "../lib/apollo";
 
 const COLORS = {
@@ -53,12 +54,14 @@ export default function RootLayout() {
     <ApolloProvider client={client}>
       <StatusBar style="light" />
       <GestureHandlerRootView style={{ flex: 1, backgroundColor: COLORS.background }}>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: COLORS.background },
-          }}
-        />
+        <ToastProvider>
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: COLORS.background },
+            }}
+          />
+        </ToastProvider>
       </GestureHandlerRootView>
     </ApolloProvider>
   );
