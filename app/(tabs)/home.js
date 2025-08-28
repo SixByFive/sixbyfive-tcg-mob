@@ -1,17 +1,19 @@
-// app/(tabs)/home.js (or wherever your Home lives)
-// CHANGED: enrich the dashboard with banners, continue section, watchlist, inbox preview, shortcuts, and pull-to-refresh.
+// app/(tabs)/home.js
+// CHANGED: added Subscriptions card + Discord card.
+// Everything else kept as-is.
 
 import { useQuery } from "@apollo/client";
 import { MeDocument } from "@sixbyfive/tcg-binder";
 import { router } from "expo-router";
 import React, { useCallback, useState } from "react";
 import {
+  Linking,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  View
+  View,
 } from "react-native";
 
 const COLORS = {
@@ -25,6 +27,9 @@ const COLORS = {
   error: "#ff6b6b",
   success: "#1dd1a1",
 };
+
+// NEW: your Discord invite (use your real slug/redirect)
+const DISCORD_INVITE = "https://tcg.sixbyfive.com/discord";
 
 export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
@@ -60,6 +65,13 @@ export default function Home() {
   const unreadDMs = user?.unreadDMs ?? 2;
   const unreadSystem = user?.unreadSystem ?? 3;
 
+  // NEW: derive subscription UI state (UI-only)
+  const planName = user?.subscription?.planName ?? "Free";
+  const isPro = planName?.toLowerCase() !== "free";
+  const renewalText = user?.subscription?.renewalDateRelative ?? (isPro ? "Renews monthly" : "—");
+
+  const openURL = (url) => Linking.openURL(url).catch(() => {});
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: COLORS.bg }}
@@ -77,6 +89,50 @@ export default function Home() {
       {/* Header */}
       <Text style={styles.h1}>{greeting}</Text>
       <Text style={styles.sub}>Track your collection, check prices, and build binders.</Text>
+
+      {/* NEW: Subscriptions card (upsell/management) */}
+      <View style={[styles.card, { borderLeftWidth: 3, borderLeftColor: isPro ? COLORS.success : COLORS.accent }]}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.cardTitle}>Subscription</Text>
+          <Text style={[styles.badge, { backgroundColor: isPro ? COLORS.success : COLORS.accent }]}>
+            {planName}
+          </Text>
+        </View>
+        <Text style={{ color: COLORS.textMuted }}>
+          {isPro ? `Thanks for supporting! ${renewalText}.` : "Unlock hourly prices, advanced filters, and more."}
+        </Text>
+        <View style={[styles.row, { marginTop: 12, marginBottom: 0 }]}>
+          <Pressable
+            style={({ pressed }) => [styles.btnPrimary, pressed && { opacity: 0.9 }]}
+            onPress={() => router.push(isPro ? "/subscriptions/manage" : "/subscriptions")}
+          >
+            <Text style={styles.btnPrimaryText}>{isPro ? "Manage plan" : "Upgrade to Pro"}</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.btnGhost, pressed && { opacity: 0.9 }]}
+            onPress={() => router.push("/subscriptions")}
+          >
+            <Text style={styles.btnGhostText}>View all plans</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {/* NEW: Join Discord card */}
+      <View style={styles.card}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.cardTitle}>Join our Discord</Text>
+          <Text style={styles.sectionLink} onPress={() => openURL(DISCORD_INVITE)}>Open →</Text>
+        </View>
+        <Text style={{ color: COLORS.textMuted }}>
+          Get help, share pulls, suggest features, and trade with the community.
+        </Text>
+        <Pressable
+          onPress={() => openURL(DISCORD_INVITE)}
+          style={({ pressed }) => [styles.btnOutline, pressed && { opacity: 0.9 }]}
+        >
+          <Text style={styles.btnOutlineText}>Join the server</Text>
+        </Pressable>
+      </View>
 
       {/* NEW: Verification banner (only if not verified) */}
       {user && user.verified === false && (
@@ -98,7 +154,7 @@ export default function Home() {
         <ActionCard label="Wishlist" onPress={() => router.push("/(tabs)/collection?tab=wishlist")} />
       </View>
 
-      {/* CHANGED: Snapshot / stats */}
+      {/* Snapshot / stats */}
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Your snapshot</Text>
         {loading && !user ? (
@@ -112,7 +168,7 @@ export default function Home() {
         )}
       </View>
 
-      {/* NEW: Continue where you left off (recent binders) */}
+      {/* Continue where you left off (recent binders) */}
       <View style={styles.card}>
         <SectionHeader title="Continue" actionLabel="New binder" onAction={() => router.push("/binders/new")} />
         {loading && !user ? (
@@ -136,7 +192,7 @@ export default function Home() {
         )}
       </View>
 
-      {/* NEW: Price watch (chips) */}
+      {/* Price watch (chips) */}
       <View style={styles.card}>
         <SectionHeader title="Price watch" actionLabel="Manage" onAction={() => router.push("/(tabs)/collection?tab=watch")} />
         {loading && !user ? (
@@ -167,7 +223,7 @@ export default function Home() {
         )}
       </View>
 
-      {/* NEW: Inbox preview */}
+      {/* Inbox preview */}
       <View style={styles.card}>
         <SectionHeader title="Inbox" actionLabel="Open" onAction={() => router.push("/(tabs)/messages")} />
         <View style={[styles.row, { marginBottom: 0 }]}>
@@ -188,7 +244,7 @@ export default function Home() {
         </View>
       </View>
 
-      {/* NEW: Shortcuts */}
+      {/* Shortcuts */}
       <View style={styles.row}>
         <ActionCard label="Create binder" onPress={() => router.push("/binders/new")} />
         <ActionCard label="Scan card" onPress={() => router.push("/scan")} />
@@ -327,6 +383,16 @@ const styles = StyleSheet.create({
   },
   cardTitle: { color: COLORS.text, fontWeight: "800" },
 
+  // NEW: small badge for plan
+  badge: {
+    color: "#fff",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+
   statsRow: { flexDirection: "row", gap: 12, marginTop: 10 },
 
   activityRow: {
@@ -338,7 +404,7 @@ const styles = StyleSheet.create({
   activityMeta: { color: COLORS.textMuted, fontSize: 12 },
   link: { color: COLORS.accent, fontWeight: "800", marginTop: 10 },
 
-  // NEW: verification banner
+  // Verification banner
   banner: {
     backgroundColor: COLORS.alt,
     borderColor: COLORS.border,
@@ -360,11 +426,10 @@ const styles = StyleSheet.create({
   },
   bannerBtnText: { color: "#fff", fontWeight: "800" },
 
-  // NEW: section header with inline action
   sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
   sectionLink: { color: COLORS.accent, fontWeight: "800" },
 
-  // NEW: binder grid
+  // Binder grid
   binderGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   binder: {
     width: "47.5%",
@@ -384,7 +449,7 @@ const styles = StyleSheet.create({
   binderName: { color: COLORS.text, fontWeight: "800", marginTop: 8 },
   binderMeta: { color: COLORS.textMuted, fontSize: 12, marginTop: 4 },
 
-  // NEW: price watch chips
+  // Price watch chips
   chipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
     paddingVertical: 10,
@@ -398,7 +463,7 @@ const styles = StyleSheet.create({
   chipName: { color: COLORS.text, fontWeight: "800" },
   chipMeta: { color: COLORS.textMuted, fontSize: 12, marginTop: 2 },
 
-  // NEW: inbox tiles
+  // Inbox tiles
   inboxTile: {
     flex: 1,
     backgroundColor: COLORS.bg,
@@ -411,7 +476,37 @@ const styles = StyleSheet.create({
   inboxNumber: { color: COLORS.accent, fontWeight: "900", fontSize: 20 },
   inboxLabel: { color: COLORS.textMuted, marginTop: 4 },
 
-  // NEW: empty + skeleton helpers
+  // Buttons (local helpers)
+  btnPrimary: {
+    flex: 1,
+    backgroundColor: COLORS.accent,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  btnPrimaryText: { color: "#fff", fontWeight: "900" },
+  btnGhost: {
+    flex: 1,
+    backgroundColor: COLORS.alt,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  btnGhostText: { color: COLORS.text, fontWeight: "800" },
+  btnOutline: {
+    marginTop: 12,
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  btnOutlineText: { color: COLORS.text, fontWeight: "800" },
+
+  // Empty + skeleton helpers
   empty: { alignItems: "center", paddingVertical: 10 },
   emptyText: { color: COLORS.textMuted },
 });

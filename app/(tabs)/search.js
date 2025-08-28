@@ -16,7 +16,6 @@ import { COLORS } from "../../theme/colors";
 export default function SearchTab() {
   const router = useRouter();
 
-  // CHANGED: local state unchanged, kept here since it's page-level.
   const [name, setName] = useState("");
   const [setCode, setSetCode] = useState("");
   const [number, setNumber] = useState("");
