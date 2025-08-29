@@ -4,7 +4,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import React from "react";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
-import PageHeaderBack from "../../components/common/PageHeaderBack";
+import PageHeaderBackSimple from "../../components/common/PageHeaderBackSimple";
 import { COLORS } from "../../theme/colors";
 
 export default function ManageSubscription() {
@@ -18,7 +18,7 @@ export default function ManageSubscription() {
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-      <PageHeaderBack title="Manage subscription" subtitle={`Current plan: ${status}`} />
+      <PageHeaderBackSimple title="Manage subscription" subtitle={`Current plan: ${status}`} />
 
       <View style={styles.card}>
         <Text style={styles.title}>{status} plan</Text>

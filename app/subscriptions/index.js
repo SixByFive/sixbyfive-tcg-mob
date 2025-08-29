@@ -1,11 +1,9 @@
 // app/subscriptions/index.js
-// NEW: Pricing screen (UI-only). Shows plans, feature list, CTA to start trial/subscribe.
-// Wire real products/prices later (RevenueCat, Stripe, or your backend).
 
 import { router } from "expo-router";
 import React, { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import PageHeaderBack from "../../components/common/PageHeaderBack";
+import PageHeaderBackSimple from "../../components/common/PageHeaderBackSimple";
 import FeatureRow from "../../components/subscriptions/FeatureRow";
 import PlanCard from "../../components/subscriptions/PlanCard";
 import { COLORS } from "../../theme/colors";
@@ -64,7 +62,7 @@ export default function Subscriptions() {
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-      <PageHeaderBack title="Subscriptions" subtitle="Pick the plan that fits" />
+      <PageHeaderBackSimple title="Subscriptions" subtitle="Pick the plan that fits" />
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
         {/* Plans */}

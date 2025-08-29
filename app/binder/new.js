@@ -1,125 +1,246 @@
-// app/binders/new.js
-// NEW: 3-step binder creation wizard (Name → Cover → Template).
-// UI-only: on "Create binder" it navigates to a mock editor route with a fake ID.
+// app/binder/new.js
 
 import { router } from "expo-router";
 import React, { useMemo, useState } from "react";
-import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import PageHeaderBack from "../../components/common/PageHeaderBack";
 import { COLORS } from "../../theme/colors";
 
-import WizardStepCover from "../../components/binders/WizardStepCover";
-import WizardStepName from "../../components/binders/WizardStepName";
-import WizardStepTemplate from "../../components/binders/WizardStepTemplate";
+// Templates (same shape as elsewhere so it stays familiar)
+const TEMPLATES = [
+  { id: "pocket-9", label: "9-pocket", rows: 3, cols: 3 },
+  { id: "pocket-4", label: "4-pocket", rows: 2, cols: 2 },
+  { id: "pocket-3", label: "3-row", rows: 3, cols: 1 },
+  { id: "full",     label: "Full",    rows: 1, cols: 1 },
+];
 
-const STEPS = ["Name", "Cover", "Template"];
-
-export default function BinderNewWizard() {
-  const [step, setStep] = useState(0);
+export default function BinderNewScreen() {
   const [name, setName] = useState("");
   const [coverId, setCoverId] = useState("cover1");
-  const [templateId, setTemplateId] = useState("pocket-9"); // default 9-pocket
+  const [templateId, setTemplateId] = useState("pocket-9");
 
-  const canNext = useMemo(() => {
-    if (step === 0) return name.trim().length > 0;
-    if (step === 1) return Boolean(coverId);
-    if (step === 2) return Boolean(templateId);
-    return false;
-  }, [step, name, coverId, templateId]);
+  const canCreate = name.trim().length > 0 && !!coverId && !!templateId;
+  const tpl = useMemo(
+    () => TEMPLATES.find(t => t.id === templateId) ?? TEMPLATES[0],
+    [templateId]
+  );
 
-  const goNext = () => {
-    if (!canNext) return;
-    if (step < STEPS.length - 1) {
-      setStep((s) => s + 1);
-    } else {
-      // UI-only create
-      // TODO: call createBinder mutation. Example:
-      // await createBinder({ variables: { name, coverId, templateId } })
-      const fakeId = Math.random().toString(36).slice(2, 8);
-      Alert.alert("Binder created", `"${name}" ready to edit.`, [
-        { text: "Open binder", onPress: () => router.replace(`/binder/${fakeId}/edit`) },
-      ]);
-    }
-  };
-
-  const goBackStep = () => {
-    if (step === 0) return router.back();
-    setStep((s) => s - 1);
+  const onCreate = () => {
+    if (!canCreate) return;
+    // TODO: replace with createBinder mutation and returned binder id
+    const fakeId = Math.random().toString(36).slice(2, 8);
+    router.replace(`/binder/${fakeId}/edit`);
   };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.background }}>
-      <PageHeaderBack title="New binder" subtitle={`Step ${step + 1} of ${STEPS.length}`} onBack={goBackStep} />
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
-        {/* Step indicator */}
-        <View style={styles.stepper}>
-          {STEPS.map((label, i) => {
-            const active = i === step;
-            const done = i < step;
-            return (
-              <View key={label} style={styles.stepItem}>
-                <View
+      <PageHeaderBack title="New binder" subtitle="Create a binder to organise your cards" />
+
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 96 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Name */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Name</Text>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g. Main Binder, Trades, Deck Lists…"
+            placeholderTextColor={COLORS.textMuted}
+            style={styles.input}
+            returnKeyType="done"
+          />
+          <Text style={styles.hint}>Pick something descriptive. You can change this later.</Text>
+        </View>
+
+        {/* Cover */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Cover</Text>
+          <View style={styles.coversRow}>
+            {["cover1", "cover2", "cover3", "cover4"].map((c, i) => {
+              const active = c === coverId;
+              // simple themed swatches (swap for real images later)
+              const swatch = ["#23243c", "#1a1f2e", "#2a1f2a", "#26222e"][i];
+              return (
+                <Pressable
+                  key={c}
+                  onPress={() => setCoverId(c)}
                   style={[
-                    styles.stepDot,
-                    done && { backgroundColor: COLORS.accent, opacity: 0.8 },
-                    active && { backgroundColor: COLORS.accent },
+                    styles.coverBox,
+                    { backgroundColor: swatch },
+                    active && styles.coverBoxActive,
                   ]}
                 />
-                <Text
-                  style={[
-                    styles.stepLabel,
-                    active && { color: COLORS.text },
-                    done && { color: COLORS.text },
-                  ]}
-                >
-                  {label}
-                </Text>
-              </View>
-            );
-          })}
+              );
+            })}
+          </View>
+          <Text style={styles.hint}>You can update the cover from binder options anytime.</Text>
         </View>
 
-        {/* Step content */}
-        {step === 0 && <WizardStepName value={name} onChange={setName} />}
-        {step === 1 && <WizardStepCover value={coverId} onChange={setCoverId} />}
-        {step === 2 && <WizardStepTemplate value={templateId} onChange={setTemplateId} />}
+        {/* Template */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Template</Text>
 
-        {/* Footer actions */}
-        <View style={styles.footer}>
-          <Pressable onPress={goBackStep} style={[styles.btnGhost, step === 0 && { opacity: 0.65 }]}>
-            <Text style={styles.btnGhostText}>{step === 0 ? "Cancel" : "Back"}</Text>
-          </Pressable>
-          <Pressable
-            onPress={goNext}
-            disabled={!canNext}
-            style={[styles.btnPrimary, !canNext && { opacity: 0.6 }]}
-          >
-            <Text style={styles.btnPrimaryText}>
-              {step < STEPS.length - 1 ? "Next" : "Create binder"}
-            </Text>
-          </Pressable>
+          <View style={styles.segmentWrap}>
+            {TEMPLATES.map(t => {
+              const active = t.id === templateId;
+              return (
+                <Pressable
+                  key={t.id}
+                  onPress={() => setTemplateId(t.id)}
+                  style={[styles.segment, active && styles.segmentActive]}
+                >
+                  <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                    {t.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {/* Mini preview */}
+          <View style={styles.preview}>
+            {Array.from({ length: tpl.rows }).map((_, r) => (
+              <View key={r} style={styles.previewRow}>
+                {Array.from({ length: tpl.cols }).map((__, c) => (
+                  <View key={c} style={styles.previewCell}>
+                    <View style={styles.previewInset} />
+                  </View>
+                ))}
+              </View>
+            ))}
+          </View>
+
+          <Text style={styles.hint}>
+            The layout applies to all pages and can be changed later in Options.
+          </Text>
         </View>
       </ScrollView>
+
+      {/* Sticky footer */}
+      <View style={styles.footer}>
+        <Pressable
+          onPress={() => router.back()}
+          style={({ pressed }) => [styles.btnGhost, pressed && { opacity: 0.9 }]}
+        >
+          <Text style={styles.btnGhostText}>Cancel</Text>
+        </Pressable>
+        <Pressable
+          onPress={onCreate}
+          disabled={!canCreate}
+          style={({ pressed }) => [
+            styles.btnPrimary,
+            (!canCreate || pressed) && { opacity: 0.9 },
+          ]}
+        >
+          <Text style={styles.btnPrimaryText}>Create binder</Text>
+        </Pressable>
+      </View>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  stepper: { flexDirection: "row", gap: 14, marginBottom: 12, alignItems: "center" },
-  stepItem: { flexDirection: "row", gap: 8, alignItems: "center" },
-  stepDot: {
-    width: 10, height: 10, borderRadius: 999,
-    backgroundColor: COLORS.border,
-  },
-  stepLabel: { color: COLORS.textMuted, fontWeight: "800", fontSize: 12.5 },
+/* ---------------- styles ---------------- */
 
-  footer: { flexDirection: "row", gap: 10, marginTop: 16 },
-  btnPrimary: { flex: 1, backgroundColor: COLORS.accent, borderRadius: 12, alignItems: "center", paddingVertical: 12 },
-  btnPrimaryText: { color: "#fff", fontWeight: "900" },
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+  },
+  cardTitle: { color: COLORS.text, fontWeight: "900", marginBottom: 10 },
+
+  input: {
+    backgroundColor: COLORS.alt,
+    color: COLORS.text,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  hint: { color: COLORS.textMuted, marginTop: 8, fontSize: 12.5 },
+
+  coversRow: { flexDirection: "row", gap: 10 },
+  coverBox: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+  },
+  coverBoxActive: { borderColor: COLORS.accent, borderWidth: 2 },
+
+  segmentWrap: {
+    flexDirection: "row",
+    backgroundColor: COLORS.background,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  segment: { paddingVertical: 8, paddingHorizontal: 12 },
+  segmentActive: { backgroundColor: COLORS.accent },
+  segmentText: { color: COLORS.text, fontWeight: "800", fontSize: 12.5 },
+  segmentTextActive: { color: "#fff" },
+
+  preview: {
+    marginTop: 12,
+    backgroundColor: COLORS.background,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    gap: 6,
+  },
+  previewRow: { flexDirection: "row", gap: 6 },
+  previewCell: { flex: 1, flexBasis: 0, aspectRatio: 1 },
+  previewInset: {
+    flex: 1,
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 8,
+  },
+
+  footer: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 16,
+    flexDirection: "row",
+    gap: 10,
+  },
   btnGhost: {
     backgroundColor: COLORS.alt,
-    borderWidth: 1, borderColor: COLORS.border,
-    borderRadius: 12, alignItems: "center", paddingVertical: 12, paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    flex: 1,
   },
   btnGhostText: { color: COLORS.text, fontWeight: "800" },
+  btnPrimary: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+    flex: 1,
+  },
+  btnPrimaryText: { color: "#fff", fontWeight: "900" },
 });

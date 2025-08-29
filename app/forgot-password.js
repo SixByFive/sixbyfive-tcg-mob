@@ -3,7 +3,7 @@
 
 import React, { useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import PageHeaderBack from "../components/common/PageHeaderBack";
+import PageHeaderBackSimple from "../components/common/PageHeaderBackSimple";
 import { COLORS } from "../theme/colors";
 
 export default function ForgotPassword() {
@@ -24,7 +24,7 @@ export default function ForgotPassword() {
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-      <PageHeaderBack title="Forgot password" subtitle="We'll email you a reset link" />
+      <PageHeaderBackSimple title="Forgot password" subtitle="We'll email you a reset link" />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={styles.content}>
           {sent ? (

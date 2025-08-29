@@ -1,23 +1,20 @@
 // app/settings.js
-// CHANGED: Added router + Linking, new "Subscription" rows, and a few helpful settings links.
-// UI-only — wire real URLs and actions later.
 
 import { router } from "expo-router"; // NEW
 import React, { useState } from "react";
-import { Linking, Pressable, StyleSheet, Switch, Text, View } from "react-native"; // CHANGED: +Pressable, +Linking
-import PageHeaderBack from "../components/common/PageHeaderBack";
+import { Linking, Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import PageHeaderBackSimple from "../components/common/PageHeaderBackSimple";
 import { COLORS } from "../theme/colors";
 
 export default function Settings() {
   const [pushEnabled, setPushEnabled] = useState(true);
   const [darkMode] = useState(true); // app is dark-only for now (read-only here)
 
-  // NEW: small helper to open external links safely
   const openURL = (url) => Linking.openURL(url).catch(() => {});
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-      <PageHeaderBack title="App Settings" subtitle="Notifications & preferences" />
+      <PageHeaderBackSimple title="App Settings" subtitle="Notifications & preferences" />
 
       {/* NEW: Subscription section */}
       <View style={styles.section}>

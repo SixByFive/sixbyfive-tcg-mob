@@ -3,7 +3,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useMemo, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import PageHeaderBack from "../components/common/PageHeaderBack";
+import PageHeaderBackSimple from "../components/common/PageHeaderBackSimple";
 import { COLORS } from "../theme/colors";
 
 export default function ResetPassword() {
@@ -28,7 +28,7 @@ export default function ResetPassword() {
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-      <PageHeaderBack title="Reset password" subtitle={hasToken ? "Create a new password" : "Invalid or missing link"} />
+      <PageHeaderBackSimple title="Reset password" subtitle={hasToken ? "Create a new password" : "Invalid or missing link"} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={styles.content}>
           <View style={styles.card}>
