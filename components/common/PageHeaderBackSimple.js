@@ -1,6 +1,4 @@
 // components/common/PageHeaderBackSimple.js
-// A slim header styled like PageHeader (same paddings/typography)
-// but with a back button on the left. No avatar.
 
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";

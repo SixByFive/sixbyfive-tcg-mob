@@ -1,6 +1,7 @@
 // app/settings.js
 
-import { router } from "expo-router"; // NEW
+import Constants from "expo-constants";
+import { router } from "expo-router";
 import React, { useState } from "react";
 import { Linking, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import PageHeaderBackSimple from "../components/common/PageHeaderBackSimple";
@@ -11,41 +12,36 @@ export default function Settings() {
   const [darkMode] = useState(true); // app is dark-only for now (read-only here)
 
   const openURL = (url) => Linking.openURL(url).catch(() => {});
+  const appVersion = Constants.expoConfig?.version ?? "1.0.0"; // fallback
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
       <PageHeaderBackSimple title="App Settings" subtitle="Notifications & preferences" />
 
-      {/* NEW: Subscription section */}
+      {/* Subscription section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Subscription</Text>
 
-        <Pressable
-          style={styles.rowBtn}
-          onPress={() => router.push("/subscriptions/manage")}
-        >
+        <Pressable style={styles.rowBtn} onPress={() => router.push("/subscriptions/manage")}>
           <Text style={styles.label}>Manage subscription</Text>
           <Text style={styles.value}>Open</Text>
         </Pressable>
 
-        <Pressable
-          style={styles.rowBtn}
-          onPress={() => router.push("/subscriptions")}
-        >
+        <Pressable style={styles.rowBtn} onPress={() => router.push("/subscriptions")}>
           <Text style={styles.label}>Upgrade</Text>
           <Text style={styles.value}>View plans</Text>
         </Pressable>
 
         <Pressable
           style={styles.rowBtn}
-          onPress={() => openURL("https://tcg.sixbyfive.com/billing")} // TODO: replace with portal URL from backend
+          onPress={() => openURL("https://tcg.sixbyfive.com/billing")}
         >
           <Text style={styles.label}>Billing portal</Text>
           <Text style={styles.value}>Open</Text>
         </Pressable>
       </View>
 
-      {/* CHANGED: Notifications section kept, same toggle */}
+      {/* Notifications section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Notifications</Text>
 
@@ -55,7 +51,7 @@ export default function Settings() {
         </View>
       </View>
 
-      {/* NEW: Preferences section */}
+      {/* Preferences section */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Preferences</Text>
 
@@ -65,33 +61,34 @@ export default function Settings() {
         </View>
       </View>
 
-      {/* NEW: Help & Legal */}
+      {/* Help & Legal */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Help & Legal</Text>
 
-        <Pressable
-          style={styles.rowBtn}
-          onPress={() => openURL("https://tcg.sixbyfive.com/privacy")}
-        >
+        <Pressable style={styles.rowBtn} onPress={() => openURL("https://tcg.sixbyfive.com/privacy")}>
           <Text style={styles.label}>Privacy Policy</Text>
           <Text style={styles.value}>Open</Text>
         </Pressable>
 
-        <Pressable
-          style={styles.rowBtn}
-          onPress={() => openURL("https://tcg.sixbyfive.com/terms")}
-        >
+        <Pressable style={styles.rowBtn} onPress={() => openURL("https://tcg.sixbyfive.com/terms")}>
           <Text style={styles.label}>Terms of Service</Text>
           <Text style={styles.value}>Open</Text>
         </Pressable>
 
-        <Pressable
-          style={styles.rowBtn}
-          onPress={() => openURL("mailto:support@sixbyfive.com")}
-        >
+        <Pressable style={styles.rowBtn} onPress={() => openURL("mailto:support@sixbyfive.com")}>
           <Text style={styles.label}>Contact support</Text>
           <Text style={styles.value}>Email</Text>
         </Pressable>
+      </View>
+
+      {/* NEW: App Info */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>App Info</Text>
+
+        <View style={styles.row}>
+          <Text style={styles.label}>Version</Text>
+          <Text style={styles.value}>{appVersion}</Text>
+        </View>
       </View>
     </View>
   );
@@ -99,9 +96,8 @@ export default function Settings() {
 
 const styles = StyleSheet.create({
   section: { padding: 16 },
-  sectionTitle: { color: COLORS.textMuted, fontWeight: "800", marginBottom: 6 }, // NEW
+  sectionTitle: { color: COLORS.textMuted, fontWeight: "800", marginBottom: 6 },
 
-  // Existing row (switch style)
   row: {
     paddingVertical: 14,
     borderBottomColor: COLORS.border,
@@ -111,7 +107,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  // NEW: row style for pressable rows
   rowBtn: {
     paddingVertical: 14,
     borderBottomColor: COLORS.border,

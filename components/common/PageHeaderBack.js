@@ -1,5 +1,4 @@
 // components/common/PageHeaderBack.js
-// UPDATED: Adds optional profile image on the left of title/subtitle.
 
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -10,7 +9,7 @@ import { COLORS } from "../../theme/colors";
 export default function PageHeaderBack({
   title,
   subtitle,
-  avatar,       // NEW: optional image URL
+  avatar,       // optional image URL
   onBack,       // optional custom back handler
   right = null, // optional right-side content (e.g., menu, call icon)
 }) {
