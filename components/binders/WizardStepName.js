@@ -1,5 +1,4 @@
 // components/binders/WizardStepName.js
-// NEW: Step 1 – binder name
 
 import React from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";

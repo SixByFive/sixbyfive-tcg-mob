@@ -1,5 +1,4 @@
 // app/subscriptions/manage.js
-// NEW: Manage screen (UI-only). Shows current plan, renewal date, action buttons.
 
 import { router, useLocalSearchParams } from "expo-router";
 import React from "react";

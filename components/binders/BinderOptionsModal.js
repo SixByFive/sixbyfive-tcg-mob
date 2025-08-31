@@ -1,11 +1,7 @@
 // components/binder/BinderOptionsModal.js
-// ADDED: "Information" section that lists controls & gestures
-// - Shows how to add/remove/move cards, edge-drag to prev/next page, etc.
-// - Lightweight (no new icon deps), themed to your COLORS
-// - Fully backward compatible with your existing props & return shape
 
 import React, { useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"; // CHANGED: +ScrollView
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 
 export const TEMPLATES = [
@@ -27,7 +23,6 @@ export default function BinderOptionsModal({
   const [layoutId, setLayoutId] = useState(initialLayoutId || DEFAULT_TEMPLATE_ID);
   const [cover, setCover] = useState("cover1");
 
-  // ADDED: optional collapse for Information section (starts open)
   const [showInfo, setShowInfo] = useState(true);
 
   useEffect(() => {
@@ -101,9 +96,6 @@ export default function BinderOptionsModal({
               })}
             </View>
 
-            {/* ---------------------------------------------------------------- */}
-            {/* ADDED: Information / Controls & Gestures                         */}
-            {/* ---------------------------------------------------------------- */}
             <Pressable onPress={() => setShowInfo((v) => !v)} style={styles.infoHeader}>
               <Text style={styles.infoHeaderText}>Information</Text>
               <Text style={styles.infoHeaderToggle}>{showInfo ? "Hide" : "Show"}</Text>

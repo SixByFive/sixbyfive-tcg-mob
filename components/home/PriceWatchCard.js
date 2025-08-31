@@ -7,20 +7,8 @@ import React, { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 
-/**
- * Props:
- *  - loading: boolean
- *  - user: object | null
- *  - watchlist: [{ id, name, set, price, change }]  // change like "+3.1%" or "-1.2%"
- *
- * CHANGED:
- *  - Replaced chip list with 2-column rich tiles.
- *  - Added timeframe segment control (24h/7d/30d) — UI only.
- *  - Added sparkline bars (pure CSS rectangles; no libs).
- *  - Better empty and loading skeletons.
- */
 export default function PriceWatchCard({ loading, user, watchlist }) {
-  // NEW: timeframe state (UI-only; does not change data yet)
+  // timeframe state (UI-only; does not change data yet)
   const [range, setRange] = useState("24h"); // '24h' | '7d' | '30d'
 
   // Keep it to 6 for a balanced grid
@@ -62,7 +50,7 @@ export default function PriceWatchCard({ loading, user, watchlist }) {
                   id: String(w.id),
                   name: w.name,
                   setName: w.set,
-                  // pass one price for now; you can expand later
+                  // pass one price for now; can expand later
                   prices: JSON.stringify([{ label: "Market", value: w.price }]),
                 },
               })
@@ -90,7 +78,7 @@ function Header({ range, onRangeChange }) {
     <View style={styles.header}>
       <Text style={styles.title}>Price watch</Text>
 
-      {/* NEW: timeframe segment control (UI only) */}
+      {/* timeframe segment control (UI only) */}
       <View style={styles.segmentWrap}>
         {["24h", "7d", "30d"].map((r) => {
           const active = r === range;
@@ -119,7 +107,7 @@ function Header({ range, onRangeChange }) {
 function Tile({ item, onPress }) {
   const { isUp, isDown, color, cleanChange } = parseChange(item.change);
 
-  // NEW: fake sparkline bars (just a few rectangles)
+  // fake sparkline bars (just a few rectangles)
   const bars = useMemo(() => generateBars(isUp, isDown), [isUp, isDown]);
 
   return (

@@ -81,7 +81,7 @@ export default function Settings() {
         </Pressable>
       </View>
 
-      {/* NEW: App Info */}
+      {/* App Info */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>App Info</Text>
 

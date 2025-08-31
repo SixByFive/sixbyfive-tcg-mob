@@ -46,7 +46,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 12,
-    padding: 12,            // compact
+    padding: 12,           
     marginBottom: 12,
     overflow: "hidden",
   },

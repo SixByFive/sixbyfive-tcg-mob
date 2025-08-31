@@ -1,5 +1,4 @@
 // components/subscriptions/PaywallSheet.js
-// NEW: Small confirmation sheet (UI-only). Use if you want a final “Start trial” confirm.
 
 import React from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";

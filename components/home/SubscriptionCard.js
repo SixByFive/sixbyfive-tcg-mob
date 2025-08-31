@@ -12,15 +12,14 @@ export default function SubscriptionCard({ planName = "Elite", renewalText = "â€
   const tier = getTier(normalized); // "free" | "pro" | "elite"
   const t = TIERS[tier];
 
-  // CHANGED: always send to /subscriptions for Free/Pro (upgrade flow)
   // Elite has no buttons, so this won't be used for elite anyway.
   const onPrimary = () => router.push("/subscriptions");
   const onPlans = () => router.push("/subscriptions");
 
-  // ADDED: hide CTAs when Elite
+  // hide CTAs when Elite
   const showCtas = tier !== "elite";
 
-  // ADDED: force "Upgrade" label for Pro (even if theme says otherwise)
+  // force "Upgrade" label for Pro (even if theme says otherwise)
   const primaryLabel = tier === "pro" ? "Upgrade" : t.primaryLabel;
 
   return (
@@ -52,7 +51,7 @@ export default function SubscriptionCard({ planName = "Elite", renewalText = "â€
         {t.subline(renewalText, normalized)}
       </Text>
 
-      {/* CHANGED: Only render buttons for non-elite tiers */}
+      {/* Only render buttons for non-elite tiers */}
       {showCtas && (
         <View style={styles.ctaRow}>
           <Pressable

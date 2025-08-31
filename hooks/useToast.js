@@ -1,5 +1,4 @@
 // hooks/useToast.js
-// Tiny hook returns toast.show(message, { type, duration })
 
 import { useToastInternal } from "../components/ui/ToastProvider";
 

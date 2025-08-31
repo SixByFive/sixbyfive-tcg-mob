@@ -31,7 +31,7 @@ export default function CardDetailsScreen() {
   const params = useLocalSearchParams();
   const id = params.id ? String(params.id) : null;
 
-  // CHANGED: Stage-driven “try multiple queries” approach kept.
+  // Stage-driven “try multiple queries” approach kept.
   const [stage, setStage] = useState(0); // 0:String, 1:ID, 2:Alt
   const [range, setRange] = useState("30D"); // "7D" | "30D" | "90D" | "1Y"
 
@@ -131,7 +131,7 @@ export default function CardDetailsScreen() {
             tcgp={price.tcgplayer}
             cmkt={price.cardmarket}
             average={average}
-            // Example CTAs (wire up to your mutations/screens later)
+            // Example CTAs (wire up to mutations/screens later)
             onAddToCollection={() => {}}
             onToggleWishlist={() => {}}
           />

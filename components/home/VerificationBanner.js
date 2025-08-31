@@ -1,5 +1,4 @@
 // components/home/VerificationBanner.js
-// CHANGED: Inline, compact verify with a single link CTA.
 
 import { router } from "expo-router";
 import React from "react";

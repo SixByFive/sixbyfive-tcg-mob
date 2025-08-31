@@ -1,5 +1,4 @@
 // components/profile/ProfileTopCard.js
-// CHANGED: "Log out" button → "Edit Profile" button
 
 import Avatar from "../../components/common/Avatar";
 import Stat from "../../components/common/Stat";

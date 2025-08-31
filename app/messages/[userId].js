@@ -1,28 +1,25 @@
 // app/messages/[userId].js
-// CHANGED: Adds long-press actions (Copy/Delete) and image attachment placeholders.
-// Includes a lightweight cross-platform ActionSheet modal (UI-only).
-// Keeps PageHeaderBack + avatar placeholder and the enhanced UX from before.
 
-import { Ionicons } from "@expo/vector-icons"; // NEW: paperclip icon
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import React, {
-    useCallback,
-    useMemo,
-    useRef,
-    useState
+  useCallback,
+  useMemo,
+  useRef,
+  useState
 } from "react";
 import {
-    FlatList,
-    Image,
-    KeyboardAvoidingView, // NEW: render image messages
-    Modal,
-    Platform,
-    Pressable,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import PageHeaderBack from "../../components/common/PageHeaderBack";
 import { COLORS } from "../../theme/colors";
@@ -52,7 +49,7 @@ const dayLabel = (ts) => {
   return d.toLocaleDateString();
 };
 
-// Seed data, now with an example image message from "them"
+// Seed data, with an example image message from "them"
 const SEED = [
   {
     id: "m0",
@@ -87,11 +84,11 @@ export default function Thread() {
   const [msgs, setMsgs] = useState(SEED);
   const flatRef = useRef(null);
 
-  // NEW: state for ActionSheet and selected message
+  // state for ActionSheet and selected message
   const [sheetOpen, setSheetOpen] = useState(false);
   const [selectedMsg, setSelectedMsg] = useState(null);
 
-  // NEW: attachment sheet (simple for now, one action)
+  // attachment sheet (simple for now, one action)
   const [attachOpen, setAttachOpen] = useState(false);
 
   const title = useMemo(() => nameFromId(userId), [userId]);
@@ -150,7 +147,7 @@ export default function Thread() {
     }, 1500);
   };
 
-  // NEW: attach placeholder — adds an image message from "me"
+  // attach placeholder — adds an image message from "me"
   const onAttachImage = () => {
     setAttachOpen(false);
     const imgMsg = {
@@ -214,7 +211,7 @@ export default function Thread() {
     return out;
   }, [msgs]);
 
-  // NEW: open sheet on long-press
+  // open sheet on long-press
   const handleLongPress = (msg) => {
     setSelectedMsg(msg);
     setSheetOpen(true);
@@ -223,7 +220,7 @@ export default function Thread() {
   const onCopy = () => {
     setSheetOpen(false);
     // UI-only: if it's an image-only message with no text, show a small toast substitute:
-    // In a real app you'd copy to clipboard via 'expo-clipboard'
+    // TODO: copy to clipboard via 'expo-clipboard'
     // Clipboard.setStringAsync(selectedMsg?.text || selectedMsg?.image || "");
     // For now, just close the sheet.
   };
@@ -314,7 +311,7 @@ export default function Thread() {
 
         {/* Composer */}
         <View style={styles.inputRow}>
-          {/* NEW: Attach button (UI-only) */}
+          {/* Attach button (UI-only) */}
           <Pressable
             onPress={() => setAttachOpen(true)}
             style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1, paddingHorizontal: 6 }]}
@@ -338,7 +335,7 @@ export default function Thread() {
         </View>
       </KeyboardAvoidingView>
 
-      {/* NEW: ActionSheet for message options */}
+      {/* ActionSheet for message options */}
       <Modal
         visible={sheetOpen}
         transparent
@@ -365,7 +362,7 @@ export default function Thread() {
         </View>
       </Modal>
 
-      {/* NEW: Attachment sheet (simple) */}
+      {/* Attachment sheet (simple) */}
       <Modal
         visible={attachOpen}
         transparent

@@ -13,7 +13,7 @@ import {
     TextInput,
     View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context"; // NEW
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../theme/colors";
 import CardSelectableTile from "../card/CardSelectableTile";
 import SelectBar from "../common/SelectBar";
@@ -32,9 +32,9 @@ export default function AddCardsDrawer({
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(new Set());
 
-  const insets = useSafeAreaInsets(); // NEW
+  const insets = useSafeAreaInsets(); 
 
-  // ---- Anim + Gesture (unchanged logic, trimmed) ----
+  // ---- Anim + Gesture ----
   const translateY = useRef(new Animated.Value(0)).current;
   const THRESHOLD = 120;
   const SHEET_CLOSE_OFFSET = 800;
@@ -96,7 +96,6 @@ export default function AddCardsDrawer({
           style={[
             styles.sheet,
             {
-              // NEW: remove bottom rounding/border and pad for safe area
               paddingBottom: Math.max(insets.bottom, 0),
               transform: [{ translateY }],
             },
@@ -165,15 +164,15 @@ export default function AddCardsDrawer({
               keyboardShouldPersistTaps="handled"
             />
 
-            {/* Selection bar: FLUSH to bottom (no gap) */}
+            {/* Selection bar */}
             <SelectBar
               count={selected.size}
               onAdd={confirm}
               onClear={clear}
               onCancel={handleCancel}
-              bottomInset={insets.bottom}                 // <- key
-              styleOverride={styles.selectBarOverride}    // subtle top border
-              fullBleed                                    // <- NEW prop (see SelectBar below)
+              bottomInset={insets.bottom}                 
+              styleOverride={styles.selectBarOverride}    
+              fullBleed                                   
             />
           </KeyboardAvoidingView>
         </Animated.View>
@@ -202,14 +201,13 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
-    // NEW: bottom edge should be square and flush
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
     borderColor: COLORS.border,
     borderTopWidth: 1,
     borderLeftWidth: 1,
     borderRightWidth: 1,
-    borderBottomWidth: 0, // <- no bottom border line (removes the “gap” look)
+    borderBottomWidth: 0, 
     height: SHEET_HEIGHT,
     overflow: "hidden",
   },

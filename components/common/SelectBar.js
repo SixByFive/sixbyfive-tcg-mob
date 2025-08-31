@@ -1,9 +1,4 @@
 // components/common/SelectBar.js
-// NEW: redesigned sticky action bar for selection flows.
-// - Safe-area aware (bottomInset)
-// - Full-bleed option (flush to edges) or inset card look
-// - Clear/Cancel/Add actions with proper disabled states
-// - No ugly lines; subtle shadow for lift on iOS/Android
 
 import React from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";

@@ -1,6 +1,4 @@
 // app/verify.js
-// NEW: Handles links like: myapp://verify?token=XYZ or https://yourdomain.com/verify?token=XYZ
-// UI-only: call your verifyAccount({ token }) here.
 
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";

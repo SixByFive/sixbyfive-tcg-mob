@@ -1,5 +1,4 @@
 // components/ui/Toast.js
-// Small, themed toast bubble (success / error / info)
 
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";

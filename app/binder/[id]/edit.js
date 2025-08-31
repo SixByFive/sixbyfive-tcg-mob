@@ -1,13 +1,10 @@
 // app/binder/[id]/edit.js
-// CHANGED: Re-introduce PagePager (+ / −) for add/remove pages
-// CHANGED: Add page ops (addPage/deletePage) with proper slot sizing
-// KEPT: BinderOptionsModal usage, AddCardsDrawer, drag/drop move + move-to-page
 
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert, // ADDED: for delete guard
+  Alert,
   Dimensions,
   FlatList,
   Pressable,
@@ -20,9 +17,9 @@ import { COLORS } from "../../../theme/colors";
 
 import BinderGrid from "../../../components/binders/BinderGrid";
 import AddCardsDrawer from "../../../components/binders/CardsAddDrawer";
-import PagePager from "../../../components/binders/PagePager"; // ADDED
+import PagePager from "../../../components/binders/PagePager";
 
-// ✅ Uses your shared modal + constants
+// Uses shared modal + constants
 import BinderOptionsModal, {
   DEFAULT_TEMPLATE_ID,
   TEMPLATES,
@@ -31,7 +28,6 @@ import BinderOptionsModal, {
 const { width: SCREEN_W } = Dimensions.get("window");
 
 // UTILS ───────────────────────────────────────────────────────────────────────
-// If your TEMPLATES is an array (like in your old file), use find():
 const getTemplate = (templateId) =>
   Array.isArray(TEMPLATES)
     ? (TEMPLATES.find((t) => t.id === templateId) || TEMPLATES[0])
@@ -112,7 +108,7 @@ export default function BinderEditor() {
   const closeOptions = () => setOptionsOpen(false);
 
   // Save from BinderOptionsModal
-  // NOTE: if your modal returns { name, layoutId } instead, map them here.
+  // NOTE: if modal returns { name, layoutId } instead, map them here.
   const saveOptions = ({ name: nextName, templateId: nextTemplateId, rows, cols }) => {
     const trimmed = (nextName || "").trim();
     if (trimmed) setName(trimmed);
@@ -124,7 +120,7 @@ export default function BinderEditor() {
 
     const tpl = getTemplate(chosenTemplateId);
 
-    // Allow overriding rows/cols (if your modal exposes them), else use template
+    // Allow overriding rows/cols (if modal exposes them), else use template
     let nextRows = Number.isFinite(parseInt(rows, 10)) ? parseInt(rows, 10) : tpl.rows;
     let nextCols = Number.isFinite(parseInt(cols, 10)) ? parseInt(cols, 10) : tpl.cols;
 
@@ -187,14 +183,14 @@ export default function BinderEditor() {
     setIndex(i);
   };
 
-  // PAGE OPS (RESTORED) ─────────────────────────────────────────────────────
+  // PAGE OPS  ─────────────────────────────────────────────────────
   const addPage = () => {
     const pid = Math.random().toString(36).slice(2, 8);
     const newSlots = Array.from({ length: layout.rows * layout.cols }, () => null);
     const next = [...pages, { id: pid, title: `Page ${pages.length + 1}`, slots: newSlots }];
 
     setPages(next);
-    setIndex(next.length - 1); // jump to the new page
+    setIndex(next.length - 1);
   };
 
   const deletePage = () => {
@@ -294,7 +290,7 @@ export default function BinderEditor() {
                     // find first empty slot on destination page
                     const empty = dstSlots.findIndex((s) => !s);
                     if (empty === -1) {
-                      // No room; you could auto-add a new page here:
+                      // No room; could auto-add a new page here:
                       // const pid = Math.random().toString(36).slice(2, 8);
                       // const newSlots = Array.from({ length: layout.rows * layout.cols }, () => null);
                       // next.push({ id: pid, title: `Page ${next.length + 1}`, slots: newSlots });
@@ -328,7 +324,7 @@ export default function BinderEditor() {
         />
       </View>
 
-      {/* RESTORED: Bottom pager with + / − */}
+      {/* Bottom pager with + / − */}
       <PagePager
         pages={pages}
         activeIndex={index}
@@ -360,7 +356,7 @@ export default function BinderEditor() {
         visible={optionsOpen}
         onClose={closeOptions}
         onSave={saveOptions}
-        // If your modal expects these names, pass them; otherwise map as needed:
+        // If modal expects these names, pass them; otherwise map as needed:
         name={name}
         templateId={templateId}
         rows={layout.rows}

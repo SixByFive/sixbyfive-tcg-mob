@@ -1,5 +1,4 @@
 // components/binders/WizardStepTemplate.js
-// NEW: Step 3 – pick a page template (9-pocket, 4-pocket, full-page, etc.)
 
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";

@@ -1,5 +1,4 @@
 // components/subscriptions/FeatureRow.js
-// NEW: Simple row with a check or a lock icon state.
 
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";

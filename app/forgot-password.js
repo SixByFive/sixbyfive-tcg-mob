@@ -1,5 +1,4 @@
 // app/auth/forgot.js
-// NEW: Forgot Password (UI only). Wire to your request-reset mutation later.
 
 import React, { useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";

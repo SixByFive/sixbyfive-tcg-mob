@@ -92,7 +92,7 @@ export default function MarketTab() {
 
       {segment === "listings" && (
         <FlatList
-          data={filtered.slice(0, 4)} // pretend these are yours
+          data={filtered.slice(0, 4)}
           keyExtractor={(it) => it.id}
           contentContainerStyle={styles.listContent}
           refreshControl={
@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   listContent: { paddingHorizontal: 12, paddingVertical: 12, gap: 10 },
 
-  // footer button (reused)
+  // footer button
   cta: {
     alignItems: "center",
     paddingVertical: 12,

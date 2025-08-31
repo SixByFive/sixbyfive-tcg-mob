@@ -1,5 +1,4 @@
 // components/profile/FormField.js
-// NEW: Tiny wrapper to keep field label/hint consistent.
 
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";

@@ -1,10 +1,4 @@
 // components/profile/ProfileEditForm.js
-// NEW: Reusable profile edit form (UI-only).
-// - Username is read-only (no editing).
-// - Includes avatar picker (expo-image-picker), displayName, bio, favouritePokemon.
-// - Validates displayName (2–40) and bio (<=160).
-// - Exposes onSave(values) and onCancel() via props.
-// UPDATED: keyboard-safe via KeyboardAvoidingView + scroll-to-focused input.
 
 import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useMemo, useRef, useState } from "react"; // CHANGED: +useRef

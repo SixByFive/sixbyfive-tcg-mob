@@ -1,5 +1,4 @@
 // components/subscriptions/PlanCard.js
-// NEW: Reusable plan card with badge, price, and features summary.
 
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";

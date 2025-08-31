@@ -1,5 +1,4 @@
 // components/binders/WizardStepCover.js
-// NEW: Step 2 – pick a cover (mock grid). Replace with real covers later.
 
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";

@@ -1,25 +1,12 @@
 // components/lists/SwipeRow.js
-// NEW: A lightweight right-swipe-to-reveal-actions row using Gesture API + Reanimated.
-// - No deprecated Swipeable
-// - Smooth 60fps, customizable thresholds
-//
-// Usage:
-// <SwipeRow
-//   rightActions={[
-//     { label: "Mark read", type: "primary", onPress: () => {} },
-//     { label: "Clear", type: "danger", onPress: () => {} },
-//   ]}
-// >
-//   <YourRowComponent />
-// </SwipeRow>
 
 import React, { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
-    useAnimatedStyle,
-    useSharedValue,
-    withSpring
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring
 } from "react-native-reanimated";
 import { COLORS } from "../../theme/colors";
 

@@ -1,6 +1,4 @@
 // components/binders/BinderGrid.js
-// FIX: per-cell absolute measurement so all rows/slots are droppable
-// Still includes: double-tap remove, long-press drag, edge hot-zones for prev/next page.
 
 import React, { useMemo, useRef, useState } from "react";
 import {

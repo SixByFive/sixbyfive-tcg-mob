@@ -1,6 +1,4 @@
 // components/ui/ToastProvider.js
-// Global provider + host renders a stack of animated toasts.
-// Usage: const toast = useToast(); toast.show("Saved!", { type: "success" });
 
 import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";

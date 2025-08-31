@@ -1,12 +1,10 @@
 // app/(tabs)/messages.js
-// CHANGED: Replaced deprecated Swipeable with our SwipeRow component.
-// Also fixed the root gesture error via app/_layout.js (see step 1).
 
 import { Link, useNavigation } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
 import PageHeader from "../../components/common/PageHeader";
-import SwipeRow from "../../components/lists/SwipeRow"; // NEW
+import SwipeRow from "../../components/lists/SwipeRow";
 import { COLORS } from "../../theme/colors";
 
 const MOCK_DMS_INITIAL = [
@@ -123,7 +121,7 @@ export default function MessagesTab() {
               </Pressable>
             </Link>
           ) : (
-            // NEW: our custom swipe row (no deprecated API)
+            // custom swipe row 
             <SwipeRow
               rightActions={[
                 {

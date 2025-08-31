@@ -16,7 +16,7 @@ import {
 import { clearToken } from "../../lib/auth";
 
 import PageHeader from "../../components/common/PageHeader";
-import ProfileEditForm from "../../components/profile/ProfileEditForm"; // NEW
+import ProfileEditForm from "../../components/profile/ProfileEditForm";
 import RecentBinders from "../../components/profile/ProfileRecentBinders";
 import ProfileTopCard from "../../components/profile/ProfileTopCard";
 import WishlistGrid from "../../components/profile/WishlistGrid";
@@ -29,8 +29,8 @@ const avatarPlaceholder = (nameOrUsername) =>
 export default function ProfileTab() {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
-  const [editMode, setEditMode] = useState(false); // NEW
-  const [saving, setSaving] = useState(false);     // NEW
+  const [editMode, setEditMode] = useState(false); 
+  const [saving, setSaving] = useState(false);     
   const toast = useToast;
 
   const { data, loading, error, refetch, networkStatus } = useQuery(MeDocument, {

@@ -1,5 +1,4 @@
 // components/home/SnapshotCard.js
-// CHANGED: More compact stat tiles with subtle backgrounds.
 
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";

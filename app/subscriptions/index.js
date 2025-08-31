@@ -100,7 +100,6 @@ export default function Subscriptions() {
           ]}
           onPress={() => {
             // TODO: invoke purchase flow (RevenueCat/Stripe/native store)
-            // router.push("/subscriptions/manage");
             router.push({ pathname: "/subscriptions/manage", params: { status: selectedPlan?.name || "Pro" } });
           }}
         >
