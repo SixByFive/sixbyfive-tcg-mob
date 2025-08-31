@@ -12,8 +12,16 @@ export default function SubscriptionCard({ planName = "Elite", renewalText = "�
   const tier = getTier(normalized); // "free" | "pro" | "elite"
   const t = TIERS[tier];
 
-  const onPrimary = () => router.push(tier === "free" ? "/subscriptions" : "/subscriptions/manage");
+  // CHANGED: always send to /subscriptions for Free/Pro (upgrade flow)
+  // Elite has no buttons, so this won't be used for elite anyway.
+  const onPrimary = () => router.push("/subscriptions");
   const onPlans = () => router.push("/subscriptions");
+
+  // ADDED: hide CTAs when Elite
+  const showCtas = tier !== "elite";
+
+  // ADDED: force "Upgrade" label for Pro (even if theme says otherwise)
+  const primaryLabel = tier === "pro" ? "Upgrade" : t.primaryLabel;
 
   return (
     <View
@@ -44,24 +52,27 @@ export default function SubscriptionCard({ planName = "Elite", renewalText = "�
         {t.subline(renewalText, normalized)}
       </Text>
 
-      <View style={styles.ctaRow}>
-        <Pressable
-          onPress={onPrimary}
-          style={({ pressed }) => [
-            styles.primaryBtn,
-            { backgroundColor: t.primaryBg },
-            pressed && styles.pressed,
-          ]}
-        >
-          <Text style={[styles.primaryText, { color: t.primaryTextColor }]}>
-            {t.primaryLabel}
-          </Text>
-        </Pressable>
+      {/* CHANGED: Only render buttons for non-elite tiers */}
+      {showCtas && (
+        <View style={styles.ctaRow}>
+          <Pressable
+            onPress={onPrimary}
+            style={({ pressed }) => [
+              styles.primaryBtn,
+              { backgroundColor: t.primaryBg },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.primaryText, { color: t.primaryTextColor }]}>
+              {primaryLabel}
+            </Text>
+          </Pressable>
 
-        <Pressable onPress={onPlans} hitSlop={8}>
-          <Text style={[styles.link, { color: t.linkColor }]}>Plans</Text>
-        </Pressable>
-      </View>
+          <Pressable onPress={onPlans} hitSlop={8}>
+            <Text style={[styles.link, { color: t.linkColor }]}>Plans</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
@@ -89,7 +100,7 @@ const GOLD = "#F5C542";
 const TIERS = {
   free: {
     emoji: "✨",
-    pillBg: COLORS.accent,          // blue pill keeps it visible but still "entry"
+    pillBg: COLORS.accent,
     pillTextColor: "#fff",
     primaryBg: COLORS.accent,
     primaryTextColor: "#fff",
@@ -103,13 +114,14 @@ const TIERS = {
   },
   pro: {
     emoji: "🛡️",
-    pillBg: COLORS.accent,          // switch Pro to your brand blue
+    pillBg: COLORS.accent,
     pillTextColor: "#fff",
     primaryBg: COLORS.accent,
-    primaryTextColor: "#fff",       // <<< contrast fix
-    primaryLabel: "Manage",
+    primaryTextColor: "#fff",
+    // CHANGED: default label for pro is now "Upgrade"
+    primaryLabel: "Upgrade",
     subline: (renewalText, label) => `You're on ${formattedLabel(label)} — ${renewalText}`,
-    linkColor: "#ffffff",           // subtle emphasis vs Free
+    linkColor: "#ffffff",
     topBar: { backgroundColor: COLORS.accent, height: 3, borderTopLeftRadius: 12, borderTopRightRadius: 12 },
     cardExtra: { borderWidth: 1, borderColor: COLORS.border },
     iosShadow: { shadowColor: COLORS.accent, shadowOpacity: 0.3, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } },
@@ -121,7 +133,7 @@ const TIERS = {
     pillTextColor: "#111",
     primaryBg: GOLD,
     primaryTextColor: "#111",
-    primaryLabel: "Manage",
+    primaryLabel: "Manage", // UNUSED now (no buttons for elite)
     subline: (renewalText, label) => `You're on ${formattedLabel(label)} — ${renewalText}`,
     linkColor: "#ffffff",
     topBar: { backgroundColor: GOLD, height: 4, borderTopLeftRadius: 12, borderTopRightRadius: 12 },

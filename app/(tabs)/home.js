@@ -12,16 +12,20 @@ import DiscordCard from "../../components/home/DiscordCard";
 import PriceWatchCard from "../../components/home/PriceWatchCard";
 import SnapshotCard from "../../components/home/SnapshotCard";
 import SubscriptionCard from "../../components/home/SubscriptionCard";
+import UserSearchCard from "../../components/home/UserSearchCard";
 import VerificationBanner from "../../components/home/VerificationBanner";
 
 const DISCORD_INVITE = "https://tcg.sixbyfive.com/discord";
 
 export default function Home() {
+  const [results, setResults] = useState([]);
+  
   const [refreshing, setRefreshing] = useState(false);
   const { data, loading, refetch } = useQuery(MeDocument, {
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
   });
+  const [recent, setRecent] = useState(["charizardfan", "ryan", "pokemon"]); 
 
   const user = data?.me;
   const greeting = loading ? "…" : `Hey ${user?.username || "Trainer"} 👋`;
@@ -51,9 +55,23 @@ export default function Home() {
   // const unreadSystem = user?.unreadSystem ?? 3;
 
   // subscription bits
-  const planName = user?.subscription?.planName ?? "Pro";
+  const planName = user?.subscription?.planName ?? "Free";
   const renewalText = user?.subscription?.renewalDateRelative ?? ((planName || "").toLowerCase() !== "free" ? "Renews monthly" : "—");
 
+  const fakeFetch = async (q) => {
+    setLoading(true);
+    // TODO: replace with real API call
+    await new Promise((r) => setTimeout(r, 400));
+    setResults(
+      q
+        ? [
+            { id: "1", username: "ryan", displayName: "Ryan", isFollowing: true },
+            { id: "2", username: "lugia_lover", displayName: "Lugia Lover", isFollowing: false },
+          ]
+        : []
+    );
+    setLoading(false);
+  };
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: COLORS.background }}
@@ -90,6 +108,25 @@ export default function Home() {
 
       {/* Snapshot */}
       <SnapshotCard loading={loading} user={user} />
+      
+      {/* User Search */}
+      <UserSearchCard
+      results={results}
+      loading={loading}
+      recent={recent}
+      onSearch={(q) => {
+        if (q && !recent.includes(q)) setRecent((r) => [q, ...r].slice(0, 8));
+        fakeFetch(q);
+      }}
+      onSelectUser={(u) => {/* navigate to profile */}}
+      onToggleFollow={(u) => {
+        setResults((list) =>
+          list.map((x) => (x.id === u.id ? { ...x, isFollowing: !x.isFollowing } : x))
+        );
+      }}
+      onUseRecent={(term) => {/* analytics, etc. */}}
+      onClearRecent={() => setRecent([])}
+    />
 
       {/* Continue */}
       {/* <ContinueGrid loading={loading} user={user} recentBinders={recentBinders} /> */}

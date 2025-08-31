@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import PageHeaderBack from "../../components/common/PageHeaderBack";
+import PageHeaderBackSimple from "../../components/common/PageHeaderBackSimple";
 import { COLORS } from "../../theme/colors";
 
 // Templates (same shape as elsewhere so it stays familiar)
@@ -42,7 +42,7 @@ export default function BinderNewScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.background }}>
-      <PageHeaderBack title="New binder" subtitle="Create a binder to organise your cards" />
+      <PageHeaderBackSimple title="New binder" subtitle="Create a binder to organise your cards" />
 
       <ScrollView
         style={{ flex: 1 }}

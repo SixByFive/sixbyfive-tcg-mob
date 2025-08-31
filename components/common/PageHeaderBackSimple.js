@@ -11,6 +11,7 @@ export default function PageHeaderBackSimple({
   subtitle,
   onBack,          // optional custom back handler
   right = null,    // optional right-side content
+  right2 = null
 }) {
   return (
     <View style={styles.wrap}>
@@ -43,6 +44,7 @@ export default function PageHeaderBackSimple({
 
         {/* Optional right content */}
         {right && <View style={{ marginLeft: 8 }}>{right}</View>}
+        {right2 && <View style={{ marginLeft: 8 }}>{right2}</View> || null}
       </View>
     </View>
   );

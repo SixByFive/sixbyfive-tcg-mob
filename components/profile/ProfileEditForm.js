@@ -4,19 +4,23 @@
 // - Includes avatar picker (expo-image-picker), displayName, bio, favouritePokemon.
 // - Validates displayName (2–40) and bio (<=160).
 // - Exposes onSave(values) and onCancel() via props.
+// UPDATED: keyboard-safe via KeyboardAvoidingView + scroll-to-focused input.
 
 import * as ImagePicker from "expo-image-picker";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react"; // CHANGED: +useRef
 import {
-    Alert,
-    Image,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  Alert,
+  Image,
+  KeyboardAvoidingView, // ADDED
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context"; // ADDED
 import { COLORS } from "../../theme/colors";
 import PageHeaderBack from "../common/PageHeaderBack";
 import FormField from "./FormField";
@@ -30,6 +34,8 @@ export default function ProfileEditForm({
   onCancel,         // () => void
   saving = false,   // parent controls saving state
 }) {
+  const insets = useSafeAreaInsets(); // ADDED
+
   // ----- Seed from props -----
   const seed = useMemo(() => {
     const displayName = initial?.displayName ?? "";
@@ -56,7 +62,6 @@ export default function ProfileEditForm({
 
   // ----- Dirty + validation -----
   const isDirty =
-    displayName !== seed.displayName ||
     bio !== seed.bio ||
     favouritePokemon !== seed.favouritePokemon ||
     avatarUrl !== seed.avatarUrl;
@@ -74,7 +79,7 @@ export default function ProfileEditForm({
       return;
     }
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: "images",
       quality: 0.85,
       allowsEditing: true,
       aspect: [1, 1],
@@ -88,13 +93,29 @@ export default function ProfileEditForm({
   const handleSave = () => {
     if (!isDirty || !formValid || saving) return;
     onSave?.({
-      displayName: displayName.trim(),
       bio,
       favouritePokemon,
       avatarUrl,
-      username: seed.username, // read-only; pass back unchanged
+      username: seed.username,
     });
   };
+
+  // ----- Keyboard-safe scrolling (ADDED) -----
+  const scrollRef = useRef(null);
+  const fieldYRef = useRef({}); // { bio: number, favourite: number, displayName: number }
+
+  const rememberY = (key) => (e) => {
+    fieldYRef.current[key] = e.nativeEvent.layout.y;
+  };
+
+  const scrollToField = (key) => {
+    const y = fieldYRef.current[key] ?? 0;
+    // Nudge up a bit so label + field are fully visible
+    scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
+  };
+
+  // Header height + status bar offset for iOS keyboard avoidance
+  const KEYBOARD_VERTICAL_OFFSET = insets.top + 60; // tweak if your header is taller
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
@@ -106,86 +127,117 @@ export default function ProfileEditForm({
         onBack={onCancel}
       />
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 28 }} keyboardShouldPersistTaps="handled">
-        {/* Avatar row */}
-        <View style={styles.avatarRow}>
-          <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-          <Pressable
-            style={({ pressed }) => [styles.secondaryBtn, { opacity: pressed ? 0.7 : 1 }]}
-            onPress={pickAvatar}
-          >
-            <Text style={styles.secondaryBtnText}>Change avatar</Text>
-          </Pressable>
-        </View>
-
-        {/* Display name */}
-        <FormField label="Display name">
-          <TextInput
-            value={displayName}
-            onChangeText={setDisplayName}
-            placeholder="Display name"
-            placeholderTextColor={COLORS.textMuted}
-            style={[styles.input, !displayNameValid && styles.inputError]}
-          />
-          {!displayNameValid && (
-            <Text style={styles.errorText}>2–40 characters required.</Text>
-          )}
-        </FormField>
-
-        {/* Username (read-only) */}
-        <FormField label="Username" hint="Usernames cannot be changed">
-          <View style={[styles.input, styles.readonly]}>
-            <Text style={{ color: COLORS.textMuted }}>@{seed.username}</Text>
+      {/* ADDED: KeyboardAvoidingView around the scroller */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={KEYBOARD_VERTICAL_OFFSET}
+      >
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={{
+            padding: 16,
+            paddingBottom: insets.bottom + 160, // ADDED: extra space so last field clears keyboard
+          }}
+          keyboardShouldPersistTaps="handled"       // ADDED: allow taps while keyboard is up
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"} // ADDED
+          automaticallyAdjustContentInsets={false}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Avatar row */}
+          <View style={styles.avatarRow} onLayout={rememberY("avatar")}>
+            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+            <Pressable
+              style={({ pressed }) => [styles.secondaryBtn, { opacity: pressed ? 0.7 : 1 }]}
+              onPress={pickAvatar}
+            >
+              <Text style={styles.secondaryBtnText}>Change avatar</Text>
+            </Pressable>
           </View>
-        </FormField>
 
-        {/* Bio */}
-        <FormField label="Bio" hint="Max 160 characters">
-          <TextInput
-            value={bio}
-            onChangeText={setBio}
-            placeholder="Tell people about your collection"
-            placeholderTextColor={COLORS.textMuted}
-            style={[styles.input, { height: 88, textAlignVertical: "top" }, !bioValid && styles.inputError]}
-            multiline
-            maxLength={200}
-          />
-          {!bioValid && (
-            <Text style={styles.errorText}>Keep it under 160 characters.</Text>
-          )}
-        </FormField>
+          {/* Display name (kept commented out; if you re-enable, it will scroll correctly) */}
+          {/*
+          <View onLayout={rememberY("displayName")}>
+            <FormField label="Display name">
+              <TextInput
+                value={displayName}
+                onChangeText={setDisplayName}
+                onFocus={() => scrollToField("displayName")}     // ADDED
+                placeholder="Display name"
+                placeholderTextColor={COLORS.textMuted}
+                style={[styles.input, !displayNameValid && styles.inputError]}
+              />
+              {!displayNameValid && (
+                <Text style={styles.errorText}>2–40 characters required.</Text>
+              )}
+            </FormField>
+          </View>
+          */}
 
-        {/* Favourite Pokémon */}
-        <FormField label="Favourite Pokémon">
-          <TextInput
-            value={favouritePokemon}
-            onChangeText={setFavouritePokemon}
-            placeholder="e.g., Lugia"
-            placeholderTextColor={COLORS.textMuted}
-            style={styles.input}
-          />
-        </FormField>
+          {/* Username (read-only) */}
+          <View onLayout={rememberY("username")}>
+            <FormField label="Username" hint="Usernames cannot be changed">
+              <View style={[styles.input, styles.readonly]}>
+                <Text style={{ color: COLORS.textMuted }}>@{seed.username}</Text>
+              </View>
+            </FormField>
+          </View>
 
-        {/* Actions */}
-        <View style={styles.actions}>
-          <Pressable
-            onPress={onCancel}
-            style={({ pressed }) => [styles.secondaryBtn, { opacity: pressed ? 0.7 : 1 }]}
-          >
-            <Text style={styles.secondaryBtnText}>Cancel</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleSave}
-            disabled={saving || !isDirty || !formValid}
-            style={({ pressed }) => [
-              styles.primaryBtn,
-              { opacity: pressed || saving || !isDirty || !formValid ? 0.6 : 1 },
-            ]}
-          >
-            <Text style={styles.primaryBtnText}>{saving ? "Saving…" : "Save"}</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
+          {/* Bio */}
+          <View onLayout={rememberY("bio")}>
+            <FormField label="Bio" hint="Max 160 characters">
+              <TextInput
+                value={bio}
+                onChangeText={setBio}
+                onFocus={() => scrollToField("bio")}              // ADDED
+                placeholder="Tell people about your collection"
+                placeholderTextColor={COLORS.textMuted}
+                style={[styles.input, { height: 88, textAlignVertical: "top" }, !bioValid && styles.inputError]}
+                multiline
+                maxLength={200}
+              />
+              {!bioValid && (
+                <Text style={styles.errorText}>Keep it under 160 characters.</Text>
+              )}
+            </FormField>
+          </View>
+
+          {/* Favourite Pokémon */}
+          <View onLayout={rememberY("favourite")}>
+            <FormField label="Favourite Pokémon">
+              <TextInput
+                value={favouritePokemon}
+                onChangeText={setFavouritePokemon}
+                onFocus={() => scrollToField("favourite")}        // ADDED
+                placeholder="e.g., Lugia"
+                placeholderTextColor={COLORS.textMuted}
+                style={styles.input}
+                returnKeyType="done"
+              />
+            </FormField>
+          </View>
+
+          {/* Actions */}
+          <View style={styles.actions} onLayout={rememberY("actions")}>
+            <Pressable
+              onPress={onCancel}
+              style={({ pressed }) => [styles.secondaryBtn, { opacity: pressed ? 0.7 : 1 }]}
+            >
+              <Text style={styles.secondaryBtnText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSave}
+              disabled={saving || !isDirty || !formValid}
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                { opacity: pressed || saving || !isDirty || !formValid ? 0.6 : 1 },
+              ]}
+            >
+              <Text style={styles.primaryBtnText}>{saving ? "Saving…" : "Save"}</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
