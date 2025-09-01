@@ -1,165 +1,155 @@
 // components/home/UserSearchCard.js
 
 import { Ionicons } from "@expo/vector-icons";
+import { useSearchUsersLazyQuery } from "@sixbyfive/tcg-binder/react";
 import { router } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    FlatList,
-    Image,
-    Keyboard,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Image,
+  Keyboard,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
-import { getUserByUsernameLocal, searchUsersLocal } from "../../lib/fakeUsers";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../theme/colors";
 
-/**
- * Props
- * - initialQuery?: string
- * - results?: Array<...>                     // optional controlled mode
- * - loading?: boolean                        // optional controlled mode
- * - error?: string | null
- * - recent?: string[]
- * - onSearch?: (query: string) => void       // optional controlled mode
- * - onSelectUser?: (user) => boolean|void
- * - onToggleFollow?: (user) => void
- * - onUseRecent?: (term: string) => void
- * - onClearRecent?: () => void
- * - onCommitRecent?: (term: string) => void  // only on submit/quick-open/result tap
- * - style?: object
- */
 export default function UserSearchCard({
   initialQuery = "",
+  // If you pass results/loading/error, the card becomes "controlled" and will NOT call GraphQL.
   results,
   loading,
   error = null,
   recent = [],
-  onSearch,
-  onSelectUser,
+  onSearch,          // controlled search handler
+  onSelectUser,      // if provided, card will NOT navigate itself (prevents double push)
   onToggleFollow,
   onUseRecent,
   onClearRecent,
-  onCommitRecent,
+  onCommitRecent,    // commit chosen/typed term; parent can cap to 5 & dedupe
   style,
 }) {
+  const insets = useSafeAreaInsets();
+
+  // ── state & mode ────────────────────────────────────────────────────────────
   const [query, setQuery] = useState(initialQuery);
+  const trimmed = query.trim();
+  const normalized = trimmed.replace(/^@/, "");
+  const minLen = 2;
 
-  // local fallback search
-  const [localResults, setLocalResults] = useState([]);
-  const [localLoading, setLocalLoading] = useState(false);
-  const [notFound, setNotFound] = useState("");
+  const controlledMode = results !== undefined || typeof loading === "boolean";
 
-  const usingLocal = !onSearch && results === undefined && loading === undefined;
-  const debounceRef = useRef(null);
-
+  // Keep latest onSearch ref to avoid effect deps thrash
+  const onSearchRef = useRef(onSearch);
   useEffect(() => {
-    const trimmed = query.trim();
+    onSearchRef.current = onSearch;
+  }, [onSearch]);
+
+  // ── GraphQL (uncontrolled/self-fetch mode) ─────────────────────────────────
+  const [runSearch, { data, loading: remoteLoading, error: remoteError }] =
+    useSearchUsersLazyQuery({ fetchPolicy: "cache-first" });
+
+  const mappedRemoteResults = useMemo(() => {
+    const list = data?.searchUsers ?? [];
+    return list.map((u) => ({
+      id: u.id ?? u.userId ?? String(u.user?.id ?? ""),
+      username: u.user?.username ?? "",
+      displayName: u.user?.username ?? "",
+      avatarUrl: u.user?.avatar || u.avatar || undefined,
+      isFollowing: false,
+    }));
+  }, [data]);
+
+  // ── debounce search ─────────────────────────────────────────────────────────
+  const debounceRef = useRef(null);
+  useEffect(() => {
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      if (usingLocal) {
-        setNotFound("");
-        if (!trimmed) { setLocalResults([]); return; }
-        setLocalLoading(true);
-        const res = await searchUsersLocal(trimmed);
-        setLocalResults(res);
-        setLocalLoading(false);
-      } else {
-        onSearch?.(trimmed);
+    debounceRef.current = setTimeout(() => {
+      if (controlledMode) {
+        onSearchRef.current?.(trimmed);
+        return;
+      }
+      if (normalized.length >= minLen || trimmed.length >= minLen) {
+        runSearch({ variables: { query: trimmed, limit: 20 } });
       }
     }, 300);
     return () => clearTimeout(debounceRef.current);
-  }, [query, usingLocal, onSearch]);
+  }, [trimmed, normalized, controlledMode, runSearch]);
 
-  const trimmed = query.trim();
-  const normalizedQuery = trimmed.replace(/^@/, "");
-  const existsLocally = normalizedQuery.length
-    ? !!getUserByUsernameLocal(normalizedQuery)
-    : false;
+  // ── derived UI state ───────────────────────────────────────────────────────
+  const effectiveResults = controlledMode ? results || [] : mappedRemoteResults;
+  const effectiveLoading = controlledMode ? !!loading : !!remoteLoading;
+  const effectiveError = controlledMode ? error : remoteError?.message || null;
 
-  const showRecents = !trimmed && !(usingLocal ? localLoading : loading) && !error;
-  const showQuickOpen = !!normalizedQuery && existsLocally;
+  const showRecents = !trimmed && !effectiveLoading && !effectiveError;
 
-  const effectiveResults = usingLocal ? localResults : results || [];
-  const effectiveLoading = usingLocal ? localLoading : !!loading;
+  // We only use exact-exists to show a more specific "No user named @…" banner
+  const exactExists = useMemo(() => {
+    if (!normalized) return false;
+    const q = normalized.toLowerCase();
+    return effectiveResults.some((u) => (u.username || "").toLowerCase() === q);
+  }, [normalized, effectiveResults]);
 
+  const showNotFound =
+    !!normalized &&
+    normalized.length >= minLen &&
+    !effectiveLoading &&
+    !exactExists;
+
+  // ── helpers ────────────────────────────────────────────────────────────────
   const clearQuery = () => {
     setQuery("");
-    setLocalResults([]);
-    setNotFound("");
-    onSearch?.("");
+    onSearchRef.current?.("");
   };
 
-  // helper: commit a recent term (min 2 chars)
   const commitRecent = (term) => {
     const t = (term || "").trim();
-    if (t.length >= 2) onCommitRecent?.(t);
-  };
-
-  const tryOpenUsername = (name) => {
-    const u = getUserByUsernameLocal(name);
-    if (!u) {
-      setNotFound(name);
-      return false;
-    }
-    setNotFound("");
-    commitRecent(u.username);            
-    router.push({ pathname: "/profile/[username]", params: { username: u.username } });
-    return true;
-  };
-
-  const submitSearch = () => {
-    clearTimeout(debounceRef.current);
-    if (!normalizedQuery.length) {
-      onSearch?.(trimmed);
-      // Optional: commit plain text searches only 
-      // commitRecent(trimmed);
-      Keyboard.dismiss();
-      return;
-    }
-    // Only navigate if user exists; otherwise show not-found.
-    if (!tryOpenUsername(normalizedQuery)) {
-      commitRecent(normalizedQuery);       // Save full attempt (optional)
-    }
-    Keyboard.dismiss();
+    if (t.length >= minLen) onCommitRecent?.(t);
   };
 
   const goToProfile = (user) => {
-    const ret = onSelectUser?.(user);
-    if (ret === false) return;
-    commitRecent(user.username);           
-    router.push({ pathname: "/profile/[username]", params: { username: user.username } });
+    // If parent provides a handler, let it own navigation to prevent a double push.
+    if (onSelectUser) {
+      onSelectUser(user);
+      commitRecent(user.username);
+      return;
+    }
+    // Otherwise, navigate ourselves.
+    commitRecent(user.username);
+    router.push(`/profile/${encodeURIComponent(user.username)}`);
   };
 
-  const openTypedProfile = () => {
-    if (!normalizedQuery.length) return;
-    tryOpenUsername(normalizedQuery);      // commits if it exists
+  const submitSearch = () => {
+    // No quick-open: just commit the term to the parent (optional) and run the search handler.
+    clearTimeout(debounceRef.current);
+    onSearchRef.current?.(trimmed);
+    if (trimmed.length >= minLen) commitRecent(trimmed);
+    Keyboard.dismiss();
   };
 
+  // ── render ─────────────────────────────────────────────────────────────────
   return (
-    <View style={[styles.card, style]}>
+    <View style={[styles.card, style, { paddingBottom: 12 + insets.bottom }]}>
       <Text style={styles.title}>Find collectors</Text>
 
+      {/* Search input */}
       <View style={styles.inputWrap}>
         <Ionicons name="search" size={18} color={COLORS.textMuted} style={{ marginRight: 8 }} />
         <TextInput
           value={query}
-          onChangeText={(t) => {
-            setQuery(t);
-            const name = t.trim().replace(/^@/, "");
-            setNotFound(name && !getUserByUsernameLocal(name) ? name : "");
-          }}
+          onChangeText={setQuery}
           onSubmitEditing={submitSearch}
           placeholder="Search users by name or @username"
           placeholderTextColor={COLORS.textMuted}
           style={styles.input}
           autoCapitalize="none"
           autoCorrect={false}
-          returnKeyType="go"
-          enterKeyHint="go"
+          returnKeyType="search"
+          enterKeyHint="search"
         />
         {effectiveLoading ? (
           <ActivityIndicator size="small" />
@@ -176,44 +166,28 @@ export default function UserSearchCard({
         ) : null}
       </View>
 
-      {!!normalizedQuery && !showQuickOpen && (
+      {/* Not-found banner (exact username typed but not present in results) */}
+      {showNotFound && (
         <View style={styles.notFound}>
           <Ionicons name="alert-circle-outline" size={16} color={COLORS.error || "#ff6b6b"} />
           <Text style={styles.notFoundText} numberOfLines={2}>
-            No user named @{normalizedQuery}
+            No user named @{normalized}
           </Text>
         </View>
       )}
 
-      {showQuickOpen && (
-        <Pressable
-          onPress={openTypedProfile}
-          style={({ pressed }) => [styles.quickOpen, pressed && { opacity: 0.85 }]}
-          hitSlop={6}
-          accessibilityRole="button"
-          accessibilityLabel={`Open profile @${normalizedQuery}`}
-        >
-          <Ionicons name="person-circle-outline" size={18} color={COLORS.text} />
-          <Text style={styles.quickOpenText} numberOfLines={1}>
-            Open @{normalizedQuery}
-          </Text>
-          <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
-        </Pressable>
-      )}
-
-      {error ? (
+      {/* Error / empty */}
+      {effectiveError ? (
         <Text style={styles.errorText} numberOfLines={2}>
-          {error}
+          {effectiveError}
         </Text>
       ) : (
         !effectiveLoading &&
         effectiveResults.length === 0 &&
-        !showRecents &&
-        !showQuickOpen && (
-          <Text style={styles.hint}>No users found.</Text>
-        )
+        !showRecents && <Text style={styles.hint}>No users found.</Text>
       )}
 
+      {/* Recents */}
       {showRecents && recent.length > 0 && (
         <View style={styles.recentsBlock}>
           <View style={styles.recentsHeader}>
@@ -232,17 +206,11 @@ export default function UserSearchCard({
                 onPress={() => {
                   setQuery(term);
                   clearTimeout(debounceRef.current);
-                  const name = term.trim().replace(/^@/, "");
-                  setNotFound(name && !getUserByUsernameLocal(name) ? name : "");
-                  if (usingLocal) {
-                    setLocalLoading(true);
-                    searchUsersLocal(term).then((res) => {
-                      setLocalResults(res);
-                      setLocalLoading(false);
-                    });
-                  } else {
+                  if (controlledMode) {
+                    onSearchRef.current?.(term);
                     onUseRecent?.(term);
-                    onSearch?.(term);
+                  } else if (term.trim().length >= minLen) {
+                    runSearch({ variables: { query: term.trim(), limit: 20 } });
                   }
                 }}
               >
@@ -256,28 +224,33 @@ export default function UserSearchCard({
         </View>
       )}
 
+      {/* Results (inner ScrollView avoids nested VirtualizedList warning) */}
       {effectiveResults.length > 0 && (
         <View style={styles.resultsWrap}>
-          <FlatList
-            data={effectiveResults}
-            keyExtractor={(u) => u.id}
+          <ScrollView
+            nestedScrollEnabled
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            renderItem={({ item }) => (
-              <ResultRow
-                user={item}
-                onOpenProfile={() => goToProfile(item)}
-                onToggleFollow={() => onToggleFollow?.(item)}
-              />
-            )}
-            ItemSeparatorComponent={() => <View style={styles.sep} />}
-          />
+            contentContainerStyle={{ paddingBottom: insets.bottom }}
+          >
+            {effectiveResults.map((item) => (
+              <View key={String(item.id)}>
+                <ResultRow
+                  user={item}
+                  onOpenProfile={() => goToProfile(item)}
+                  onToggleFollow={() => onToggleFollow?.(item)}
+                />
+                <View style={styles.sep} />
+              </View>
+            ))}
+          </ScrollView>
         </View>
       )}
     </View>
   );
 }
 
+/* Row */
 function ResultRow({ user, onOpenProfile, onToggleFollow }) {
   const name = user.displayName || user.username;
   const avatar =
@@ -320,6 +293,7 @@ function ResultRow({ user, onOpenProfile, onToggleFollow }) {
   );
 }
 
+/* Styles */
 const styles = StyleSheet.create({
   card: {
     backgroundColor: COLORS.surface,
@@ -343,6 +317,7 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, color: COLORS.text, paddingVertical: 0, marginRight: 8 },
 
+  // not-found banner
   notFound: {
     flexDirection: "row",
     alignItems: "center",
@@ -356,20 +331,6 @@ const styles = StyleSheet.create({
     borderColor: "#4d1a1a",
   },
   notFoundText: { color: "#ffb3b3", fontWeight: "800" },
-
-  quickOpen: {
-    marginTop: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  quickOpenText: { color: COLORS.text, fontWeight: "800", flex: 1 },
 
   errorText: { color: COLORS.error || "#ff6b6b", fontSize: 12.5 },
   hint: { color: COLORS.textMuted, fontSize: 12.5 },
@@ -393,8 +354,10 @@ const styles = StyleSheet.create({
   },
   chipText: { color: COLORS.text, fontWeight: "800" },
 
+  // Results area (capped height; inner ScrollView can scroll)
   resultsWrap: { maxHeight: 320 },
   sep: { height: 1, backgroundColor: COLORS.border, opacity: 0.6, marginLeft: 52 },
+
   row: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
   avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS.alt },
   rowTitle: { color: COLORS.text, fontWeight: "800" },

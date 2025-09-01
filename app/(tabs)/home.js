@@ -1,10 +1,19 @@
 // app/(tabs)/home.js
+// CHANGED: import typed hook from your package
+// CHANGED: alias `loading` → `meLoading` so existing references work
+// CHANGED: separate search loading state (`userSearchLoading`) from ME loading
+// CHANGED: small tidy on fake search and recent handling
 
-import { useQuery } from "@apollo/client";
-import { MeDocument } from "@sixbyfive/tcg-binder";
+import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 import { router } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { COLORS } from "../../theme/colors";
 
 import ActionRow, { ActionCard } from "../../components/home/ActionRow";
@@ -18,49 +27,58 @@ import VerificationBanner from "../../components/home/VerificationBanner";
 const DISCORD_INVITE = "https://tcg.sixbyfive.com/discord";
 
 export default function Home() {
+  // UI state for user search (separate from ME query loading)
+  const [userSearchLoading, setUserSearchLoading] = useState(false);
   const [results, setResults] = useState([]);
-  
+  const [recent, setRecent] = useState(["charizardfan", "ryan", "pokemon"]);
   const [refreshing, setRefreshing] = useState(false);
-  const { data, loading, refetch } = useQuery(MeDocument, {
+
+  // ✅ FIX: alias loading → meLoading
+  const { data, loading: meLoading, refetch, networkStatus } = useMeQuery({
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
   });
-  const [recent, setRecent] = useState(["charizardfan", "ryan", "pokemon"]); 
 
   const user = data?.me;
-  const greeting = loading ? "…" : `Hey ${user?.username || "Trainer"} 👋`;
+  const greeting = meLoading ? "…" : `Hey ${user?.username || "Trainer"} 👋`;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await refetch();
     } finally {
+      // small delay for nicer UX
       setTimeout(() => setRefreshing(false), 350);
     }
   }, [refetch]);
 
   // UI fallbacks
-  const recentBinders = (user?.recentBinders?.length ? user.recentBinders : [
-    { id: "b1", name: "Main Binder", pages: 32, updatedAtRelative: "2d" },
-    { id: "b2", name: "Trades", pages: 12, updatedAtRelative: "5d" },
-  ]).slice(0, 4);
+  const recentBinders = (user?.recentBinders?.length
+    ? user.recentBinders
+    : [
+        { id: "b1", name: "Main Binder", pages: 32, updatedAtRelative: "2d" },
+        { id: "b2", name: "Trades", pages: 12, updatedAtRelative: "5d" },
+      ]
+  ).slice(0, 4);
 
-  const watchlist = (user?.watchlistPreview?.length ? user.watchlistPreview : [
-    { id: "c1", name: "Charizard ex", set: "Obsidian Flames", price: "£24.10", change: "+3.1%" },
-    { id: "c2", name: "Lugia V", set: "Silver Tempest", price: "£18.40", change: "-1.2%" },
-    { id: "c3", name: "Pikachu", set: "Crown Zenith", price: "£6.90", change: "+0.4%" },
-  ]).slice(0, 6);
-
-  // const unreadDMs = user?.unreadDMs ?? 2;
-  // const unreadSystem = user?.unreadSystem ?? 3;
+  const watchlist = (user?.watchlistPreview?.length
+    ? user.watchlistPreview
+    : [
+        { id: "c1", name: "Charizard ex", set: "Obsidian Flames", price: "£24.10", change: "+3.1%" },
+        { id: "c2", name: "Lugia V", set: "Silver Tempest", price: "£18.40", change: "-1.2%" },
+        { id: "c3", name: "Pikachu", set: "Crown Zenith", price: "£6.90", change: "+0.4%" },
+      ]
+  ).slice(0, 6);
 
   // subscription bits
   const planName = user?.subscription?.planName ?? "Free";
-  const renewalText = user?.subscription?.renewalDateRelative ?? ((planName || "").toLowerCase() !== "free" ? "Renews monthly" : "—");
+  const renewalText =
+    user?.subscription?.renewalDateRelative ??
+    ((planName || "").toLowerCase() !== "free" ? "Renews monthly" : "—");
 
+  // Fake search (UI only for now)
   const fakeFetch = async (q) => {
-    setLoading(true);
-    // TODO: replace with real API call
+    setUserSearchLoading(true);
     await new Promise((r) => setTimeout(r, 400));
     setResults(
       q
@@ -70,8 +88,9 @@ export default function Home() {
           ]
         : []
     );
-    setLoading(false);
+    setUserSearchLoading(false);
   };
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: COLORS.background }}
@@ -81,7 +100,7 @@ export default function Home() {
           tintColor={COLORS.accent}
           colors={[COLORS.accent]}
           progressBackgroundColor={COLORS.surface}
-          refreshing={refreshing}
+          refreshing={refreshing || networkStatus === 4 /* refetching */}
           onRefresh={onRefresh}
         />
       }
@@ -92,47 +111,36 @@ export default function Home() {
 
       {/* Subscriptions + Discord */}
       <SubscriptionCard planName={planName} renewalText={renewalText} />
-      <DiscordCard inviteUrl={DISCORD_INVITE} />
 
-      {/* Verify banner */}
-      {user && user.verified === false && <VerificationBanner />}
-
-      {/* Quick actions */}
-      {/* <ActionRow>
-        <ActionCard label="Search cards" onPress={() => router.push("/(tabs)/search")} />
-        <ActionCard label="Wishlist" onPress={() => router.push("/(tabs)/collection?tab=wishlist")} />
-      </ActionRow> */}
-
-      {/* Price watch */}
-      <PriceWatchCard loading={loading} user={user} watchlist={watchlist} />
-
-      {/* Snapshot */}
-      <SnapshotCard loading={loading} user={user} />
-      
       {/* User Search */}
       <UserSearchCard
-      results={results}
-      loading={loading}
-      recent={recent}
-      onSearch={(q) => {
-        if (q && !recent.includes(q)) setRecent((r) => [q, ...r].slice(0, 8));
-        fakeFetch(q);
-      }}
-      onSelectUser={(u) => {/* navigate to profile */}}
-      onToggleFollow={(u) => {
-        setResults((list) =>
-          list.map((x) => (x.id === u.id ? { ...x, isFollowing: !x.isFollowing } : x))
-        );
-      }}
-      onUseRecent={(term) => {/* analytics, etc. */}}
-      onClearRecent={() => setRecent([])}
-    />
+        recent={recent}
+        onCommitRecent={(term) => {
+          setRecent((prev) => {
+            const next = [term, ...prev.filter((t) => t.toLowerCase() !== term.toLowerCase())];
+            return next.slice(0, 5); // cap to 5
+          });
+        }}
+        onClearRecent={() => setRecent([])}
+        onSelectUser={(u) => {
+          router.push(`/profile/${encodeURIComponent(u.username)}`);
+        }}
+        onToggleFollow={(u) => {
+          // optional: if you keep results in parent for other reasons
+        }}
+      />
 
-      {/* Continue */}
-      {/* <ContinueGrid loading={loading} user={user} recentBinders={recentBinders} /> */}
 
-      {/* Inbox preview */}
-      {/* <InboxPreview unreadDMs={unreadDMs} unreadSystem={unreadSystem} /> */}
+      {/* Verify banner (schema uses emailVerified on User) */}
+      {user && user.emailVerified === false && <VerificationBanner />}
+
+      {/* Price watch */}
+      <PriceWatchCard loading={meLoading} user={user} watchlist={watchlist} />
+
+      {/* Snapshot */}
+      <SnapshotCard loading={meLoading} user={user} />
+
+      <DiscordCard inviteUrl={DISCORD_INVITE} />
 
       {/* Shortcuts */}
       <ActionRow>
@@ -144,7 +152,7 @@ export default function Home() {
         <ActionCard label="App settings" onPress={() => router.push("/settings")} />
       </ActionRow>
 
-      {/* Recent activity (kept – left in parent for now) */}
+      {/* Recent activity (optional) */}
       {user?.recentActivity?.length ? (
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Recent activity</Text>
@@ -154,10 +162,7 @@ export default function Home() {
               <Text style={styles.activityMeta}>{it.timestampRelative}</Text>
             </View>
           ))}
-          <Text
-            onPress={() => router.push("/(tabs)/collection")}
-            style={styles.link}
-          >
+          <Text onPress={() => router.push("/(tabs)/collection")} style={styles.link}>
             View collection →
           </Text>
         </View>

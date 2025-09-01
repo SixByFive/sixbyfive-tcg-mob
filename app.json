@@ -2,7 +2,7 @@
   "expo": {
     "name": "SixByFive TCG",
     "slug": "sbf-tcg-mobile",
-    "version": "0.0.5",
+    "version": "0.0.6",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "tcgmobile",
@@ -22,6 +22,7 @@
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#ffffff"
       },
+      "softwareKeyboardLayoutMode": "resize",
       "edgeToEdgeEnabled": true,
       "package": "com.sixbyfive.sbftcgmobile",
       "intentFilters": [

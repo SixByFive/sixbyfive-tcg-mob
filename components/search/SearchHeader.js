@@ -15,7 +15,7 @@ export default function SearchHeader({ title, subtitle }) {
 }
 
 const styles = StyleSheet.create({
-  pageHeader: { paddingHorizontal: 16, paddingTop: 25, paddingBottom: 6 },
+  pageHeader: { paddingHorizontal: 16, paddingTop: 35, paddingBottom: 6 },
   pageTitle: { color: COLORS.text, fontSize: 22, fontWeight: "800" },
   pageSubtitle: { color: COLORS.textMuted, marginTop: 4, fontSize: 13.5 },
 });
