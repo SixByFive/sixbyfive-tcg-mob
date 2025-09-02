@@ -18,6 +18,7 @@ import PageHeader from "../../components/common/PageHeader";
 import SegmentTabs from "../../components/common/SegmentTabs";
 import ProfileEditForm from "../../components/profile/ProfileEditForm";
 import ProfileTopCard from "../../components/profile/ProfileTopCard";
+import ShowcaseEditorSheet from "../../components/profile/showcase/ShowcaseEditorSheet";
 import AchievementsTab from "../../components/profile/tabs/AchievementsTab";
 import BindersTab from "../../components/profile/tabs/BindersTab";
 import CardsTab from "../../components/profile/tabs/CardsTab";
@@ -39,6 +40,8 @@ export default function ProfileTab() {
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState("overview");
   const toast = useToast();
+  const [showcaseIds, setShowcaseIds] = useState([]); 
+  const [editorOpen, setEditorOpen] = useState(false); 
 
   const { data, loading, error, refetch, networkStatus } = useMeQuery({
     notifyOnNetworkStatusChange: true,
@@ -121,6 +124,17 @@ export default function ProfileTab() {
     );
   }
 
+  React.useEffect(() => {
+    if (showcaseIds.length === 0 && Array.isArray(me?.cardsPreview)) {
+      setShowcaseIds(me.cardsPreview.slice(0, 4).map((c) => String(c.id))); 
+    }
+  }, [me, showcaseIds.length]); 
+
+  const showcaseItems = React.useMemo(() => {
+    const map = new Map((me?.cardsPreview ?? []).map((c) => [String(c.id), c]));
+    return showcaseIds.map((id) => map.get(String(id))).filter(Boolean); 
+  }, [me?.cardsPreview, showcaseIds]);
+
   const tabs = [
     { key: "overview", label: "Overview" },
     { key: "cards", label: "Cards" },
@@ -130,6 +144,13 @@ export default function ProfileTab() {
     { key: "forTrade", label: "For Trade" },
     { key: "achievements", label: "Achievements" },
   ];
+
+  const openShowcaseEditor = () => setEditorOpen(true);
+  const closeShowcaseEditor = () => setEditorOpen(false);
+  const handleSaveShowcase = (ids) => {
+    setShowcaseIds(ids.slice(0, 8));
+    closeShowcaseEditor();
+  }
 
   // Derived collections
   const stats = {
@@ -170,15 +191,23 @@ export default function ProfileTab() {
           <OverviewTab
             stats={stats}
             isOwner={true /* or me?.id === profileOwnerId */}
-            showcaseItems={me?.showcase || []}
+            showcaseItems={showcaseItems}
             onEditStats={() => setEditMode("stats")}
-            onEditShowcase={() => setEditMode("showcase")}
-            onViewCards={() => setTab("cards")}
+            onEditShowcase={openShowcaseEditor}
+            onViewCards={() => router.push("/(tabs)/collection")}
             showAccountActions
             onOpenSettings={() => router.push("/settings")}
             onLogout={handleLogout}
           />
         )}
+        <ShowcaseEditorSheet
+          visible={editorOpen}
+          onClose={closeShowcaseEditor}
+          onSave={handleSaveShowcase}
+          candidates={me?.cardsPreview ?? []} 
+          initialSelected={showcaseIds}
+          max={8}
+        />
 
         {tab === "cards" && (
           <CardsTab

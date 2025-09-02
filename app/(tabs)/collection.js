@@ -18,7 +18,7 @@ import { filterBinders } from "../../utils/collectionFilters";
 export default function CollectionTab() {
   const router = useRouter();
 
-  const [segment, setSegment] = useState("binders"); // 'binders' | 'all' | 'wishlist'
+  const [segment, setSegment] = useState("all"); // 'binders' | 'all' | 'wishlist'
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 

@@ -1,28 +1,43 @@
 // components/search/CardTile.js
+// Card grid tile with price block + quick actions (UI-only)
+// Props:
+// - item (required)
+// - onPress?: () => void
+// - onAddToCollection?: (item) => void
+// - onAddToWishlist?: (item) => void
+// - isInCollection?: boolean
+// - isInWishlist?: boolean
+//
+// NOTE: This is UI-only. Wire the handlers in the screen to mutate server state.
 
-import { COLORS } from "../../theme/colors";
-
+import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { COLORS } from "../../theme/colors";
 import { getBestPrice, normalizeImageUrl } from "../../utils/cards";
 import AvgPriceBlock from "./AvgPriceBlock";
 
-export default function CardTile({ item, onPress }) {
+export default function CardTile({
+  item,
+  onPress,
+  onAddToCollection,
+  onAddToWishlist,
+  isInCollection = false,
+  isInWishlist = false,
+}) {
   const price = getBestPrice(item?.prices, "normal");
   const imageUri = normalizeImageUrl(item?.image);
 
   return (
-    <Pressable onPress={onPress} style={styles.card}>
+    <Pressable onPress={onPress} style={styles.card} android_ripple={{ color: "#00000022" }}>
+      {/* Image */}
       <View style={styles.cardImageWrap}>
         {imageUri ? (
-          <Image
-            source={{ uri: imageUri }}
-            style={styles.cardImage}
-            resizeMode="contain"
-          />
+          <Image source={{ uri: imageUri }} style={styles.cardImage} resizeMode="contain" />
         ) : null}
       </View>
 
+      {/* Info */}
       <View style={styles.cardInfo}>
         <Text style={styles.cardName} numberOfLines={1}>
           {item?.name || "—"}
@@ -35,14 +50,81 @@ export default function CardTile({ item, onPress }) {
           <Text style={styles.cardMetaStrong}>#{item?.number ?? "—"}</Text>
         </View>
 
+        {/* Prices */}
         <View style={{ marginTop: 8 }}>
           <AvgPriceBlock tcgp={price.tcgplayer} cmkt={price.cardmarket} />
         </View>
+      </View>
+
+      {/* Quick actions */}
+      <View style={styles.actionBar}>
+        <ActionButton
+          icon={isInCollection ? "checkmark" : "add-circle-outline"}
+          label={isInCollection ? "Added" : "Add"}
+          filled={!isInCollection}
+          disabled={isInCollection}
+          onPress={() => onAddToCollection?.(item)}
+        />
+        <ActionButton
+          icon={isInWishlist ? "heart" : "heart-outline"}
+          label={isInWishlist ? "Wishlisted" : "Wishlist"}
+          filled={false}
+          tinted
+          disabled={isInWishlist}
+          onPress={() => onAddToWishlist?.(item)}
+        />
       </View>
     </Pressable>
   );
 }
 
+/* ---- small pill button ---- */
+function ActionButton({ icon, label, filled, tinted, disabled, onPress }) {
+  const base = [
+    styles.actBtn,
+    filled && styles.actBtnFilled,
+    tinted && styles.actBtnTint,
+    disabled && styles.actBtnDisabled,
+  ];
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      android_ripple={{ color: "#00000022", borderless: false }}
+      style={({ pressed }) => [base, pressed && !disabled && { transform: [{ scale: 0.98 }] }]}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+    >
+      <Ionicons
+        name={icon}
+        size={14}
+        color={
+          disabled
+            ? COLORS.textMuted
+            : filled
+            ? "#fff"
+            : tinted
+            ? COLORS.accent
+            : COLORS.text
+        }
+        style={{ marginRight: 6 }}
+      />
+      <Text
+        style={[
+          styles.actLabel,
+          filled && { color: "#fff" },
+          tinted && !filled && { color: COLORS.accent, fontWeight: "900" },
+          disabled && { color: COLORS.textMuted },
+        ]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+/* ---- styles ---- */
 const styles = StyleSheet.create({
   card: {
     flex: 1,
@@ -50,9 +132,10 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 16,
-    margin: 6,
+    margin: 6, // pairs with FlatList column gap
     overflow: "hidden",
   },
+
   cardImageWrap: {
     backgroundColor: COLORS.alt,
     aspectRatio: 245 / 337,
@@ -61,8 +144,10 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   cardImage: { ...StyleSheet.absoluteFillObject },
+
   cardInfo: { padding: 8 },
   cardName: { color: COLORS.text, fontSize: 14.5, fontWeight: "700" },
+
   rowBetween: {
     marginTop: 4,
     flexDirection: "row",
@@ -76,4 +161,40 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   cardMetaStrong: { color: COLORS.text, fontSize: 12, fontWeight: "700" },
+
+  // quick actions
+  actionBar: {
+    flexDirection: "row",
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+  },
+  actBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.background,
+  },
+  actBtnFilled: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  actBtnTint: {
+    backgroundColor: COLORS.alt,
+    borderColor: COLORS.accent,
+  },
+  actBtnDisabled: {
+    opacity: 0.6,
+  },
+  actLabel: {
+    color: COLORS.text,
+    fontWeight: "800",
+    fontSize: 12.5,
+    letterSpacing: 0.2,
+  },
 });
