@@ -1,7 +1,4 @@
-// app/(tabs)/search.js
-
 import { useLazyQuery } from "@apollo/client";
-import { SearchCardsDocument } from "@sixbyfive/tcg-binder";
 import { useRouter } from "expo-router";
 import React, { useMemo, useRef, useState } from "react";
 import {
@@ -11,6 +8,9 @@ import {
   Text,
   View,
 } from "react-native";
+import {
+  SEARCH_CARDS_CONN_WITH_PRICES as SearchCardsConnectionDocument,
+} from "../../graphql/app-search-queries";
 
 import EmptyState from "../../components/common/EmptyState";
 import CardTile from "../../components/search/CardTile";
@@ -18,6 +18,110 @@ import SearchForm from "../../components/search/SearchForm";
 import SearchHeader from "../../components/search/SearchHeader";
 import { PER_PAGE } from "../../constants/pagination";
 import { COLORS } from "../../theme/colors";
+
+/* ---------------- helpers to normalize server shapes ---------------- */
+
+function readPageInfo(payload) {
+  const root =
+    payload?.searchCardsConnection ??
+    payload?.searchCards ??
+    {};
+  const pi = root.pageInfo || root.pageinfo || root.pagination || {};
+  return {
+    hasNextPage:
+      typeof pi.hasNextPage === "boolean"
+        ? pi.hasNextPage
+        : typeof pi.hasMore === "boolean"
+        ? pi.hasMore
+        : false,
+    endCursor: pi.endCursor || pi.endcursor || pi.cursor || null,
+    total: Number(root.totalCount ?? root.total ?? pi.total ?? 0) || 0,
+  };
+}
+
+// unify a single price record (tcgplayer vs tcgPlayer; keep other fields)
+function normalizePrice(p) {
+  if (!p || typeof p !== "object") return p;
+  const hasCamel = Object.prototype.hasOwnProperty.call(p, "tcgPlayer");
+  const hasLower = Object.prototype.hasOwnProperty.call(p, "tcgplayer");
+  return {
+    ...p,
+    tcgplayer: hasLower ? p.tcgplayer : hasCamel ? p.tcgPlayer : p.tcgplayer ?? p.tcgPlayer ?? null,
+  };
+}
+
+function normalizePricesArray(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr.map(normalizePrice);
+}
+
+// Prefer `searchCardsConnection.edges[].node`, but keep flat `cards[]` fallback
+function readCards(payload) {
+  const root =
+    payload?.searchCardsConnection ??
+    payload?.searchCards ??
+    {};
+
+  // flat array form
+  if (Array.isArray(root.cards))
+    return root.cards.map((n) => ({
+      ...n,
+      prices: Array.isArray(n?.prices)
+        ? normalizePricesArray(n.prices)
+        : Array.isArray(n?.pricing)
+        ? normalizePricesArray(n.pricing)
+        : [],
+    }));
+
+  // relay-style edges
+  if (Array.isArray(root.edges))
+    return root.edges
+      .map((e) => e?.node)
+      .filter(Boolean)
+      .map((n) => ({
+        ...n,
+        prices: Array.isArray(n?.prices)
+          ? normalizePricesArray(n.prices)
+          : Array.isArray(n?.pricing)
+          ? normalizePricesArray(n.pricing)
+          : [],
+      }));
+  return [];
+}
+
+// --- Exclude TCG Pocket locally (until server-side filter is wired) ---
+function isPocketCard(card) {
+  const name = (card?.setName || "").toLowerCase();
+  const code = (card?.set || "").toLowerCase();
+  // Heuristics: set name contains "pocket" OR codes commonly used for Pocket
+  return name.includes("pocket") || code.startsWith("pocket") || code.startsWith("pkp");
+}
+
+function filterOutPocket(cards, exclude = true) {
+  if (!exclude) return cards;
+  return cards.filter((c) => !isPocketCard(c));
+}
+
+function readHasMore(payload, pageSize, isExact) {
+  const { hasNextPage, total } = readPageInfo(payload);
+  if (typeof hasNextPage === "boolean") return hasNextPage;
+  if (total && !isExact) {
+    const len = readCards(payload).length;
+    return len < total;
+  }
+  const len = readCards(payload).length;
+  return len === (pageSize ?? PER_PAGE) && !isExact;
+}
+
+function readEndCursor(payload) {
+  return readPageInfo(payload).endCursor || null;
+}
+
+// CHANGED: remove client-side set mapping; let backend handle abbreviations/canonicalization
+function sanitizeSet(input) {
+  const s = (input ?? "").trim();
+  return s || null;
+}
 
 export default function SearchTab() {
   const router = useRouter();
@@ -29,11 +133,18 @@ export default function SearchTab() {
 
   // paging state
   const pageRef = useRef(1);
+  const afterRef = useRef(null);
   const loadingMoreRef = useRef(false);
   const [hasMore, setHasMore] = useState(false);
 
+  // UX toggles
+  const excludePocket = useMemo(() => {
+    // If user explicitly types "pocket" in the set field, don't exclude
+    return !/pocket/i.test(setCode || "");
+  }, [setCode]);
+
   const isExactCardSearch = useMemo(
-    () => Boolean(setCode && number),
+    () => Boolean(sanitizeSet(setCode) && number.trim()),
     [setCode, number]
   );
 
@@ -45,59 +156,49 @@ export default function SearchTab() {
     [name, setCode, number]
   );
 
+  // Use the connection query
   const [runSearch, { data, loading, error, fetchMore, called }] = useLazyQuery(
-    SearchCardsDocument,
+    SearchCardsConnectionDocument,
     {
       notifyOnNetworkStatusChange: true,
-      // ensure the first result comes from the network (with prices) then cache
       fetchPolicy: "network-only",
       nextFetchPolicy: "cache-first",
       returnPartialData: false,
     }
   );
 
-  const results = data?.searchCards?.cards ?? [];
-
-  // Determine if there are more pages, using pageInfo when available.
-  const readHasMore = (payload, pageSize) => {
-    const root = payload?.searchCards;
-    if (!root) return false;
-    const pi = root.pageInfo || root.pageinfo || root.pagination || {};
-    if (typeof pi.hasMore === "boolean") return pi.hasMore;
-    if (typeof pi.hasNextPage === "boolean") return pi.hasNextPage;
-
-    if (pi.total && (pi.page || pi.currentPage)) {
-      const page = Number(pi.page ?? pi.currentPage ?? 1);
-      const size = Number(pi.pageSize ?? pageSize ?? PER_PAGE);
-      return page * size < Number(pi.total);
-    }
-    // fallback when no metadata: if we received a full page (and not exact card)
-    const len = (root.cards || []).length;
-    return len === (pageSize ?? PER_PAGE) && !isExactCardSearch;
-  };
+  // Normalize + filter pocket
+  const results = useMemo(() => {
+    const cards = readCards(data);
+    return filterOutPocket(cards, excludePocket);
+  }, [data, excludePocket]);
 
   const onSearch = () => {
     if (!canSearch) return;
     pageRef.current = 1;
+    afterRef.current = null;
     loadingMoreRef.current = false;
     setHasMore(false);
 
+    const setParam = sanitizeSet(setCode);
+
+    // when searching by set only, send only 'set' (name/number null)
+    // and set trustUpstream:true so backend respects filters strictly.
     runSearch({
       variables: {
         input: {
           name: name.trim() || null,
-          set: setCode.trim().toUpperCase() || null,
+          set: setParam,
           number: number.trim() || null,
-          page: 1,
-          pageSize: PER_PAGE,
+          first: PER_PAGE,
+          after: null,
+          trustUpstream: true,
         },
-        // Some backends expose a top-level flag for prices.
-        // Safe to pass both; unused vars are ignored by the server.
         includePrices: true,
-        withPrices: true,
       },
       onCompleted: (res) => {
-        setHasMore(readHasMore(res, PER_PAGE));
+        setHasMore(readHasMore(res, PER_PAGE, isExactCardSearch));
+        afterRef.current = readEndCursor(res);
       },
     });
   };
@@ -106,6 +207,7 @@ export default function SearchTab() {
     if (!hasMore || loading || loadingMoreRef.current || !called) return;
     loadingMoreRef.current = true;
 
+    const nextAfter = afterRef.current;
     const nextPage = pageRef.current + 1;
 
     try {
@@ -113,15 +215,17 @@ export default function SearchTab() {
         variables: {
           input: {
             name: name.trim() || null,
-            set: setCode.trim().toUpperCase() || null,
+            set: sanitizeSet(setCode),
             number: number.trim() || null,
-            page: nextPage,
-            pageSize: PER_PAGE,
+            first: PER_PAGE,
+            after: nextAfter,
+            trustUpstream: true,
           },
+          includePrices: true,
         },
         updateQuery: (prev, { fetchMoreResult }) => {
-          const prevCards = prev?.searchCards?.cards ?? [];
-          const nextCards = fetchMoreResult?.searchCards?.cards ?? [];
+          const prevCards = filterOutPocket(readCards(prev), excludePocket);
+          const nextCards = filterOutPocket(readCards(fetchMoreResult), excludePocket);
 
           // dedupe by id
           const byId = new Map();
@@ -130,27 +234,29 @@ export default function SearchTab() {
           }
           const merged = Array.from(byId.values());
 
-          // did we actually get new ids?
+          // progress?
           const prevIds = new Set(prevCards.map((c) => String(c?.id)));
           const gotNew = nextCards.some((c) => !prevIds.has(String(c?.id)));
+          if (gotNew) pageRef.current = nextPage;
 
-          if (gotNew) {
-            pageRef.current = nextPage;
-          }
+          const nextHasMore = readHasMore(
+            fetchMoreResult,
+            PER_PAGE,
+            isExactCardSearch
+          );
+          setHasMore(gotNew && nextHasMore);
+          afterRef.current = readEndCursor(fetchMoreResult);
 
-          // conservative hasMore: prefer pageInfo; else full-page heuristic
-          const root = fetchMoreResult?.searchCards;
-          const pi = root?.pageInfo || root?.pageinfo || root?.pagination || {};
-          const nextHasMore =
-            typeof pi?.hasMore === "boolean"
-              ? pi.hasMore
-              : typeof pi?.hasNextPage === "boolean"
-              ? pi.hasNextPage
-              : nextCards.length === PER_PAGE && !isExactCardSearch;
-
-          setHasMore(gotNew && nextHasMore); // only true if we made progress
-
-          return { searchCards: { ...(root || {}), cards: merged } };
+          const root =
+            fetchMoreResult?.searchCardsConnection ??
+            fetchMoreResult?.searchCards ??
+            {};
+          return {
+            searchCardsConnection: {
+              ...root,
+              edges: merged.map((node) => ({ cursor: null, node })),
+            },
+          };
         },
       });
     } finally {
@@ -184,27 +290,37 @@ export default function SearchTab() {
         <FlatList
           contentContainerStyle={styles.listContent}
           data={results}
-          keyExtractor={(item, idx) => (item?.id ? String(item.id) : `${idx}`)}
+          keyExtractor={(item, idx) =>
+            item?.id ? String(item.id) : `${idx}`
+          }
           numColumns={2}
           columnWrapperStyle={styles.column}
-          renderItem={({ item }) => (
-            <CardTile
-              item={item}
-              onPress={() =>
-                router.push({
-                  pathname: `/card/${item.id}`,
-                  params: {
-                    id: String(item.id),
-                    name: item.name ?? "",
-                    number: String(item.number ?? ""),
-                    setName: item.setName ?? "",
-                    image: item.image ?? "",
-                    prices: JSON.stringify(item.prices ?? []),
-                  },
-                })
-              }
-            />
-          )}
+          renderItem={({ item }) => {
+            const normalizedPrices = Array.isArray(item?.prices)
+              ? item.prices
+              : Array.isArray(item?.pricing)
+              ? item.pricing
+              : [];
+            return (
+              <CardTile
+                item={item}
+                onPress={() =>
+                  router.push({
+                    pathname: `/card/${item.id}`,
+                    params: {
+                      id: String(item.id),
+                      name: item.name ?? "",
+                      number: String(item.number ?? ""),
+                      setName: item.setName ?? "",
+                      image: item.image ?? "",
+                      prices: JSON.stringify(normalizedPrices),
+                      pricing: JSON.stringify(normalizedPrices),
+                    },
+                  })
+                }
+              />
+            );
+          }}
           ListFooterComponent={
             hasMore ? (
               <View style={styles.footerLoading}>
@@ -217,17 +333,15 @@ export default function SearchTab() {
           onEndReached={loadMore}
         />
       ) : showPlaceholders ? (
-        // visible placeholders in a strict 2-column grid
         <PlaceholderGrid shimmer={!called && !loading} rows={6} />
       ) : (
-        // (rare) explicit empty + not loading + called -> keep your empty state
         <EmptyState message="No results found. Try different filters." />
       )}
     </View>
   );
 }
 
-/* ---------- visible placeholder items (always 2 per row) ---------- */
+/* ---------- visible placeholders (always 2 per row) ---------- */
 function PlaceholderGrid({ shimmer = false, rows = 3 }) {
   const items = Array.from({ length: rows * 2 }, (_, i) => i);
   return (
@@ -246,9 +360,7 @@ function PlaceholderTile({ shimmer = false }) {
     <View style={styles.placeholderCard}>
       <View style={[styles.placeholderImageWrap, shimmer && styles.pulse]} />
       <View style={styles.placeholderInfo}>
-        <View
-          style={[styles.placeholderLine, { width: "72%" }, shimmer && styles.pulse]}
-        />
+        <View style={[styles.placeholderLine, { width: "72%" }, shimmer && styles.pulse]} />
         <View
           style={[
             styles.placeholderLine,
@@ -264,11 +376,8 @@ function PlaceholderTile({ shimmer = false }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-
-  // real results grid
   listContent: { paddingHorizontal: 6, paddingBottom: 20 },
   column: { gap: 4 },
-
   footerLoading: {
     paddingVertical: 16,
     alignItems: "center",
@@ -276,20 +385,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   footerLoadingText: { color: COLORS.textMuted, fontSize: 12 },
-
-  // placeholder grid: exactly two columns
   placeholderWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
     paddingHorizontal: 6,
     paddingBottom: 20,
   },
-  placeholderCell: {
-    width: "50%", // <-- forces 2 per row
-    padding: 6,   // matches CardTile margins
-  },
-
-  // visible placeholder tile
+  placeholderCell: { width: "50%", padding: 6 },
   placeholderCard: {
     backgroundColor: COLORS.surface,
     borderColor: COLORS.border,

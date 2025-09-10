@@ -43,8 +43,6 @@ export default function OverviewTab({
       <Section
         title="Overview"
         subtitle="Your collection at a glance"
-        showEdit={isOwner && !!onEditStats}
-        onEdit={onEditStats}
       >
         <View style={styles.statsRow}>
           <Metric value={s.binders} label="Binders" />

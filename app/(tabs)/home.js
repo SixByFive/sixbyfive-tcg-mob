@@ -1,10 +1,6 @@
 // app/(tabs)/home.js
-// CHANGED: import typed hook from your package
-// CHANGED: alias `loading` → `meLoading` so existing references work
-// CHANGED: separate search loading state (`userSearchLoading`) from ME loading
-// CHANGED: small tidy on fake search and recent handling
 
-import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import { MeDocument } from "@sixbyfive/tcg-binder";
 import { router } from "expo-router";
 import React, { useCallback, useState } from "react";
 import {
@@ -16,6 +12,7 @@ import {
 } from "react-native";
 import { COLORS } from "../../theme/colors";
 
+import { useQuery } from "@apollo/client";
 import ActionRow, { ActionCard } from "../../components/home/ActionRow";
 import DiscordCard from "../../components/home/DiscordCard";
 import PriceWatchCard from "../../components/home/PriceWatchCard";
@@ -27,14 +24,13 @@ import VerificationBanner from "../../components/home/VerificationBanner";
 const DISCORD_INVITE = "https://tcg.sixbyfive.com/discord";
 
 export default function Home() {
-  // UI state for user search (separate from ME query loading)
+  // UI state for user search (separate from ME document loading)
   const [userSearchLoading, setUserSearchLoading] = useState(false);
   const [results, setResults] = useState([]);
-  const [recent, setRecent] = useState(["charizardfan", "ryan", "pokemon"]);
+  const [recent, setRecent] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  // ✅ FIX: alias loading → meLoading
-  const { data, loading: meLoading, refetch, networkStatus } = useMeQuery({
+  const { data, loading: meLoading, refetch, networkStatus } = useQuery(MeDocument,{
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
   });
@@ -75,21 +71,6 @@ export default function Home() {
   const renewalText =
     user?.subscription?.renewalDateRelative ??
     ((planName || "").toLowerCase() !== "free" ? "Renews monthly" : "—");
-
-  // Fake search (UI only for now)
-  const fakeFetch = async (q) => {
-    setUserSearchLoading(true);
-    await new Promise((r) => setTimeout(r, 400));
-    setResults(
-      q
-        ? [
-            { id: "1", username: "ryan", displayName: "Ryan", isFollowing: true },
-            { id: "2", username: "lugia_lover", displayName: "Lugia Lover", isFollowing: false },
-          ]
-        : []
-    );
-    setUserSearchLoading(false);
-  };
 
   return (
     <ScrollView

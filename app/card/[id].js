@@ -1,5 +1,4 @@
 // app/card/[id].js
-
 import { useQuery } from "@apollo/client";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
@@ -8,10 +7,10 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  View
+  View,
 } from "react-native";
 
-import { CARD_BY_ID_ALT, CARD_BY_ID_ID, CARD_BY_ID_STRING } from "../../graphql/cardQueries";
+import { CardByIdDocument as CARD_BY_ID } from "@sixbyfive/tcg-binder";
 import { COLORS } from "../../theme/colors";
 import { getBestPrice, normalizeImageUrl } from "../../utils/cards";
 import {
@@ -31,52 +30,56 @@ export default function CardDetailsScreen() {
   const params = useLocalSearchParams();
   const id = params.id ? String(params.id) : null;
 
-  // Stage-driven “try multiple queries” approach kept.
-  const [stage, setStage] = useState(0); // 0:String, 1:ID, 2:Alt
   const [range, setRange] = useState("30D"); // "7D" | "30D" | "90D" | "1Y"
 
   // Immediate UI from params (fallback)
   const fallback = useMemo(() => {
+    // CHANGED: accept either `prices` or `pricing` from params
     let prices = [];
     try {
-      prices = params.prices ? JSON.parse(params.prices) : [];
+      const raw = typeof params.prices === "string"
+        ? params.prices
+        : typeof params.pricing === "string"
+        ? params.pricing
+        : "[]";
+      const parsed = JSON.parse(raw);
+      prices = Array.isArray(parsed) ? parsed : [];
     } catch {}
     return {
       name: params.name ?? "",
       number: params.number ?? "",
       setName: params.setName ?? "",
       image: params.image ?? "",
-      prices,
+      prices, // ensures downstream code always sees `prices`
     };
-  }, [params]);
+  }, [params]); // :contentReference[oaicite:3]{index=3}
 
-  // Queries (in sequence)
-  const q1 = useQuery(CARD_BY_ID_STRING, {
+  // Query the live card
+  const { data, loading, error } = useQuery(CARD_BY_ID, {
     variables: { id: id ?? "" },
-    skip: !id || stage !== 0,
-    onError: () => setStage(1),
+    skip: !id,
+    fetchPolicy: "cache-first",
+    // (optional) uncomment for snappier UI when network returns:
+    // notifyOnNetworkStatusChange: true,
   });
 
-  const q2 = useQuery(CARD_BY_ID_ID, {
-    variables: { id: id ?? "" },
-    skip: !id || stage !== 1,
-    onError: () => setStage(2),
-  });
+  // Prefer live; fall back to nav params
+  const rawCard = data?.card ?? { id, ...fallback };
 
-  const q3 = useQuery(CARD_BY_ID_ALT, {
-    variables: { id: id ?? "" },
-    skip: !id || stage !== 2,
-  });
-
-  const liveCard = q1.data?.card ?? q2.data?.card ?? q3.data?.cardById ?? null;
-  const loading = q1.loading || q2.loading || q3.loading;
-  const queryError = q1.error || q2.error || q3.error;
-
-  // Prefer live data; fall back to params
-  const card = liveCard ?? { id, ...fallback };
+  // Normalize prices/pricing -> prices so downstream code is stable
+  const card = useMemo(() => {
+    const prices = Array.isArray(rawCard?.prices)
+      ? rawCard.prices
+      : Array.isArray(rawCard?.pricing)
+      ? rawCard.pricing
+      : [];
+    return { ...rawCard, prices };
+  }, [rawCard]); // :contentReference[oaicite:4]{index=4}
 
   const img = normalizeImageUrl(card?.image);
-  const price = getBestPrice(card?.prices, "normal");
+
+  // ✅ Use the card and pick most-recent priced variation
+  const price = useMemo(() => getBestPrice(card, { strategy: "recent" }), [card]);
 
   // Average across TCGP + CMKT
   const average = useMemo(() => {
@@ -110,14 +113,14 @@ export default function CardDetailsScreen() {
         onBack={() => router.back()}
       />
 
-      {loading && !liveCard ? (
+      {loading && !data?.card ? (
         <View style={styles.center}>
           <ActivityIndicator color={COLORS.accent} />
         </View>
-      ) : queryError && !liveCard ? (
+      ) : error && !data?.card ? (
         <View style={styles.center}>
           <Text style={{ color: COLORS.error }}>
-            {queryError.message || "Failed to load details"}
+            {error.message || "Failed to load details"}
           </Text>
         </View>
       ) : (
@@ -131,7 +134,9 @@ export default function CardDetailsScreen() {
             tcgp={price.tcgplayer}
             cmkt={price.cardmarket}
             average={average}
-            // Example CTAs (wire up to mutations/screens later)
+            variationLabel={
+              price?.variation ? String(price.variation).toUpperCase() : "—"
+            }
             onAddToCollection={() => {}}
             onToggleWishlist={() => {}}
           />
@@ -145,7 +150,6 @@ export default function CardDetailsScreen() {
             max={max}
           />
 
-          {/* Spacer */}
           <View style={{ height: 28 }} />
         </ScrollView>
       )}
