@@ -1,4 +1,5 @@
-import { useLazyQuery } from "@apollo/client";
+// app/(tabs)/search.js
+import { useLazyQuery, useMutation } from "@apollo/client";
 import { useRouter } from "expo-router";
 import React, { useMemo, useRef, useState } from "react";
 import {
@@ -12,11 +13,17 @@ import {
   SEARCH_CARDS_CONN_WITH_PRICES as SearchCardsConnectionDocument,
 } from "../../graphql/app-search-queries";
 
+import {
+  AddToCollectionDocument,
+  AddToWishlistDocument,
+} from "@sixbyfive/tcg-binder/client";
+
 import EmptyState from "../../components/common/EmptyState";
 import CardTile from "../../components/search/CardTile";
 import SearchForm from "../../components/search/SearchForm";
 import SearchHeader from "../../components/search/SearchHeader";
 import { PER_PAGE } from "../../constants/pagination";
+import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";
 
 /* ---------------- helpers to normalize server shapes ---------------- */
@@ -125,6 +132,7 @@ function sanitizeSet(input) {
 
 export default function SearchTab() {
   const router = useRouter();
+  const toast = useToast();
 
   // form state
   const [name, setName] = useState("");
@@ -136,25 +144,6 @@ export default function SearchTab() {
   const afterRef = useRef(null);
   const loadingMoreRef = useRef(false);
   const [hasMore, setHasMore] = useState(false);
-
-  // UX toggles
-  const excludePocket = useMemo(() => {
-    // If user explicitly types "pocket" in the set field, don't exclude
-    return !/pocket/i.test(setCode || "");
-  }, [setCode]);
-
-  const isExactCardSearch = useMemo(
-    () => Boolean(sanitizeSet(setCode) && number.trim()),
-    [setCode, number]
-  );
-
-  const canSearch = useMemo(
-    () =>
-      name.trim().length > 0 ||
-      setCode.trim().length > 0 ||
-      number.trim().length > 0,
-    [name, setCode, number]
-  );
 
   // Use the connection query
   const [runSearch, { data, loading, error, fetchMore, called }] = useLazyQuery(
@@ -170,8 +159,58 @@ export default function SearchTab() {
   // Normalize + filter pocket
   const results = useMemo(() => {
     const cards = readCards(data);
-    return filterOutPocket(cards, excludePocket);
-  }, [data, excludePocket]);
+    return filterOutPocket(cards, !/pocket/i.test(setCode || ""));
+  }, [data, setCode]);
+
+  // --- Mutations (flat var shape: $cardId, etc.) ---
+  const [addToWishlist] = useMutation(AddToWishlistDocument);
+  const [addToCollection] = useMutation(AddToCollectionDocument);
+
+  const onAddToWishlist = async (card) => {
+    if (!card?.id) return;
+    try {
+      await addToWishlist({
+        variables: {
+          cardId: String(card.id),
+          variation: "normal",
+        },
+      });
+      toast.show("Added to wishlist", { type: "success" });
+    } catch (e) {
+      console.warn("addToWishlist failed:", e);
+      toast.show("Couldn't add to wishlist", { type: "error" });
+    }
+  };
+
+  const onAddToCollection = async (card) => {
+    if (!card?.id) return;
+    try {
+      await addToCollection({
+        variables: {
+          cardId: String(card.id),
+          variation: "normal",
+          quantity: 1,
+        },
+      });
+      toast.show("Added to collection", { type: "success" });
+    } catch (e) {
+      console.warn("addToCollection failed:", e);
+      toast.show("Couldn't add to collection", { type: "error" });
+    }
+  };
+
+  const isExactCardSearch = useMemo(
+    () => Boolean(sanitizeSet(setCode) && number.trim()),
+    [setCode, number]
+  );
+
+  const canSearch = useMemo(
+    () =>
+      name.trim().length > 0 ||
+      setCode.trim().length > 0 ||
+      number.trim().length > 0,
+    [name, setCode, number]
+  );
 
   const onSearch = () => {
     if (!canSearch) return;
@@ -224,8 +263,8 @@ export default function SearchTab() {
           includePrices: true,
         },
         updateQuery: (prev, { fetchMoreResult }) => {
-          const prevCards = filterOutPocket(readCards(prev), excludePocket);
-          const nextCards = filterOutPocket(readCards(fetchMoreResult), excludePocket);
+          const prevCards = filterOutPocket(readCards(prev), !/pocket/i.test(setCode || ""));
+          const nextCards = filterOutPocket(readCards(fetchMoreResult), !/pocket/i.test(setCode || ""));
 
           // dedupe by id
           const byId = new Map();
@@ -242,7 +281,7 @@ export default function SearchTab() {
           const nextHasMore = readHasMore(
             fetchMoreResult,
             PER_PAGE,
-            isExactCardSearch
+            Boolean(sanitizeSet(setCode) && number.trim())
           );
           setHasMore(gotNew && nextHasMore);
           afterRef.current = readEndCursor(fetchMoreResult);
@@ -304,6 +343,8 @@ export default function SearchTab() {
             return (
               <CardTile
                 item={item}
+                onAddToWishlist={onAddToWishlist}
+                onAddToCollection={onAddToCollection}
                 onPress={() =>
                   router.push({
                     pathname: `/card/${item.id}`,

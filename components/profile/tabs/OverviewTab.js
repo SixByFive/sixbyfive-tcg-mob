@@ -1,7 +1,7 @@
 // components/profile/tabs/OverviewTab.js
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../../theme/colors";
 
 /**
@@ -54,7 +54,7 @@ export default function OverviewTab({
       </Section>
 
       {/* --- Showcase --- */}
-      <Section
+      {/* <Section
         title="Showcase"
         subtitle="Featured cards from your collection"
         showEdit={isOwner && !!onEditShowcase}
@@ -82,7 +82,7 @@ export default function OverviewTab({
         <Pressable onPress={onViewCards} hitSlop={6}>
           <Text style={styles.link}>View all cards →</Text>
         </Pressable>
-      </Section>
+      </Section> */}
 
       {/* --- Account actions (owner only) --- */}
       {showAccountActions && (

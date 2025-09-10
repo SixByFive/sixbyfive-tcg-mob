@@ -1,11 +1,9 @@
-// components/profile/ProfileEditForm.js
-
 import * as ImagePicker from "expo-image-picker";
-import React, { useEffect, useMemo, useRef, useState } from "react"; // CHANGED: +useRef
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Image,
-  KeyboardAvoidingView, // ADDED
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -14,10 +12,17 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context"; // ADDED
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../theme/colors";
+
+// IMPORTANT: check these two are DEFAULT exports in your project.
+// If they are named exports, change to: `import { PageHeaderBack } ...` / `import { FormField } ...`
 import PageHeaderBack from "../common/PageHeaderBack";
 import FormField from "./FormField";
+
+console.log("DBG PageHeaderBack is", typeof PageHeaderBack); // should be "function"
+console.log("DBG FormField is", typeof FormField);           // should be "function"
+
 
 const avatarPlaceholder = (nameOrUsername) =>
   `https://ui-avatars.com/api/?name=${encodeURIComponent(nameOrUsername || "User")}&background=2963FF&color=fff`;
@@ -28,7 +33,7 @@ export default function ProfileEditForm({
   onCancel,         // () => void
   saving = false,   // parent controls saving state
 }) {
-  const insets = useSafeAreaInsets(); // ADDED
+  const insets = useSafeAreaInsets();
 
   // ----- Seed from props -----
   const seed = useMemo(() => {
@@ -65,22 +70,27 @@ export default function ProfileEditForm({
   const bioValid = bio.length <= 160;
   const formValid = displayNameValid && bioValid;
 
-  // ----- Avatar picker (UI-only) -----
+  // ----- Avatar picker (Expo-safe) -----
   const pickAvatar = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Please allow photo library access to change avatar.");
-      return;
-    }
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: "images",
-      quality: 0.85,
-      allowsEditing: true,
-      aspect: [1, 1],
-    });
-    if (!res.canceled && res.assets?.length) {
-      // TODO: upload res.assets[0].uri -> remote URL -> setAvatarUrl(remoteUrl)
-      setAvatarUrl(res.assets[0].uri); // show immediately
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission needed", "Please allow photo library access to change avatar.");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images, // <-- enum, not string
+        quality: 0.85,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
+      if (!res.canceled && res.assets?.length) {
+        // TODO: upload res.assets[0].uri -> remote URL -> setAvatarUrl(remoteUrl)
+        setAvatarUrl(res.assets[0].uri); // show immediately
+      }
+    } catch (e) {
+      console.warn("ImagePicker error:", e);
+      Alert.alert("Image picker error", "Something went wrong opening your photo library.");
     }
   };
 
@@ -94,7 +104,7 @@ export default function ProfileEditForm({
     });
   };
 
-  // ----- Keyboard-safe scrolling (ADDED) -----
+  // ----- Keyboard-safe scrolling -----
   const scrollRef = useRef(null);
   const fieldYRef = useRef({}); // { bio: number, favourite: number, displayName: number }
 
@@ -104,16 +114,17 @@ export default function ProfileEditForm({
 
   const scrollToField = (key) => {
     const y = fieldYRef.current[key] ?? 0;
-    // Nudge up a bit so label + field are fully visible
     scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
   };
 
   // Header height + status bar offset for iOS keyboard avoidance
-  const KEYBOARD_VERTICAL_OFFSET = insets.top + 60; // tweak if your header is taller
+  const KEYBOARD_VERTICAL_OFFSET = (insets?.top ?? 0) + 60;
+
+  // Defensive: never pass undefined to Image `uri`
+  const avatarSrc = { uri: typeof avatarUrl === "string" && avatarUrl ? avatarUrl : avatarPlaceholder(seed.displayName || seed.username) };
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-      {/* Back header shows avatar + title; username is read-only */}
       <PageHeaderBack
         title="Edit Profile"
         subtitle={`@${seed.username}`}
@@ -121,7 +132,6 @@ export default function ProfileEditForm({
         onBack={onCancel}
       />
 
-      {/* ADDED: KeyboardAvoidingView around the scroller */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -131,16 +141,16 @@ export default function ProfileEditForm({
           ref={scrollRef}
           contentContainerStyle={{
             padding: 16,
-            paddingBottom: insets.bottom + 160, // ADDED: extra space so last field clears keyboard
+            paddingBottom: (insets?.bottom ?? 0) + 160,
           }}
-          keyboardShouldPersistTaps="handled"       // ADDED: allow taps while keyboard is up
-          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"} // ADDED
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           automaticallyAdjustContentInsets={false}
           showsVerticalScrollIndicator={false}
         >
           {/* Avatar row */}
           <View style={styles.avatarRow} onLayout={rememberY("avatar")}>
-            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+            <Image source={avatarSrc} style={styles.avatar} />
             <Pressable
               style={({ pressed }) => [styles.secondaryBtn, { opacity: pressed ? 0.7 : 1 }]}
               onPress={pickAvatar}
@@ -148,25 +158,6 @@ export default function ProfileEditForm({
               <Text style={styles.secondaryBtnText}>Change avatar</Text>
             </Pressable>
           </View>
-
-          {/* Display name (kept commented out; if you re-enable, it will scroll correctly) */}
-          {/*
-          <View onLayout={rememberY("displayName")}>
-            <FormField label="Display name">
-              <TextInput
-                value={displayName}
-                onChangeText={setDisplayName}
-                onFocus={() => scrollToField("displayName")}     // ADDED
-                placeholder="Display name"
-                placeholderTextColor={COLORS.textMuted}
-                style={[styles.input, !displayNameValid && styles.inputError]}
-              />
-              {!displayNameValid && (
-                <Text style={styles.errorText}>2–40 characters required.</Text>
-              )}
-            </FormField>
-          </View>
-          */}
 
           {/* Username (read-only) */}
           <View onLayout={rememberY("username")}>
@@ -183,7 +174,7 @@ export default function ProfileEditForm({
               <TextInput
                 value={bio}
                 onChangeText={setBio}
-                onFocus={() => scrollToField("bio")}              // ADDED
+                onFocus={() => scrollToField("bio")}
                 placeholder="Tell people about your collection"
                 placeholderTextColor={COLORS.textMuted}
                 style={[styles.input, { height: 88, textAlignVertical: "top" }, !bioValid && styles.inputError]}
@@ -202,7 +193,7 @@ export default function ProfileEditForm({
               <TextInput
                 value={favouritePokemon}
                 onChangeText={setFavouritePokemon}
-                onFocus={() => scrollToField("favourite")}        // ADDED
+                onFocus={() => scrollToField("favourite")}
                 placeholder="e.g., Lugia"
                 placeholderTextColor={COLORS.textMuted}
                 style={styles.input}

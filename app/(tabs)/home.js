@@ -15,13 +15,22 @@ import { COLORS } from "../../theme/colors";
 import { useQuery } from "@apollo/client";
 import ActionRow, { ActionCard } from "../../components/home/ActionRow";
 import DiscordCard from "../../components/home/DiscordCard";
-import PriceWatchCard from "../../components/home/PriceWatchCard";
+// HIDDEN: not ready yet
+// import PriceWatchCard from "../../components/home/PriceWatchCard";
+// import SubscriptionCard from "../../components/home/SubscriptionCard";
 import SnapshotCard from "../../components/home/SnapshotCard";
-import SubscriptionCard from "../../components/home/SubscriptionCard";
 import UserSearchCard from "../../components/home/UserSearchCard";
 import VerificationBanner from "../../components/home/VerificationBanner";
 
+// ADDED: lightweight replacement cards
+import GettingStartedCard from "../../components/home/GettingStartedCard";
+import TipsCard from "../../components/home/TipsCard";
+
 const DISCORD_INVITE = "https://tcg.sixbyfive.com/discord";
+
+// Feature switches (hardcoded off for now)
+const SHOW_SUBSCRIPTION = false;
+const SHOW_PRICE_WATCH = false;
 
 export default function Home() {
   // UI state for user search (separate from ME document loading)
@@ -30,7 +39,7 @@ export default function Home() {
   const [recent, setRecent] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  const { data, loading: meLoading, refetch, networkStatus } = useQuery(MeDocument,{
+  const { data, loading: meLoading, refetch, networkStatus } = useQuery(MeDocument, {
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
   });
@@ -43,28 +52,9 @@ export default function Home() {
     try {
       await refetch();
     } finally {
-      // small delay for nicer UX
       setTimeout(() => setRefreshing(false), 350);
     }
   }, [refetch]);
-
-  // UI fallbacks
-  const recentBinders = (user?.recentBinders?.length
-    ? user.recentBinders
-    : [
-        { id: "b1", name: "Main Binder", pages: 32, updatedAtRelative: "2d" },
-        { id: "b2", name: "Trades", pages: 12, updatedAtRelative: "5d" },
-      ]
-  ).slice(0, 4);
-
-  const watchlist = (user?.watchlistPreview?.length
-    ? user.watchlistPreview
-    : [
-        { id: "c1", name: "Charizard ex", set: "Obsidian Flames", price: "£24.10", change: "+3.1%" },
-        { id: "c2", name: "Lugia V", set: "Silver Tempest", price: "£18.40", change: "-1.2%" },
-        { id: "c3", name: "Pikachu", set: "Crown Zenith", price: "£6.90", change: "+0.4%" },
-      ]
-  ).slice(0, 6);
 
   // subscription bits
   const planName = user?.subscription?.planName ?? "Free";
@@ -90,8 +80,13 @@ export default function Home() {
       <Text style={styles.h1}>{greeting}</Text>
       <Text style={styles.sub}>Track your collection, check prices, and build binders.</Text>
 
-      {/* Subscriptions + Discord */}
-      <SubscriptionCard planName={planName} renewalText={renewalText} />
+      {/* Subscriptions (hidden) */}
+      {SHOW_SUBSCRIPTION ? (
+        // <SubscriptionCard planName={planName} renewalText={renewalText} />
+        <View />
+      ) : (
+        <GettingStartedCard />
+      )}
 
       {/* User Search */}
       <UserSearchCard
@@ -99,7 +94,7 @@ export default function Home() {
         onCommitRecent={(term) => {
           setRecent((prev) => {
             const next = [term, ...prev.filter((t) => t.toLowerCase() !== term.toLowerCase())];
-            return next.slice(0, 5); // cap to 5
+            return next.slice(0, 5);
           });
         }}
         onClearRecent={() => setRecent([])}
@@ -107,16 +102,20 @@ export default function Home() {
           router.push(`/profile/${encodeURIComponent(u.username)}`);
         }}
         onToggleFollow={(u) => {
-          // optional: if you keep results in parent for other reasons
+          // optional
         }}
       />
 
-
-      {/* Verify banner (schema uses emailVerified on User) */}
+      {/* Verify banner */}
       {user && user.emailVerified === false && <VerificationBanner />}
 
-      {/* Price watch */}
-      <PriceWatchCard loading={meLoading} user={user} watchlist={watchlist} />
+      {/* Price watch (hidden) */}
+      {SHOW_PRICE_WATCH ? (
+        // <PriceWatchCard loading={meLoading} user={user} watchlist={watchlist} />
+        <View />
+      ) : (
+        <TipsCard />
+      )}
 
       {/* Snapshot */}
       <SnapshotCard loading={meLoading} user={user} />
@@ -126,28 +125,14 @@ export default function Home() {
       {/* Shortcuts */}
       <ActionRow>
         <ActionCard label="Create binder" onPress={() => router.push("/binder/new")} />
-        <ActionCard label="Scan card" onPress={() => router.push("/scan")} />
+        <ActionCard label="Search cards" onPress={() => router.push("/(tabs)/search")} />
       </ActionRow>
       <ActionRow>
         <ActionCard label="Browse sets" onPress={() => router.push("/sets")} />
         <ActionCard label="App settings" onPress={() => router.push("/settings")} />
       </ActionRow>
 
-      {/* Recent activity (optional) */}
-      {user?.recentActivity?.length ? (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Recent activity</Text>
-          {user.recentActivity.slice(0, 5).map((it) => (
-            <View key={it.id} style={styles.activityRow}>
-              <Text style={styles.activityText}>{it.title}</Text>
-              <Text style={styles.activityMeta}>{it.timestampRelative}</Text>
-            </View>
-          ))}
-          <Text onPress={() => router.push("/(tabs)/collection")} style={styles.link}>
-            View collection →
-          </Text>
-        </View>
-      ) : null}
+      {/* Removed: Recent activity block (not in app yet) */}
     </ScrollView>
   );
 }
@@ -155,7 +140,6 @@ export default function Home() {
 const styles = StyleSheet.create({
   h1: { color: COLORS.text, fontSize: 22, fontWeight: "800" },
   sub: { color: COLORS.textMuted, marginTop: 6, marginBottom: 14 },
-
   card: {
     backgroundColor: COLORS.surface,
     borderColor: COLORS.border,

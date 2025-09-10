@@ -283,7 +283,8 @@ function ResultRow({ user, onOpenProfile, onToggleFollow }) {
           accessibilityLabel={user.isFollowing ? "Unfollow" : "Follow"}
         >
           <Text style={[styles.followText, user.isFollowing ? styles.followingText : styles.followText]}>
-            {user.isFollowing ? "Following" : "Follow"}
+            {/* {user.isFollowing ? "Following" : "Follow"} */}
+            Visit
           </Text>
         </Pressable>
       ) : (

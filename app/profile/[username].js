@@ -1,16 +1,14 @@
 // app/(tabs)/profile/[username].js
-import { Ionicons } from "@expo/vector-icons";
 import { useMeQuery, useUserProfileQuery } from "@sixbyfive/tcg-binder/react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  View,
+  View
 } from "react-native";
 
 import PageHeaderBackSimple from "../../components/common/PageHeaderBackSimple";
@@ -136,8 +134,8 @@ export default function PublicProfile() {
     { key: "cards", label: "Cards" },
     { key: "binders", label: "Binders" },
     { key: "wishlist", label: "Wishlist" },
-    { key: "forSale", label: "For Sale" },
-    { key: "forTrade", label: "For Trade" },
+    // { key: "forSale", label: "For Sale" },
+    // { key: "forTrade", label: "For Trade" },
     { key: "achievements", label: "Achievements" },
   ];
 
@@ -159,7 +157,7 @@ export default function PublicProfile() {
         <ProfileTopCard me={vm} readonly />
 
         {/* visitor actions */}
-        {!isOwner && (
+        {/* {!isOwner && (
           <View style={styles.actionBar}>
             <Pressable
               onPress={() => setFollowing((f) => !f)}
@@ -216,7 +214,7 @@ export default function PublicProfile() {
               </Text>
             </Pressable>
           </View>
-        )}
+        )} */}
 
         <SegmentTabs tabs={tabs} value={tab} onChange={setTab} />
 

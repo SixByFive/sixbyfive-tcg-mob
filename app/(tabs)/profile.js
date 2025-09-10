@@ -2,7 +2,7 @@
 
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 import { useRouter } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -18,7 +18,6 @@ import PageHeader from "../../components/common/PageHeader";
 import SegmentTabs from "../../components/common/SegmentTabs";
 import ProfileEditForm from "../../components/profile/ProfileEditForm";
 import ProfileTopCard from "../../components/profile/ProfileTopCard";
-import ShowcaseEditorSheet from "../../components/profile/showcase/ShowcaseEditorSheet";
 import AchievementsTab from "../../components/profile/tabs/AchievementsTab";
 import BindersTab from "../../components/profile/tabs/BindersTab";
 import CardsTab from "../../components/profile/tabs/CardsTab";
@@ -35,14 +34,17 @@ const avatarPlaceholder = (nameOrUsername) =>
 
 export default function ProfileTab() {
   const router = useRouter();
+  const toast = useToast();
+
+  // state hooks (always called)
   const [refreshing, setRefreshing] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState("overview");
-  const toast = useToast();
-  const [showcaseIds, setShowcaseIds] = useState([]); 
-  const [editorOpen, setEditorOpen] = useState(false); 
+  const [showcaseIds, setShowcaseIds] = useState([]);
+  const [editorOpen, setEditorOpen] = useState(false);
 
+  // data hook (always called)
   const { data, loading, error, refetch, networkStatus } = useMeQuery({
     notifyOnNetworkStatusChange: true,
     fetchPolicy: "cache-and-network",
@@ -50,6 +52,44 @@ export default function ProfileTab() {
 
   const me = data?.me ?? null;
 
+  // memoized values (always called)
+  const editInitial = useMemo(() => {
+    const displayName = me?.username || "";
+    const username = me?.username || "";
+    const bio = me?.profile?.bio || "";
+    const favouritePokemon = me?.profile?.favouritePokemon || "";
+    const avatarUrl =
+      me?.avatar || me?.profile?.avatar || avatarPlaceholder(displayName || username);
+
+    return { displayName, username, bio, favouritePokemon, avatarUrl };
+  }, [me]);
+
+  const showcaseItems = useMemo(() => {
+    const map = new Map((me?.cardsPreview ?? []).map((c) => [String(c.id), c]));
+    return showcaseIds.map((id) => map.get(String(id))).filter(Boolean);
+  }, [me?.cardsPreview, showcaseIds]);
+
+  const tabs = useMemo(
+    () => [
+      { key: "overview", label: "Overview" },
+      { key: "cards", label: "Cards" },
+      { key: "binders", label: "Binders" },
+      { key: "wishlist", label: "Wishlist" },
+      // { key: "forSale", label: "For Sale" },
+      // { key: "forTrade", label: "For Trade" },
+      { key: "achievements", label: "Achievements" },
+    ],
+    []
+  );
+
+  // effects (always called)
+  useEffect(() => {
+    if (showcaseIds.length === 0 && Array.isArray(me?.cardsPreview)) {
+      setShowcaseIds(me.cardsPreview.slice(0, 4).map((c) => String(c.id)));
+    }
+  }, [me, showcaseIds.length]);
+
+  // callbacks (always called)
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -64,27 +104,37 @@ export default function ProfileTab() {
     router.replace("/auth");
   }, [router]);
 
-  const editInitial = useMemo(() => {
-    const displayName = me?.username || "";
-    const username = me?.username || "";
-    const bio = me?.profile?.bio || "";
-    const favouritePokemon = me?.profile?.favouritePokemon || "";
-    const avatarUrl =
-      me?.avatar || me?.profile?.avatar || avatarPlaceholder(displayName || username);
+  const openShowcaseEditor = useCallback(() => setEditorOpen(true), []);
+  const closeShowcaseEditor = useCallback(() => setEditorOpen(false), []);
+  const handleSaveShowcase = useCallback((ids) => {
+    setShowcaseIds(ids.slice(0, 8));
+    closeShowcaseEditor();
+  }, [closeShowcaseEditor]);
 
-    return { displayName, username, bio, favouritePokemon, avatarUrl };
-  }, [me]);
+  // derived collections (always called)
+  const stats = {
+    binders: me?.stats?.binders ?? me?.bindersCount ?? 0,
+    cards: me?.stats?.cards ?? me?.cardsCount ?? 0,
+    wishlist: me?.stats?.wishlist ?? me?.wishlistCount ?? 0,
+    trades: me?.stats?.trades ?? me?.tradesCount ?? 0,
+    sales: me?.stats?.sales ?? me?.salesCount ?? 0,
+  };
+  const cardsPreview = Array.isArray(me?.cardsPreview) ? me.cardsPreview : [];
+  const forSalePreview = Array.isArray(me?.forSalePreview) ? me.forSalePreview : [];
+  const forTradePreview = Array.isArray(me?.forTradePreview) ? me.forTradePreview : [];
+  const achievements = Array.isArray(me?.achievements) ? me.achievements : [];
 
-  // ----- Loading / Error -----
+  // ---------- UI content selection (no early returns with hooks above) ----------
+  let content = null;
+
   if (loading && !me) {
-    return (
+    content = (
       <View style={[styles.container, styles.center]}>
         <ActivityIndicator color={COLORS.accent} />
       </View>
     );
-  }
-  if (error) {
-    return (
+  } else if (error) {
+    content = (
       <View style={[styles.container, styles.center]}>
         <Text style={{ color: COLORS.error, textAlign: "center", paddingHorizontal: 24 }}>
           {error.message}
@@ -97,10 +147,8 @@ export default function ProfileTab() {
         </Pressable>
       </View>
     );
-  }
-
-  if (editMode) {
-    return (
+  } else if (editMode) {
+    content = (
       <ProfileEditForm
         initial={editInitial}
         saving={saving}
@@ -122,53 +170,8 @@ export default function ProfileTab() {
         }}
       />
     );
-  }
-
-  React.useEffect(() => {
-    if (showcaseIds.length === 0 && Array.isArray(me?.cardsPreview)) {
-      setShowcaseIds(me.cardsPreview.slice(0, 4).map((c) => String(c.id))); 
-    }
-  }, [me, showcaseIds.length]); 
-
-  const showcaseItems = React.useMemo(() => {
-    const map = new Map((me?.cardsPreview ?? []).map((c) => [String(c.id), c]));
-    return showcaseIds.map((id) => map.get(String(id))).filter(Boolean); 
-  }, [me?.cardsPreview, showcaseIds]);
-
-  const tabs = [
-    { key: "overview", label: "Overview" },
-    { key: "cards", label: "Cards" },
-    { key: "binders", label: "Binders" },
-    { key: "wishlist", label: "Wishlist" },
-    { key: "forSale", label: "For Sale" },
-    { key: "forTrade", label: "For Trade" },
-    { key: "achievements", label: "Achievements" },
-  ];
-
-  const openShowcaseEditor = () => setEditorOpen(true);
-  const closeShowcaseEditor = () => setEditorOpen(false);
-  const handleSaveShowcase = (ids) => {
-    setShowcaseIds(ids.slice(0, 8));
-    closeShowcaseEditor();
-  }
-
-  // Derived collections
-  const stats = {
-    binders: me?.stats?.binders ?? me?.bindersCount ?? 0,
-    cards: me?.stats?.cards ?? me?.cardsCount ?? 0,
-    wishlist: me?.stats?.wishlist ?? me?.wishlistCount ?? 0,
-    trades: me?.stats?.trades ?? me?.tradesCount ?? 0,
-    sales: me?.stats?.sales ?? me?.salesCount ?? 0,
-  };
-  const cardsPreview = Array.isArray(me?.cardsPreview) ? me.cardsPreview : [];
-  const forSalePreview = Array.isArray(me?.forSalePreview) ? me.forSalePreview : [];
-  const forTradePreview = Array.isArray(me?.forTradePreview) ? me.forTradePreview : [];
-  const achievements = Array.isArray(me?.achievements) ? me.achievements : [];
-
-  return (
-    <View style={styles.container}>
-      <PageHeader title="Profile" subtitle="Manage your account and collection" />
-
+  } else {
+    content = (
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
@@ -200,14 +203,17 @@ export default function ProfileTab() {
             onLogout={handleLogout}
           />
         )}
+
+        {/* If you add the editor back later:
         <ShowcaseEditorSheet
           visible={editorOpen}
           onClose={closeShowcaseEditor}
           onSave={handleSaveShowcase}
-          candidates={me?.cardsPreview ?? []} 
+          candidates={me?.cardsPreview ?? []}
           initialSelected={showcaseIds}
           max={8}
         />
+        */}
 
         {tab === "cards" && (
           <CardsTab
@@ -281,6 +287,15 @@ export default function ProfileTab() {
 
         <View style={{ height: 28 }} />
       </ScrollView>
+    );
+  }
+
+  // Single return after all hooks have been declared
+  return (
+    <View style={styles.container}>
+      {/* Show a header on all states except edit mode (your UI choice) */}
+      {!editMode && <PageHeader title="Profile" subtitle="Manage your account and collection" />}
+      {content}
     </View>
   );
 }
