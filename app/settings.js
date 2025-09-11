@@ -1,9 +1,8 @@
 // app/settings.js
 
 import Constants from "expo-constants";
-import { router } from "expo-router";
 import React, { useState } from "react";
-import { Linking, Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import PageHeaderBackSimple from "../components/common/PageHeaderBackSimple";
 import { COLORS } from "../theme/colors";
 
@@ -19,7 +18,7 @@ export default function Settings() {
       <PageHeaderBackSimple title="App Settings" subtitle="Notifications & preferences" />
 
       {/* Subscription section */}
-      <View style={styles.section}>
+      {/* <View style={styles.section}>
         <Text style={styles.sectionTitle}>Subscription</Text>
 
         <Pressable style={styles.rowBtn} onPress={() => router.push("/subscriptions/manage")}>
@@ -39,27 +38,27 @@ export default function Settings() {
           <Text style={styles.label}>Billing portal</Text>
           <Text style={styles.value}>Open</Text>
         </Pressable>
-      </View>
+      </View> */}
 
       {/* Notifications section */}
-      <View style={styles.section}>
+      {/* <View style={styles.section}>
         <Text style={styles.sectionTitle}>Notifications</Text>
 
         <View style={styles.row}>
           <Text style={styles.label}>Push notifications</Text>
           <Switch value={pushEnabled} onValueChange={setPushEnabled} />
         </View>
-      </View>
+      </View> */}
 
       {/* Preferences section */}
-      <View style={styles.section}>
+      {/* <View style={styles.section}>
         <Text style={styles.sectionTitle}>Preferences</Text>
 
         <View style={styles.row}>
           <Text style={styles.label}>Theme</Text>
           <Text style={styles.value}>{darkMode ? "Dark" : "Light"}</Text>
         </View>
-      </View>
+      </View> */}
 
       {/* Help & Legal */}
       <View style={styles.section}>

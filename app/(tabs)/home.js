@@ -24,7 +24,6 @@ import VerificationBanner from "../../components/home/VerificationBanner";
 
 // ADDED: lightweight replacement cards
 import GettingStartedCard from "../../components/home/GettingStartedCard";
-import TipsCard from "../../components/home/TipsCard";
 
 const DISCORD_INVITE = "https://tcg.sixbyfive.com/discord";
 
@@ -110,12 +109,10 @@ export default function Home() {
       {user && user.emailVerified === false && <VerificationBanner />}
 
       {/* Price watch (hidden) */}
-      {SHOW_PRICE_WATCH ? (
-        // <PriceWatchCard loading={meLoading} user={user} watchlist={watchlist} />
+
+        {/* <PriceWatchCard loading={meLoading} user={user} watchlist={watchlist} /> */}
         <View />
-      ) : (
-        <TipsCard />
-      )}
+      
 
       {/* Snapshot */}
       <SnapshotCard loading={meLoading} user={user} />

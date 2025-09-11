@@ -31,17 +31,22 @@ export default function CardDetailsScreen() {
   const id = params.id ? String(params.id) : null;
 
   const [range, setRange] = useState("30D"); // "7D" | "30D" | "90D" | "1Y"
+  const hideActions =
+    params?.hideActions === "1" ||
+    params?.hideActions === 1 ||
+    params?.hideActions === true;
 
   // Immediate UI from params (fallback)
   const fallback = useMemo(() => {
-    // CHANGED: accept either `prices` or `pricing` from params
+    // accept either `prices` or `pricing` from params
     let prices = [];
     try {
-      const raw = typeof params.prices === "string"
-        ? params.prices
-        : typeof params.pricing === "string"
-        ? params.pricing
-        : "[]";
+      const raw =
+        typeof params.prices === "string"
+          ? params.prices
+          : typeof params.pricing === "string"
+          ? params.pricing
+          : "[]";
       const parsed = JSON.parse(raw);
       prices = Array.isArray(parsed) ? parsed : [];
     } catch {}
@@ -52,15 +57,13 @@ export default function CardDetailsScreen() {
       image: params.image ?? "",
       prices, // ensures downstream code always sees `prices`
     };
-  }, [params]); // :contentReference[oaicite:3]{index=3}
+  }, [params]);
 
   // Query the live card
   const { data, loading, error } = useQuery(CARD_BY_ID, {
     variables: { id: id ?? "" },
     skip: !id,
     fetchPolicy: "cache-first",
-    // (optional) uncomment for snappier UI when network returns:
-    // notifyOnNetworkStatusChange: true,
   });
 
   // Prefer live; fall back to nav params
@@ -74,11 +77,11 @@ export default function CardDetailsScreen() {
       ? rawCard.pricing
       : [];
     return { ...rawCard, prices };
-  }, [rawCard]); // :contentReference[oaicite:4]{index=4}
+  }, [rawCard]);
 
   const img = normalizeImageUrl(card?.image);
 
-  // ✅ Use the card and pick most-recent priced variation
+  // pick most-recent priced variation
   const price = useMemo(() => getBestPrice(card, { strategy: "recent" }), [card]);
 
   // Average across TCGP + CMKT
@@ -105,6 +108,14 @@ export default function CardDetailsScreen() {
 
   const { min, max, avg } = useMemo(() => seriesStats(series), [series]);
   const barHeights = useMemo(() => toBarHeights(series, 80), [series]); // 80px chart area
+
+  // Only include action handlers when actions are visible
+  const actionProps = hideActions
+    ? {}
+    : {
+        onAddToCollection: () => {},
+        onToggleWishlist: () => {},
+      };
 
   return (
     <View style={styles.container}>
@@ -137,8 +148,7 @@ export default function CardDetailsScreen() {
             variationLabel={
               price?.variation ? String(price.variation).toUpperCase() : "—"
             }
-            onAddToCollection={() => {}}
-            onToggleWishlist={() => {}}
+            {...actionProps}
           />
 
           <PricingHistory
