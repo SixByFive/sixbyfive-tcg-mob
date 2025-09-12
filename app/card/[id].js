@@ -1,5 +1,5 @@
 // app/card/[id].js
-import { useQuery } from "@apollo/client";
+import { useMutation, useQuery } from "@apollo/client";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
@@ -11,6 +11,12 @@ import {
 } from "react-native";
 
 import { CardByIdDocument as CARD_BY_ID } from "@sixbyfive/tcg-binder";
+import {
+  AddToCollectionDocument,
+  AddToWishlistDocument,
+} from "@sixbyfive/tcg-binder/client";
+
+import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";
 import { getBestPrice, normalizeImageUrl } from "../../utils/cards";
 import {
@@ -27,8 +33,9 @@ import PricingHistory from "../../components/card/PricingHistory";
 
 export default function CardDetailsScreen() {
   const router = useRouter();
+  const toast = useToast();
   const params = useLocalSearchParams();
-  const id = params.id ? String(params.id) : null;
+  const routeId = params.id ? String(params.id) : null;
 
   const [range, setRange] = useState("30D"); // "7D" | "30D" | "90D" | "1Y"
   const hideActions =
@@ -61,13 +68,13 @@ export default function CardDetailsScreen() {
 
   // Query the live card
   const { data, loading, error } = useQuery(CARD_BY_ID, {
-    variables: { id: id ?? "" },
-    skip: !id,
+    variables: { id: routeId ?? "" },
+    skip: !routeId,
     fetchPolicy: "cache-first",
   });
 
   // Prefer live; fall back to nav params
-  const rawCard = data?.card ?? { id, ...fallback };
+  const rawCard = data?.card ?? { id: routeId, ...fallback };
 
   // Normalize prices/pricing -> prices so downstream code is stable
   const card = useMemo(() => {
@@ -109,12 +116,75 @@ export default function CardDetailsScreen() {
   const { min, max, avg } = useMemo(() => seriesStats(series), [series]);
   const barHeights = useMemo(() => toBarHeights(series, 80), [series]); // 80px chart area
 
+  /* ------------------ Mutations (add to collection / wishlist) ------------------ */
+  const [addToCollection, { loading: addingCollection }] = useMutation(
+    AddToCollectionDocument
+  );
+  const [addToWishlist, { loading: addingWishlist }] = useMutation(
+    AddToWishlistDocument
+  );
+
+  // Resolve a valid cardId from multiple sources
+  const resolvedCardId =
+    (card && card.id ? String(card.id) : null) ||
+    (routeId ? String(routeId) : null) ||
+    (params?.cardId ? String(params.cardId) : null);
+
+  const variation = price?.variation ? String(price.variation) : "normal";
+
+  const handleAddToCollection = async () => {
+    if (!resolvedCardId) {
+      toast.show("Missing card id", { type: "error" });
+      return;
+    }
+    try {
+      await addToCollection({
+        variables: {
+
+            cardId: resolvedCardId,
+            variation,
+            quantity: 1,
+
+        },
+      });
+      toast.show("Added to collection", { type: "success" });
+    } catch (e) {
+      toast.show(
+        e?.graphQLErrors?.[0]?.message || e?.message || "Failed to add to collection",
+        { type: "error" }
+      );
+    }
+  };
+
+  const handleToggleWishlist = async () => {
+    if (!resolvedCardId) {
+      toast.show("Missing card id", { type: "error" });
+      return;
+    }
+    try {
+      await addToWishlist({
+        variables: {
+
+            cardId: resolvedCardId,
+            variation,
+
+        },
+      });
+      toast.show("Added to wishlist", { type: "success" });
+    } catch (e) {
+      toast.show(
+        e?.graphQLErrors?.[0]?.message || e?.message || "Failed to update wishlist",
+        { type: "error" }
+      );
+    }
+  };
+
   // Only include action handlers when actions are visible
   const actionProps = hideActions
     ? {}
     : {
-        onAddToCollection: () => {},
-        onToggleWishlist: () => {},
+        onAddToCollection: addingCollection ? undefined : handleAddToCollection,
+        onToggleWishlist: addingWishlist ? undefined : handleToggleWishlist,
       };
 
   return (
@@ -148,6 +218,7 @@ export default function CardDetailsScreen() {
             variationLabel={
               price?.variation ? String(price.variation).toUpperCase() : "—"
             }
+            hideActions={hideActions}
             {...actionProps}
           />
 

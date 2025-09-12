@@ -58,6 +58,24 @@ export default function PublicProfile() {
     if (!p) return null;
     const uname = p.user?.username || username;
 
+    // Read nested profile fields first, then fall back
+    const prof = p.profile ?? {};
+    const bio =
+      prof.bio ??
+      p.bio ??
+      "";
+    const favouritePokemon =
+      prof.favouritePokemon ??
+      prof.favoritePokemon ??
+      p.favouritePokemon ??
+      p.favoritePokemon ??
+      "";
+    const avatarResolved =
+      prof.avatar ??
+      p.user?.avatar ??
+      p.avatar ??
+      avatarPlaceholder(uname);
+
     const stats = {
       binders: p?.stats?.binders ?? p?.bindersCount ?? 0,
       cards: p?.stats?.cards ?? p?.cardsCount ?? 0,
@@ -69,11 +87,11 @@ export default function PublicProfile() {
     return {
       id: p.userId || p.id,
       username: uname,
-      avatar: p.user?.avatar || p.avatar || avatarPlaceholder(uname),
+      avatar: avatarResolved,
       profile: {
-        bio: p.bio || "",
-        favouritePokemon: p.favouritePokemon || "",
-        avatar: p.avatar || p.user?.avatar || null,
+        bio,
+        favouritePokemon,
+        avatar: avatarResolved,
       },
       meta: {
         joined: fmtDate(p.user?.createdAt),
@@ -156,66 +174,6 @@ export default function PublicProfile() {
       >
         <ProfileTopCard me={vm} readonly />
 
-        {/* visitor actions */}
-        {/* {!isOwner && (
-          <View style={styles.actionBar}>
-            <Pressable
-              onPress={() => setFollowing((f) => !f)}
-              accessibilityRole="button"
-              accessibilityLabel={following ? "Unfollow" : "Follow"}
-              android_ripple={{ color: "#1f3fb866" }}
-              style={({ pressed }) => [
-                styles.button,
-                following ? styles.buttonFollowing : styles.buttonPrimary,
-                pressed && styles.buttonPressed,
-              ]}
-            >
-              <View
-                style={[
-                  styles.iconPill,
-                  following ? styles.iconPillFollowing : styles.iconPillPrimary,
-                ]}
-              >
-                <Ionicons
-                  name={following ? "checkmark" : "person-add-outline"}
-                  size={16}
-                  color={following ? COLORS.accent : "#fff"}
-                />
-              </View>
-              <Text
-                style={[
-                  styles.buttonText,
-                  following ? styles.buttonTextFollowing : styles.buttonTextPrimary,
-                ]}
-                numberOfLines={1}
-              >
-                {following ? "Following" : "Follow"}
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() =>
-                router.push(`/messages/compose?to=${encodeURIComponent(vm.username)}`)
-              }
-              accessibilityRole="button"
-              accessibilityLabel="Message"
-              android_ripple={{ color: "#2a2f3a66" }}
-              style={({ pressed }) => [
-                styles.button,
-                styles.buttonSecondary,
-                pressed && styles.buttonPressed,
-              ]}
-            >
-              <View style={[styles.iconPill, styles.iconPillSecondary]}>
-                <Ionicons name="chatbubble-ellipses-outline" size={16} color={COLORS.text} />
-              </View>
-              <Text style={[styles.buttonText, styles.buttonTextSecondary]} numberOfLines={1}>
-                Message
-              </Text>
-            </Pressable>
-          </View>
-        )} */}
-
         <SegmentTabs tabs={tabs} value={tab} onChange={setTab} />
 
         {tab === "overview" && (
@@ -227,24 +185,27 @@ export default function PublicProfile() {
           />
         )}
 
-        {tab === "cards" && (
-          <CardsTab
-            cards={vm.cardsPreview}
-            onOpenCard={(c) =>
-              router.push({
-                pathname: "/card/[id]",
-                params: {
-                  id: String(c.id),
-                  name: c.name ?? "",
-                  setName: c.setName ?? "",
-                  number: String(c.number ?? ""),
-                  image: c.image ?? "",
-                  prices: JSON.stringify(c.prices || []),
-                },
-              })
-            }
-          />
-        )}
+          {tab === "cards" && (
+            <CardsTab
+              title={`${vm.username}'s Cards`}
+              cards={vm.cardsPreview}     // preview from the profile query
+              userId={vm.id}              // lets CardsTab self-fetch if preview is empty
+              loading={loading && !vm}    // optional: show skeletons while first load
+              onOpenCard={(c) =>
+                router.push({
+                  pathname: "/card/[id]",
+                  params: {
+                    id: String(c.id),
+                    name: c.name ?? "",
+                    setName: c.setName ?? "",
+                    number: String(c.number ?? ""),
+                    image: c.image ?? "",
+                    prices: JSON.stringify(c.prices || []),
+                  },
+                })
+              }
+            />
+          )}
 
         {tab === "binders" && (
           <BindersTab binders={vm.recentBinders} onOpenBinder={(id) => router.push(`/binder/${id}`)} />

@@ -2,7 +2,7 @@
   "expo": {
     "name": "SixByFive TCG",
     "slug": "sbf-tcg-mobile",
-    "version": "0.0.10",
+    "version": "0.0.11",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "tcgmobile",
@@ -66,6 +66,7 @@
 
     "extra": {
       "EXPO_PUBLIC_GRAPHQL_ENDPOINT": "https://backendtcg.sixbyfive.com/graphql",
+      "EXPO_PUBLIC_ASSET_BASE_URL": "https://backendtcg.sixbyfive.com",
       "router": {},
       "eas": {
         "projectId": "941ffa41-876d-4f3b-83aa-f66b7f1bb442"

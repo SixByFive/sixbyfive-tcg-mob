@@ -269,27 +269,9 @@ function ResultRow({ user, onOpenProfile, onToggleFollow }) {
         <Text style={styles.rowTitle} numberOfLines={1}>{name}</Text>
         <Text style={styles.rowSub} numberOfLines={1}>@{user.username}</Text>
       </View>
+        
 
-      {typeof user.isFollowing === "boolean" ? (
-        <Pressable
-          onPress={onToggleFollow}
-          style={({ pressed }) => [
-            styles.followBtn,
-            user.isFollowing ? styles.following : styles.follow,
-            pressed && { opacity: 0.9 },
-          ]}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel={user.isFollowing ? "Unfollow" : "Follow"}
-        >
-          <Text style={[styles.followText, user.isFollowing ? styles.followingText : styles.followText]}>
-            {/* {user.isFollowing ? "Following" : "Follow"} */}
-            Visit
-          </Text>
-        </Pressable>
-      ) : (
-        <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
-      )}
+      <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
     </Pressable>
   );
 }

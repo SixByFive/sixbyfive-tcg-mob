@@ -22,9 +22,16 @@ export default function InfoCard({
   tcgp,
   cmkt,
   average,
+  hideActions = false,
   onAddToCollection,
   onToggleWishlist,
 }) {
+
+  const showActions = 
+    !hideActions &&
+    typeof onAddToCollection === "function" &&
+    typeof onToggleWishlist === "function"; 
+
   return (
     <View style={styles.infoCard}>
       <View style={styles.rowBetween}>
@@ -50,14 +57,17 @@ export default function InfoCard({
         <Text style={styles.avgValue}>{average != null ? `£${average.toFixed(2)}` : "—"}</Text>
       </View>
 
-      <View style={styles.ctaRow}>
-        <Pressable onPress={onAddToCollection} style={[styles.cta, { backgroundColor: COLORS.accent }]}>
-          <Text style={styles.ctaText}>Add to Collection</Text>
-        </Pressable>
-        <Pressable onPress={onToggleWishlist} style={[styles.ctaOutline, { borderColor: COLORS.accent }]}>
-          <Text style={styles.ctaOutlineText}>Wishlist</Text>
-        </Pressable>
-      </View>
+      {showActions && (
+        <View style={styles.ctaRow}>
+          <Pressable onPress={onAddToCollection} style={[styles.cta, { backgroundColor: COLORS.accent }]}>
+            <Text style={styles.ctaText}>Add to Collection</Text>
+          </Pressable>
+          <Pressable onPress={onToggleWishlist} style={[styles.ctaOutline, { borderColor: COLORS.accent }]}>
+            <Text style={styles.ctaOutlineText}>Wishlist</Text>
+          </Pressable>
+        </View>
+      )}
+      
     </View>
   );
 }
