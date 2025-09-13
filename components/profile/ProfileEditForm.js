@@ -15,17 +15,31 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../theme/colors";
 
-// IMPORTANT: check these two are DEFAULT exports in your project.
-// If they are named exports, change to: `import { PageHeaderBack } ...` / `import { FormField } ...`
 import PageHeaderBack from "../common/PageHeaderBack";
 import FormField from "./FormField";
 
-console.log("DBG PageHeaderBack is", typeof PageHeaderBack); // should be "function"
-console.log("DBG FormField is", typeof FormField);           // should be "function"
-
-
 const avatarPlaceholder = (nameOrUsername) =>
   `https://ui-avatars.com/api/?name=${encodeURIComponent(nameOrUsername || "User")}&background=2963FF&color=fff`;
+
+// Normalize an avatar value JUST for display in RN <Image/>
+// - keeps relative paths as absolute using env base
+// - leaves local file/content URIs alone
+// - upgrades protocol-relative to https
+const toDisplayUri = (u) => {
+  if (!u) return null;
+  if (/^file:|^content:/i.test(u)) return u; // picked locally
+  if (u.startsWith("//")) return `https:${u}`;
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("/")) {
+    const base =
+      process.env.EXPO_PUBLIC_ASSET_BASE_URL ||
+      process.env.EXPO_PUBLIC_API_BASE_URL ||
+      "";
+    if (!base) return null;
+    return `${base.replace(/\/+$/, "")}${u}`;
+  }
+  return u; // best effort
+};
 
 export default function ProfileEditForm({
   initial,          // { displayName, bio, favouritePokemon, avatarUrl, username }
@@ -41,15 +55,17 @@ export default function ProfileEditForm({
     const username = initial?.username ?? "";
     const bio = initial?.bio ?? "";
     const favouritePokemon = initial?.favouritePokemon ?? "";
-    const avatarUrl = initial?.avatarUrl ?? avatarPlaceholder(displayName || username);
-    return { displayName, username, bio, favouritePokemon, avatarUrl };
+    // IMPORTANT: keep the raw avatar value (may be relative); only normalize for display
+    const rawAvatar = initial?.avatarUrl ?? "";
+    const avatarUrl = rawAvatar || avatarPlaceholder(displayName || username);
+    return { displayName, username, bio, favouritePokemon, avatarUrl, rawAvatar };
   }, [initial]);
 
   // ----- Local state (editable) -----
   const [displayName, setDisplayName] = useState(seed.displayName);
   const [bio, setBio] = useState(seed.bio);
   const [favouritePokemon, setFavouritePokemon] = useState(seed.favouritePokemon);
-  const [avatarUrl, setAvatarUrl] = useState(seed.avatarUrl);
+  const [avatarUrl, setAvatarUrl] = useState(seed.avatarUrl); // keep raw; may be relative or placeholder
 
   // Keep in sync if parent changes (e.g., refetch)
   useEffect(() => {
@@ -79,14 +95,14 @@ export default function ProfileEditForm({
         return;
       }
       const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images, // <-- enum, not string
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.85,
         allowsEditing: true,
         aspect: [1, 1],
       });
       if (!res.canceled && res.assets?.length) {
-        // TODO: upload res.assets[0].uri -> remote URL -> setAvatarUrl(remoteUrl)
-        setAvatarUrl(res.assets[0].uri); // show immediately
+        // we store the local file:// URI; parent will upload/translate on save
+        setAvatarUrl(res.assets[0].uri);
       }
     } catch (e) {
       console.warn("ImagePicker error:", e);
@@ -99,7 +115,7 @@ export default function ProfileEditForm({
     onSave?.({
       bio,
       favouritePokemon,
-      avatarUrl,
+      avatarUrl,       // raw value (file://, relative, or absolute)
       username: seed.username,
     });
   };
@@ -120,15 +136,17 @@ export default function ProfileEditForm({
   // Header height + status bar offset for iOS keyboard avoidance
   const KEYBOARD_VERTICAL_OFFSET = (insets?.top ?? 0) + 60;
 
-  // Defensive: never pass undefined to Image `uri`
-  const avatarSrc = { uri: typeof avatarUrl === "string" && avatarUrl ? avatarUrl : avatarPlaceholder(seed.displayName || seed.username) };
+  // Normalized URI for display only; keeps placeholder visual if needed
+  const displayAvatar = toDisplayUri(
+    typeof avatarUrl === "string" && avatarUrl ? avatarUrl : avatarPlaceholder(seed.displayName || seed.username)
+  ) || avatarPlaceholder(seed.displayName || seed.username);
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
       <PageHeaderBack
         title="Edit Profile"
         subtitle={`@${seed.username}`}
-        avatar={avatarUrl}
+        avatar={displayAvatar}   // pass a normalized, displayable URI
         onBack={onCancel}
       />
 
@@ -150,7 +168,7 @@ export default function ProfileEditForm({
         >
           {/* Avatar row */}
           <View style={styles.avatarRow} onLayout={rememberY("avatar")}>
-            <Image source={avatarSrc} style={styles.avatar} />
+            <Image source={{ uri: displayAvatar }} style={styles.avatar} />
             <Pressable
               style={({ pressed }) => [styles.secondaryBtn, { opacity: pressed ? 0.7 : 1 }]}
               onPress={pickAvatar}

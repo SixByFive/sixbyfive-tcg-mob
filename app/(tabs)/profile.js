@@ -1,8 +1,8 @@
-// app/(tabs)/profile.js
-
 import { useMutation } from "@apollo/client";
+import { useFocusEffect } from "@react-navigation/native";
 import { MeDocument, UpdateProfileDocument } from "@sixbyfive/tcg-binder/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import { AppState } from "react-native";
 
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -35,11 +35,17 @@ const avatarPlaceholder = (nameOrUsername) =>
     nameOrUsername || "User"
   )}&background=2963FF&color=fff`;
 
+// Helper: detect if a URL is the ui-avatars placeholder  ✅ precedence fixed
+const isPlaceholderAvatar = (url) =>
+  typeof url === "string" &&
+  (url.startsWith("https://ui-avatars.com/api?") ||
+    url.startsWith("https://ui-avatars.com/api/"));
+
 export default function ProfileTab() {
   const router = useRouter();
   const toast = useToast();
 
-  // state hooks (always called)
+  // state hooks
   const [refreshing, setRefreshing] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -47,29 +53,27 @@ export default function ProfileTab() {
   const [showcaseIds, setShowcaseIds] = useState([]);
   const [editorOpen, setEditorOpen] = useState(false);
 
-  // data hook (always called) — this returns avatar/bio/favouritePokemon in `me` shape
-  const { data, loading, error, refetch, networkStatus } = useMeQuery({
+  // data hook — returns avatar/bio/favouritePokemon in `me`
+  const { data, loading, error, refetch } = useMeQuery({
     notifyOnNetworkStatusChange: true,
     fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
   });
 
-  // ✅ ADDED: mutation to update profile
   const [updateProfileMutation] = useMutation(UpdateProfileDocument);
 
   const me = data?.me ?? null;
 
-  // memoized values (always called)
+  // memoized initial values for the edit form
   const editInitial = useMemo(() => {
     const displayName = me?.username || "";
     const username = me?.username || "";
     const bio = me?.profile?.bio || "";
-    // server could expose either favouritePokemon or favoritePokemon — handle both
     const favouritePokemon =
-      me?.profile?.favouritePokemon ??
-      me?.profile?.favoritePokemon ??
-      "";
-    const avatarUrl =
-      me?.avatar || me?.profile?.avatar || avatarPlaceholder(displayName || username);
+      me?.profile?.favouritePokemon ?? me?.profile?.favoritePokemon ?? "";
+    // Prefer nested profile.avatar, else root avatar, else placeholder
+    const rawAvatar = me?.profile?.avatar || me?.avatar || "";
+    const avatarUrl = rawAvatar || avatarPlaceholder(displayName || username);
 
     return { displayName, username, bio, favouritePokemon, avatarUrl };
   }, [me]);
@@ -92,14 +96,29 @@ export default function ProfileTab() {
     []
   );
 
-  // effects (always called)
+  // seed showcase from preview
   useEffect(() => {
     if (showcaseIds.length === 0 && Array.isArray(me?.cardsPreview)) {
       setShowcaseIds(me.cardsPreview.slice(0, 4).map((c) => String(c.id)));
     }
   }, [me, showcaseIds.length]);
 
-  // callbacks (always called)
+  // Refetch whenever the screen gains focus
+  useFocusEffect(
+    React.useCallback(() => {
+      refetch();
+    }, [refetch])
+  );
+
+  // Also refetch when app returns to foreground
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") refetch();
+    });
+    return () => sub.remove();
+  }, [refetch]);
+
+  // Pull-to-refresh: only use the `refreshing` state to control the spinner
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -124,7 +143,7 @@ export default function ProfileTab() {
     [closeShowcaseEditor]
   );
 
-  // derived collections (always called)
+  // derived collections
   const stats = {
     binders: me?.stats?.binders ?? me?.bindersCount ?? 0,
     cards: me?.stats?.cards ?? me?.cardsCount ?? 0,
@@ -137,73 +156,82 @@ export default function ProfileTab() {
   const forTradePreview = Array.isArray(me?.forTradePreview) ? me.forTradePreview : [];
   const achievements = Array.isArray(me?.achievements) ? me.achievements : [];
 
-  // ----------------------------------------------------------------------------------
-  // ✅ ADDED: small helper to upload a local (file:// or content://) avatar to your CDN
-  // Replace the implementation with your actual upload flow (presigned URL or REST).
-  // Returns a remote, publicly accessible URL (or the original if already remote).
-  // ----------------------------------------------------------------------------------
+  // Upload helper (placeholder; wire up to your API when ready)
   const uploadAvatarIfNeeded = useCallback(async (uri) => {
     if (!uri || typeof uri !== "string") return uri;
-
-    // already remote?
-    if (/^https?:\/\//i.test(uri)) return uri;
-
-    // not remote → implement your upload here:
-    // Example placeholder (FormData to your REST endpoint):
-    try {
-      const form = new FormData();
-      // NOTE: In React Native, you must pass a file object with name/type/uri
-      form.append("file", {
-        uri,
-        name: "avatar.jpg",
-        type: "image/jpeg",
-      });
-
-      // TODO: Replace with your real endpoint
-      // const res = await fetch("https://your-api.example.com/upload/avatar", {
-      //   method: "POST",
-      //   headers: { Authorization: `Bearer ${tokenIfYouHaveOne}` },
-      //   body: form,
-      // });
-      // if (!res.ok) throw new Error(`Upload failed (${res.status})`);
-      // const json = await res.json();
-      // return json.url; // <-- remote URL
-
-      // TEMP: if you haven't wired an endpoint yet, just keep the local uri
-      // so the UI shows immediately; the mutation below can still accept a URL later.
-      return uri;
-    } catch (e) {
-      console.warn("Avatar upload failed:", e);
-      // Fall back to original uri so UI doesn't break
-      return uri;
+    // local file/content indicates a new image selected
+    if (/^file:|^content:/i.test(uri)) {
+      try {
+        const form = new FormData();
+        form.append("file", { uri, name: "avatar.jpg", type: "image/jpeg" });
+        // TODO: POST to your upload endpoint & return URL (e.g., "/uploads/avatars/..png")
+        return uri; // temporary so UI keeps showing
+      } catch {
+        return uri;
+      }
     }
+    // existing remote/relative value: pass through
+    return uri;
   }, []);
 
-  // ----------------------------------------------------------------------------------
-  // ✅ ADDED: robust saver that tries common variable shapes the server might expect.
-  // Prefer your real shape if you know it (most likely { input: { bio, favouritePokemon, avatar } }).
-  // ----------------------------------------------------------------------------------
+  /**
+   * Save a minimal patch:
+   * - only send fields that changed AND are non-empty
+   * - never send the ui-avatars placeholder
+   */
   const saveProfile = useCallback(
     async ({ bio, favouritePokemon, avatarUrl }) => {
-     // server expects 'avatar', not 'avatarUrl'
-     const finalAvatar = await uploadAvatarIfNeeded(avatarUrl);
+      const currentBio = me?.profile?.bio ?? "";
+      const currentFav =
+        me?.profile?.favouritePokemon ?? me?.profile?.favoritePokemon ?? "";
+      const currentAvatar = me?.profile?.avatar || me?.avatar || "";
 
-     await updateProfileMutation({
-       variables: {
-         bio,
-         favouritePokemon,        // spelling matches the schema
-         avatar: finalAvatar,
-       },
-       // make sure local UI updates immediately
-       refetchQueries: [{ query: MeDocument }],
-       awaitRefetchQueries: true,
-     });
-     return true;
-   },
-   [updateProfileMutation, uploadAvatarIfNeeded]
+      const patch = {};
+
+      // bio (trim and avoid blank overwrite)
+      const bioTrim = (bio ?? "").trim();
+      if (bioTrim && bioTrim !== (currentBio || "").trim()) {
+        patch.bio = bioTrim;
+      }
+
+      // favouritePokemon (trim and avoid blank overwrite)
+      const favTrim = (favouritePokemon ?? "").trim();
+      if (favTrim && favTrim !== (currentFav || "").trim()) {
+        patch.favouritePokemon = favTrim; // match server spelling
+      }
+
+      // avatar:
+      // - if user picked a new local image -> upload and set
+      // - if value equals placeholder -> skip
+      // - if unchanged -> skip
+      // - if relative/remote but different and not placeholder -> set
+      let nextAvatar = avatarUrl || "";
+      if (/^file:|^content:/i.test(nextAvatar)) {
+        nextAvatar = await uploadAvatarIfNeeded(nextAvatar);
+      }
+
+      if (
+        nextAvatar &&
+        !isPlaceholderAvatar(nextAvatar) &&
+        nextAvatar !== currentAvatar
+      ) {
+        patch.avatar = nextAvatar;
+      }
+
+      // Nothing to change? bail out quietly
+      if (Object.keys(patch).length === 0) return false;
+
+      await updateProfileMutation({
+        variables: patch,
+        refetchQueries: [{ query: MeDocument }],
+        awaitRefetchQueries: true,
+      });
+      return true;
+    },
+    [me, updateProfileMutation, uploadAvatarIfNeeded]
   );
 
-  // ---------- UI content selection (no early returns with hooks above) ----------
+  // ---------- UI selection ----------
   let content = null;
 
   if (loading && !me) {
@@ -236,14 +264,15 @@ export default function ProfileTab() {
           if (saving) return;
           setSaving(true);
           try {
-            // ✅ CHANGED: actually save profile to server
-            await saveProfile(values);
-            // ✅ refresh local data so ProfileTopCard and tabs show fresh values
-            await refetch();
-            toast.show("Profile updated", { type: "success" });
+            const changed = await saveProfile(values);
+            if (changed) {
+              await refetch();
+              toast.show("Profile updated", { type: "success" });
+            } else {
+              toast.show("No changes to save", { type: "info" });
+            }
           } catch (e) {
-            const msg =
-              e?.graphQLErrors?.[0]?.message || e?.message || "Failed to save profile";
+            const msg = e?.graphQLErrors?.[0]?.message || e?.message || "Failed to save profile";
             toast.show(msg, { type: "error" });
           } finally {
             setSaving(false);
@@ -259,12 +288,11 @@ export default function ProfileTab() {
         refreshControl={
           <RefreshControl
             tintColor={COLORS.accent}
-            refreshing={refreshing || networkStatus === 4}
+            refreshing={refreshing}
             onRefresh={onRefresh}
           />
         }
       >
-        {/* ✅ ProfileTopCard consumes avatar/bio/favouritePokemon from `me` (useMeQuery) */}
         <ProfileTopCard
           me={me}
           onAddCards={() => router.push("/(tabs)/search")}
@@ -276,7 +304,7 @@ export default function ProfileTab() {
         {tab === "overview" && (
           <OverviewTab
             stats={stats}
-            isOwner={true /* or me?.id === profileOwnerId */}
+            isOwner
             showcaseItems={showcaseItems}
             onEditStats={() => setEditMode("stats")}
             onEditShowcase={openShowcaseEditor}
@@ -286,17 +314,6 @@ export default function ProfileTab() {
             onLogout={handleLogout}
           />
         )}
-
-        {/* If you add the editor back later:
-        <ShowcaseEditorSheet
-          visible={editorOpen}
-          onClose={closeShowcaseEditor}
-          onSave={handleSaveShowcase}
-          candidates={me?.cardsPreview ?? []}
-          initialSelected={showcaseIds}
-          max={8}
-        />
-        */}
 
         {tab === "cards" && (
           <CardsTab
@@ -320,6 +337,7 @@ export default function ProfileTab() {
 
         {tab === "binders" && (
           <BindersTab
+            isOwner
             binders={me?.recentBinders ?? []}
             onCreateBinder={() => router.push("/binders/new")}
             onOpenBinder={(id) => router.push(`/binder/${id}`)}
@@ -373,10 +391,8 @@ export default function ProfileTab() {
     );
   }
 
-  // Single return after all hooks have been declared
   return (
     <View style={styles.container}>
-      {/* Show a header on all states except edit mode (your UI choice) */}
       {!editMode && <PageHeader title="Profile" subtitle="Manage your account and collection" />}
       {content}
     </View>

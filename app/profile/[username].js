@@ -1,4 +1,3 @@
-// app/(tabs)/profile/[username].js
 import { useMeQuery, useUserProfileQuery } from "@sixbyfive/tcg-binder/react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
@@ -60,10 +59,7 @@ export default function PublicProfile() {
 
     // Read nested profile fields first, then fall back
     const prof = p.profile ?? {};
-    const bio =
-      prof.bio ??
-      p.bio ??
-      "";
+    const bio = prof.bio ?? p.bio ?? "";
     const favouritePokemon =
       prof.favouritePokemon ??
       prof.favoritePokemon ??
@@ -185,30 +181,37 @@ export default function PublicProfile() {
           />
         )}
 
-          {tab === "cards" && (
-            <CardsTab
-              title={`${vm.username}'s Cards`}
-              cards={vm.cardsPreview}     // preview from the profile query
-              userId={vm.id}              // lets CardsTab self-fetch if preview is empty
-              loading={loading && !vm}    // optional: show skeletons while first load
-              onOpenCard={(c) =>
-                router.push({
-                  pathname: "/card/[id]",
-                  params: {
-                    id: String(c.id),
-                    name: c.name ?? "",
-                    setName: c.setName ?? "",
-                    number: String(c.number ?? ""),
-                    image: c.image ?? "",
-                    prices: JSON.stringify(c.prices || []),
-                  },
-                })
-              }
-            />
-          )}
+        {tab === "cards" && (
+          <CardsTab
+            title={`${vm.username}'s Cards`}
+            cards={vm.cardsPreview}
+            userId={vm.id}
+            loading={loading && !vm}
+            onOpenCard={(c) =>
+              router.push({
+                pathname: "/card/[id]",
+                params: {
+                  id: String(c.id),
+                  name: c.name ?? "",
+                  setName: c.setName ?? "",
+                  number: String(c.number ?? ""),
+                  image: c.image ?? "",
+                  prices: JSON.stringify(c.prices || []),
+                },
+              })
+            }
+          />
+        )}
 
         {tab === "binders" && (
-          <BindersTab binders={vm.recentBinders} onOpenBinder={(id) => router.push(`/binder/${id}`)} />
+          <BindersTab
+            title="Binders"
+            isOwner={isOwner}                          // explicit guard
+            binders={vm.recentBinders}
+            userId={vm.id}
+            onOpenBinder={(id) => router.push(`/binder/${id}`)}
+            // no onCreateBinder → visitors will not see create UI
+          />
         )}
 
         {tab === "wishlist" && (
@@ -259,7 +262,7 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: 12, paddingBottom: 24 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
 
-  // visitor actions
+  // visitor actions (kept)
   actionBar: { flexDirection: "row", gap: 10, marginTop: 10, marginBottom: 4 },
 
   button: {

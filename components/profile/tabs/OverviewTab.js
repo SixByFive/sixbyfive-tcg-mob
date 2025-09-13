@@ -1,47 +1,40 @@
 // components/profile/tabs/OverviewTab.js
-// CHANGED: accurate counts via Apollo cache with prop overrides
+// Accurate counts with live queries + prop overrides + stats fallback
 
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../../theme/colors";
 
-// NEW: use Apollo client + generated docs to read cache
-import { useApolloClient } from "@apollo/client";
+// ✅ use live queries (not just cache reads)
+import { useQuery } from "@apollo/client";
 import {
   MyBindersDocument,
   MyCollectionDocument,
-  WishlistDocument,
+  MyWishlistDocument, // ← correct doc name
 } from "@sixbyfive/tcg-binder/client";
 
-/* ---------------- helpers: wishlist readers (minimal) ---------------- */
-function readWishlistRoot(data) {
+/* ---------------- wishlist helpers ---------------- */
+function wlRoot(data) {
+  // supports { myWishlist } or { wishlist }
   return data?.myWishlist ?? data?.wishlist ?? {};
 }
-function readWishlistList(root) {
+function wlList(root) {
   return Array.isArray(root.entries) ? root.entries : [];
 }
-function readWishlistTotal(root, listLen = 0) {
+function wlTotal(root, listLen = 0) {
   const n = root.total ?? root.totalCount ?? root.count ?? listLen ?? 0;
   return Number(n) || 0;
 }
 
 /**
  * Props
- * - stats?: { binders?: number; cards?: number; wishlist?: number; trades?: number; sales?: number }
- * - showcaseItems?: Array<{ id: string|number, name?: string, image?: string }>
- * - isOwner?: boolean
- * - onEditStats?: () => void
- * - onEditShowcase?: () => void
- * - onViewCards?: () => void
- * - onOpenSettings?: () => void
- * - onLogout?: () => void
+ * - stats?: { binders, cards, wishlist, trades, sales }
+ * - showcaseItems?: Array
+ * - isOwner?: boolean       // ← when true we run live "my*" queries
+ * - onEditStats, onEditShowcase, onViewCards, onOpenSettings, onLogout
  * - showAccountActions?: boolean
- *
- * - NEW (optional overrides for perfect accuracy):
- *   - cardsCount?: number
- *   - bindersCount?: number
- *   - wishlistCount?: number
+ * - cardsCount?, bindersCount?, wishlistCount?  // explicit overrides
  */
 export default function OverviewTab({
   stats,
@@ -54,66 +47,62 @@ export default function OverviewTab({
   onLogout,
   showAccountActions = false,
 
-  // NEW: allow parent to override counts explicitly
   cardsCount,
   bindersCount,
   wishlistCount,
 }) {
-  const apollo = useApolloClient(); // NEW
+  // 🔄 Live queries (skip on public profiles)
+  const { data: colData } = useQuery(MyCollectionDocument, {
+    skip: !isOwner,
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
+  const { data: bindersData } = useQuery(MyBindersDocument, {
+    skip: !isOwner,
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
+  const { data: wlData } = useQuery(MyWishlistDocument, {
+    skip: !isOwner,
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
 
-  // NEW: derive accurate counts: overrides → Apollo cache → stats fallback
-  const derived = useMemo(() => {
-    const has = (v) => typeof v === "number" && !Number.isNaN(v);
+  // Derive counts: props → live queries → stats fallback
+  const s = useMemo(() => {
+    const hasNum = (v) => typeof v === "number" && !Number.isNaN(v);
 
-    // 1) explicit overrides
-    if (has(cardsCount) || has(bindersCount) || has(wishlistCount)) {
-      return {
-        cards: has(cardsCount) ? cardsCount : undefined,
-        binders: has(bindersCount) ? bindersCount : undefined,
-        wishlist: has(wishlistCount) ? wishlistCount : undefined,
-      };
-    }
+    const cardsFromQ = Array.isArray(colData?.myCollection)
+      ? colData.myCollection.length
+      : undefined;
 
-    // 2) Apollo cache (instant, no network)
-    let cardsFromCache;
-    let bindersFromCache;
-    let wishlistFromCache;
-    try {
-      const c = apollo.readQuery({ query: MyCollectionDocument });
-      if (Array.isArray(c?.myCollection)) cardsFromCache = c.myCollection.length;
-    } catch {}
-    try {
-      const b = apollo.readQuery({ query: MyBindersDocument });
-      if (Array.isArray(b?.myBinders)) bindersFromCache = b.myBinders.length;
-    } catch {}
-    try {
-      const w = apollo.readQuery({ query: WishlistDocument });
-      const root = readWishlistRoot(w);
-      const list = readWishlistList(root);
-      wishlistFromCache = readWishlistTotal(root, list.length);
-    } catch {}
+    const bindersFromQ = Array.isArray(bindersData?.myBinders)
+      ? bindersData.myBinders.length
+      : undefined;
+
+    const wlRootObj = wlRoot(wlData);
+    const wlFromQ = wlTotal(wlRootObj, wlList(wlRootObj).length);
 
     return {
-      cards: cardsFromCache,
-      binders: bindersFromCache,
-      wishlist: wishlistFromCache,
+      binders:
+        (hasNum(bindersCount) ? bindersCount : undefined) ??
+        (hasNum(bindersFromQ) ? bindersFromQ : undefined) ??
+        (stats?.binders ?? 0),
+      cards:
+        (hasNum(cardsCount) ? cardsCount : undefined) ??
+        (hasNum(cardsFromQ) ? cardsFromQ : undefined) ??
+        (stats?.cards ?? 0),
+      wishlist:
+        (hasNum(wishlistCount) ? wishlistCount : undefined) ??
+        (hasNum(wlFromQ) ? wlFromQ : undefined) ??
+        (stats?.wishlist ?? 0),
+      trades: stats?.trades ?? 0,
+      sales: stats?.sales ?? 0,
     };
-  }, [apollo, cardsCount, bindersCount, wishlistCount]);
-
-  // FINAL numbers: use derived first, then stats fallback
-  const s = {
-    binders:
-      (typeof derived.binders === "number" ? derived.binders : undefined) ??
-      (stats?.binders ?? 0),
-    cards:
-      (typeof derived.cards === "number" ? derived.cards : undefined) ??
-      (stats?.cards ?? 0),
-    wishlist:
-      (typeof derived.wishlist === "number" ? derived.wishlist : undefined) ??
-      (stats?.wishlist ?? 0),
-    trades: stats?.trades ?? 0,
-    sales: stats?.sales ?? 0,
-  };
+  }, [cardsCount, bindersCount, wishlistCount, stats, colData, bindersData, wlData]);
 
   const hasShowcase = Array.isArray(showcaseItems) && showcaseItems.length > 0;
 
@@ -123,7 +112,7 @@ export default function OverviewTab({
       <Section
         title="Overview"
         subtitle="Your collection at a glance"
-        showEdit={isOwner && !!onEditStats}                 // CHANGED: allow editing stats if owner
+        showEdit={isOwner && !!onEditStats}
         onEdit={onEditStats}
       >
         <View style={styles.statsRow}>
@@ -135,17 +124,14 @@ export default function OverviewTab({
         </View>
       </Section>
 
-      {/* --- Showcase (unchanged / commented in your original) --- */}
-      {/* keep as-is ... */}
+      {/* Showcase left as-is (you had it commented / optional) */}
 
-      {/* --- Account actions (owner only) --- */}
       {showAccountActions && (
         <Section title="Account" compact>
           <Pressable style={styles.actionRow} onPress={onOpenSettings}>
             <Text style={styles.actionText}>App Settings</Text>
             <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
           </Pressable>
-
           <Pressable style={styles.actionRow} onPress={onLogout}>
             <Text style={styles.actionText}>Log out</Text>
             <Ionicons name="log-out-outline" size={16} color={COLORS.textMuted} />
@@ -156,7 +142,7 @@ export default function OverviewTab({
   );
 }
 
-/* --- Section wrapper with header + optional edit (unchanged except showEdit) --- */
+/* --- Section wrapper --- */
 function Section({ title, subtitle, children, showEdit, onEdit, compact = false }) {
   return (
     <View style={[styles.card, compact && { paddingTop: 10, paddingBottom: 10 }]}>
@@ -183,7 +169,7 @@ function Section({ title, subtitle, children, showEdit, onEdit, compact = false 
   );
 }
 
-/* --- Pretty metric tile --- */
+/* --- Metric tile --- */
 function Metric({ value, label }) {
   return (
     <View style={styles.metric}>
@@ -202,11 +188,10 @@ function formatNumber(n) {
   }
 }
 
-/* --- Styles (unchanged) --- */
+/* --- Styles --- */
 const TILE_BG = "#1c1d24";
 
 const styles = StyleSheet.create({
-  // section
   card: {
     backgroundColor: COLORS.surface,
     borderColor: COLORS.border,
@@ -236,12 +221,7 @@ const styles = StyleSheet.create({
   },
   editText: { color: COLORS.accent, fontWeight: "800", fontSize: 12.5 },
 
-  // metrics
-  statsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
+  statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   metric: {
     minWidth: 104,
     flexGrow: 1,
@@ -255,7 +235,7 @@ const styles = StyleSheet.create({
   metricValue: { color: COLORS.text, fontWeight: "900", fontSize: 18 },
   metricLabel: { color: COLORS.textMuted, fontWeight: "800", marginTop: 2 },
 
-  // showcase (kept)
+  // showcase (kept from your file)
   showcaseRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   showcaseCard: { width: "23%", minWidth: 72 },
   showcaseThumb: {
@@ -267,31 +247,6 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   showcaseCaption: { color: COLORS.text, fontSize: 12, marginTop: 6 },
-
-  // empty showcase (kept)
-  emptyShowcase: {
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: COLORS.border,
-    backgroundColor: TILE_BG,
-    gap: 8,
-  },
-  emptyText: { color: COLORS.textMuted, fontWeight: "800", textAlign: "center" },
-  emptyCta: {
-    marginTop: 2,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  emptyCtaText: { color: "#fff", fontWeight: "900", fontSize: 12.5 },
 
   // account
   actionRow: {

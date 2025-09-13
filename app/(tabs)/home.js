@@ -25,7 +25,7 @@ import VerificationBanner from "../../components/home/VerificationBanner";
 // ADDED: lightweight replacement cards
 import GettingStartedCard from "../../components/home/GettingStartedCard";
 
-const DISCORD_INVITE = "https://tcg.sixbyfive.com/discord";
+const DISCORD_INVITE = "https://discord.gg/PRMbMbRE2H";
 
 // Feature switches (hardcoded off for now)
 const SHOW_SUBSCRIPTION = false;

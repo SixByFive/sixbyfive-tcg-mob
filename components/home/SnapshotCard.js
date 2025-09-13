@@ -1,35 +1,29 @@
 // components/home/SnapshotCard.js
-
-// CHANGED: read live counts from Apollo cache with graceful fallbacks.
-// You can still pass explicit counts via props to override everything.
+// Live counts from queries with graceful fallbacks/overrides.
 
 import React, { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 
-// NEW: pull from your generated docs + apollo client
-import { useApolloClient } from "@apollo/client";
+import { useQuery } from "@apollo/client";
 import {
   MyBindersDocument,
   MyCollectionDocument,
-  WishlistDocument,
+  MyWishlistDocument, // ← correct doc name
 } from "@sixbyfive/tcg-binder/client";
 
-/* ---------------- helpers: wishlist readers (minimal) ---------------- */
-function readWishlistRoot(data) {
-  // supports { myWishlist } or { wishlist }
+/* wishlist helpers */
+function wlRoot(data) {
   return data?.myWishlist ?? data?.wishlist ?? {};
 }
-function readWishlistList(root) {
-  // your logs showed { entries: [...] }
+function wlList(root) {
   return Array.isArray(root.entries) ? root.entries : [];
 }
-function readWishlistTotal(root, listLen = 0) {
+function wlTotal(root, listLen = 0) {
   const n = root.total ?? root.totalCount ?? root.count ?? listLen ?? 0;
   return Number(n) || 0;
 }
 
-/* ---------------- small presentational stat tile (unchanged) --------- */
 function Stat({ label, value }) {
   return (
     <View style={styles.tile}>
@@ -43,81 +37,72 @@ export default function SnapshotCard({
   loading,
   user,
 
-  // NEW: optional overrides if the parent already knows exact counts
+  // optional explicit overrides
   cardsCount,
   bindersCount,
   wishlistCount,
 }) {
-  const apollo = useApolloClient(); // NEW
+  // 🔄 Always query for the signed-in user on the home snapshot
+  const { data: colData } = useQuery(MyCollectionDocument, {
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
+  const { data: bindersData } = useQuery(MyBindersDocument, {
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
+  const { data: wlData } = useQuery(MyWishlistDocument, {
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
 
-  // NEW: compute accurate counts with this priority:
-  // 1) explicit prop override
-  // 2) Apollo cache (live UI state)
-  // 3) user.stats fallback
   const { cards, binders, wishlist } = useMemo(() => {
-    // 1) explicit overrides take precedence when they are numbers
     const has = (v) => typeof v === "number" && !Number.isNaN(v);
 
-    if (has(cardsCount) && has(bindersCount) && has(wishlistCount)) {
-      return { cards: cardsCount, binders: bindersCount, wishlist: wishlistCount };
-    }
+    const cardsFromQ = Array.isArray(colData?.myCollection)
+      ? colData.myCollection.length
+      : undefined;
 
-    // 2) try Apollo cache (no network, instant). each read is wrapped in try/catch
-    let cardsFromCache = undefined;
-    let bindersFromCache = undefined;
-    let wishlistFromCache = undefined;
+    const bindersFromQ = Array.isArray(bindersData?.myBinders)
+      ? bindersData.myBinders.length
+      : undefined;
 
-    try {
-      const collection = apollo.readQuery({ query: MyCollectionDocument });
-      if (Array.isArray(collection?.myCollection)) {
-        cardsFromCache = collection.myCollection.length;
-      }
-    } catch {}
+    const root = wlRoot(wlData);
+    const wishlistFromQ = wlTotal(root, wlList(root).length);
 
-    try {
-      const bindersQ = apollo.readQuery({ query: MyBindersDocument });
-      if (Array.isArray(bindersQ?.myBinders)) {
-        bindersFromCache = bindersQ.myBinders.length;
-      }
-    } catch {}
-
-    try {
-      const wl = apollo.readQuery({ query: WishlistDocument });
-      const root = readWishlistRoot(wl);
-      const list = readWishlistList(root);
-      wishlistFromCache = readWishlistTotal(root, list.length);
-    } catch {}
-
-    // 3) fall back to user.stats (your original inputs)
     const stats = user?.stats ?? {};
     const cardsFromUser = Number(stats.totalCards ?? stats.cards ?? 0) || 0;
     const bindersFromUser = Number(stats.binders ?? 0) || 0;
     const wishlistFromUser = Number(stats.wishlist ?? 0) || 0;
 
-    const finalCards = has(cardsCount)
-      ? cardsCount
-      : (typeof cardsFromCache === "number" ? cardsFromCache : cardsFromUser);
+    return {
+      cards:
+        (has(cardsCount) ? cardsCount : undefined) ??
+        (has(cardsFromQ) ? cardsFromQ : undefined) ??
+        cardsFromUser,
+      binders:
+        (has(bindersCount) ? bindersCount : undefined) ??
+        (has(bindersFromQ) ? bindersFromQ : undefined) ??
+        bindersFromUser,
+      wishlist:
+        (has(wishlistCount) ? wishlistCount : undefined) ??
+        (has(wishlistFromQ) ? wishlistFromQ : undefined) ??
+        wishlistFromUser,
+    };
+  }, [cardsCount, bindersCount, wishlistCount, user, colData, bindersData, wlData]);
 
-    const finalBinders = has(bindersCount)
-      ? bindersCount
-      : (typeof bindersFromCache === "number" ? bindersFromCache : bindersFromUser);
-
-    const finalWishlist = has(wishlistCount)
-      ? wishlistCount
-      : (typeof wishlistFromCache === "number" ? wishlistFromCache : wishlistFromUser);
-
-    return { cards: finalCards, binders: finalBinders, wishlist: finalWishlist };
-  }, [apollo, user, cardsCount, bindersCount, wishlistCount]);
-
-  // keep your loading behaviour for first paint
-  const show = (n) => (loading && !user ? "…" : Intl.NumberFormat().format(Number(n || 0)));
+  const show = (n) =>
+    loading && !user ? "…" : Intl.NumberFormat().format(Number(n || 0));
 
   return (
     <View style={styles.card}>
       <Text style={styles.title}>Your snapshot</Text>
       <View style={styles.row}>
-        <Stat label="Cards"    value={show(cards)} />
-        <Stat label="Binders"  value={show(binders)} />
+        <Stat label="Cards" value={show(cards)} />
+        <Stat label="Binders" value={show(binders)} />
         <Stat label="Wishlist" value={show(wishlist)} />
       </View>
     </View>
