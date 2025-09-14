@@ -4,14 +4,14 @@ import { LoginDocument, RegisterDocument } from "@sixbyfive/tcg-binder";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Image,
-    Pressable,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Image,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { setToken } from "../lib/auth";
@@ -92,7 +92,7 @@ export default function Auth() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Image source={require("../assets/images/icon.png")} style={styles.logo} resizeMode="contain" />
+          <Image source={require("../assets/images/tcg-logo-white.png")} style={styles.logo} resizeMode="fill" />
           <Text style={styles.title}>{mode === "login" ? "Welcome back" : "Create your account"}</Text>
           <Text style={styles.subtitle}>Track your collection, build binders, and share your profile.</Text>
         </View>
@@ -204,7 +204,7 @@ export default function Auth() {
 const styles = StyleSheet.create({
   scroll: { paddingHorizontal: 20, paddingTop: 32, paddingBottom: 24, flexGrow: 1, justifyContent: "center" },
   header: { alignItems: "center", marginBottom: 16 },
-  logo: { width: 72, height: 72, marginBottom: 10 },
+  logo: { width: 250, height: 90, marginBottom: 10 },
   title: { color: COLORS.text, fontSize: 24, letterSpacing: 0.3, fontFamily: "Raleway_800ExtraBold" },
   subtitle: { marginTop: 6, color: COLORS.textSecondary, fontSize: 13.5, textAlign: "center", fontFamily: "Inter_400Regular" },
   card: { backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, padding: 16, gap: 12 },

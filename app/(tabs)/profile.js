@@ -369,7 +369,9 @@ export default function ProfileTab() {
           />
         )}
 
-        {tab === "achievements" && <AchievementsTab items={achievements} />}
+        {tab === "achievements" && (
+          <AchievementsTab userId={me?.id} />
+        )}
 
         <View style={{ height: 28 }} />
       </ScrollView>
