@@ -35,7 +35,7 @@ const avatarPlaceholder = (nameOrUsername) =>
     nameOrUsername || "User"
   )}&background=2963FF&color=fff`;
 
-// Helper: detect if a URL is the ui-avatars placeholder  ✅ precedence fixed
+// safer precedence (wrap the && group)
 const isPlaceholderAvatar = (url) =>
   typeof url === "string" &&
   (url.startsWith("https://ui-avatars.com/api?") ||
@@ -70,7 +70,9 @@ export default function ProfileTab() {
     const username = me?.username || "";
     const bio = me?.profile?.bio || "";
     const favouritePokemon =
-      me?.profile?.favouritePokemon ?? me?.profile?.favoritePokemon ?? "";
+      me?.profile?.favouritePokemon ??
+      me?.profile?.favoritePokemon ??
+      "";
     // Prefer nested profile.avatar, else root avatar, else placeholder
     const rawAvatar = me?.profile?.avatar || me?.avatar || "";
     const avatarUrl = rawAvatar || avatarPlaceholder(displayName || username);
@@ -118,7 +120,7 @@ export default function ProfileTab() {
     return () => sub.remove();
   }, [refetch]);
 
-  // Pull-to-refresh: only use the `refreshing` state to control the spinner
+  // Pull-to-refresh
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -156,69 +158,52 @@ export default function ProfileTab() {
   const forTradePreview = Array.isArray(me?.forTradePreview) ? me.forTradePreview : [];
   const achievements = Array.isArray(me?.achievements) ? me.achievements : [];
 
-  // Upload helper (placeholder; wire up to your API when ready)
+  // Upload helper (no-op placeholder; replace with your real endpoint when ready)
   const uploadAvatarIfNeeded = useCallback(async (uri) => {
     if (!uri || typeof uri !== "string") return uri;
-    // local file/content indicates a new image selected
     if (/^file:|^content:/i.test(uri)) {
       try {
         const form = new FormData();
         form.append("file", { uri, name: "avatar.jpg", type: "image/jpeg" });
-        // TODO: POST to your upload endpoint & return URL (e.g., "/uploads/avatars/..png")
-        return uri; // temporary so UI keeps showing
+        // TODO: POST to your real upload endpoint, return "/uploads/avatars/....png"
+        return uri; // fallback to keep UI showing
       } catch {
         return uri;
       }
     }
-    // existing remote/relative value: pass through
     return uri;
   }, []);
 
-  /**
-   * Save a minimal patch:
-   * - only send fields that changed AND are non-empty
-   * - never send the ui-avatars placeholder
-   */
+  // Save a minimal patch (don’t overwrite with blanks / placeholder)
   const saveProfile = useCallback(
     async ({ bio, favouritePokemon, avatarUrl }) => {
       const currentBio = me?.profile?.bio ?? "";
       const currentFav =
-        me?.profile?.favouritePokemon ?? me?.profile?.favoritePokemon ?? "";
+        me?.profile?.favouritePokemon ??
+        me?.profile?.favoritePokemon ??
+        "";
       const currentAvatar = me?.profile?.avatar || me?.avatar || "";
 
       const patch = {};
 
-      // bio (trim and avoid blank overwrite)
       const bioTrim = (bio ?? "").trim();
       if (bioTrim && bioTrim !== (currentBio || "").trim()) {
         patch.bio = bioTrim;
       }
 
-      // favouritePokemon (trim and avoid blank overwrite)
       const favTrim = (favouritePokemon ?? "").trim();
       if (favTrim && favTrim !== (currentFav || "").trim()) {
-        patch.favouritePokemon = favTrim; // match server spelling
+        patch.favouritePokemon = favTrim;
       }
 
-      // avatar:
-      // - if user picked a new local image -> upload and set
-      // - if value equals placeholder -> skip
-      // - if unchanged -> skip
-      // - if relative/remote but different and not placeholder -> set
       let nextAvatar = avatarUrl || "";
       if (/^file:|^content:/i.test(nextAvatar)) {
         nextAvatar = await uploadAvatarIfNeeded(nextAvatar);
       }
-
-      if (
-        nextAvatar &&
-        !isPlaceholderAvatar(nextAvatar) &&
-        nextAvatar !== currentAvatar
-      ) {
+      if (nextAvatar && !isPlaceholderAvatar(nextAvatar) && nextAvatar !== currentAvatar) {
         patch.avatar = nextAvatar;
       }
 
-      // Nothing to change? bail out quietly
       if (Object.keys(patch).length === 0) return false;
 
       await updateProfileMutation({
@@ -337,10 +322,10 @@ export default function ProfileTab() {
 
         {tab === "binders" && (
           <BindersTab
-            isOwner
+            isOwner                       // let BindersTab route to /edit for owners
             binders={me?.recentBinders ?? []}
             onCreateBinder={() => router.push("/binders/new")}
-            onOpenBinder={(id) => router.push(`/binder/${id}`)}
+            // NOTE: intentionally NOT passing onOpenBinder to avoid forcing view route
           />
         )}
 

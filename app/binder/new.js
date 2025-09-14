@@ -1,20 +1,24 @@
 // app/binder/new.js
-
 import { router } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
-  Pressable,
+  Alert, Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  View,
+  View
 } from "react-native";
 import PageHeaderBackSimple from "../../components/common/PageHeaderBackSimple";
 import { COLORS } from "../../theme/colors";
 
-// Templates (same shape as elsewhere so it stays familiar)
+// Site palette parity
+import { STANDARD_COLOURS } from "../../components/binders/WizardStepCover";
+
+// Shared actions
+import useBinderActions from "../../hooks/useBinderActions";
+
 const TEMPLATES = [
   { id: "pocket-9", label: "9-pocket", rows: 3, cols: 3 },
   { id: "pocket-4", label: "4-pocket", rows: 2, cols: 2 },
@@ -23,21 +27,41 @@ const TEMPLATES = [
 ];
 
 export default function BinderNewScreen() {
-  const [name, setName] = useState("");
-  const [coverId, setCoverId] = useState("cover1");
-  const [templateId, setTemplateId] = useState("pocket-9");
+  const { createBinder } = useBinderActions();
 
-  const canCreate = name.trim().length > 0 && !!coverId && !!templateId;
+  const [name, setName] = useState("");
+  const [coverIndex, setCoverIndex] = useState(0);
+  const [templateId, setTemplateId] = useState("pocket-9");
+  const [creating, setCreating] = useState(false);
+
+  const canCreate = name.trim().length > 0 && STANDARD_COLOURS[coverIndex] && !!templateId;
   const tpl = useMemo(
-    () => TEMPLATES.find(t => t.id === templateId) ?? TEMPLATES[0],
+    () => TEMPLATES.find((t) => t.id === templateId) ?? TEMPLATES[0],
     [templateId]
   );
 
-  const onCreate = () => {
-    if (!canCreate) return;
-    // TODO: replace with createBinder mutation and returned binder id
-    const fakeId = Math.random().toString(36).slice(2, 8);
-    router.replace(`/binder/${fakeId}/edit`);
+  const onCreate = async () => {
+    if (!canCreate || creating) return;
+    setCreating(true);
+    try {
+      const cover = STANDARD_COLOURS[coverIndex];
+      // Create with allowed input; hook will best-effort update rows/cols afterwards
+      const created = await createBinder({
+        name: name.trim(),
+        templateId,   // desired size
+        cover,        // { name, color, accent, elasticColor }
+      });
+
+      if (!created?.id) throw new Error("No binder id returned");
+      router.replace(`/binder/${String(created.id)}/edit`);
+    } catch (e) {
+      Alert.alert(
+        "Couldn’t create binder",
+        e?.graphQLErrors?.[0]?.message || e?.message || "Please try again."
+      );
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
@@ -66,21 +90,22 @@ export default function BinderNewScreen() {
         {/* Cover */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Cover</Text>
-          <View style={styles.coversRow}>
-            {["cover1", "cover2", "cover3", "cover4"].map((c, i) => {
-              const active = c === coverId;
-              // simple themed swatches (swap for real images later)
-              const swatch = ["#23243c", "#1a1f2e", "#2a1f2a", "#26222e"][i];
+          <View style={styles.coversGrid}>
+            {STANDARD_COLOURS.map((c, i) => {
+              const active = i === coverIndex;
               return (
                 <Pressable
-                  key={c}
-                  onPress={() => setCoverId(c)}
+                  key={c.name}
+                  onPress={() => setCoverIndex(i)}
                   style={[
                     styles.coverBox,
-                    { backgroundColor: swatch },
+                    { backgroundColor: c.color },
                     active && styles.coverBoxActive,
                   ]}
-                />
+                >
+                  <View style={[styles.coverAccent, { backgroundColor: c.accent }]} />
+                  <Text style={styles.coverLabel} numberOfLines={1}>{c.name}</Text>
+                </Pressable>
               );
             })}
           </View>
@@ -92,7 +117,7 @@ export default function BinderNewScreen() {
           <Text style={styles.cardTitle}>Template</Text>
 
           <View style={styles.segmentWrap}>
-            {TEMPLATES.map(t => {
+            {TEMPLATES.map((t) => {
               const active = t.id === templateId;
               return (
                 <Pressable
@@ -100,9 +125,7 @@ export default function BinderNewScreen() {
                   onPress={() => setTemplateId(t.id)}
                   style={[styles.segment, active && styles.segmentActive]}
                 >
-                  <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
-                    {t.label}
-                  </Text>
+                  <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{t.label}</Text>
                 </Pressable>
               );
             })}
@@ -137,13 +160,15 @@ export default function BinderNewScreen() {
         </Pressable>
         <Pressable
           onPress={onCreate}
-          disabled={!canCreate}
+          disabled={!canCreate || creating}
           style={({ pressed }) => [
             styles.btnPrimary,
-            (!canCreate || pressed) && { opacity: 0.9 },
+            ((!canCreate || creating || pressed) && { opacity: 0.9 }),
           ]}
         >
-          <Text style={styles.btnPrimaryText}>Create binder</Text>
+          <Text style={styles.btnPrimaryText}>
+            {creating ? "Creating…" : "Create binder"}
+          </Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -174,15 +199,24 @@ const styles = StyleSheet.create({
   },
   hint: { color: COLORS.textMuted, marginTop: 8, fontSize: 12.5 },
 
-  coversRow: { flexDirection: "row", gap: 10 },
+  coversGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
   coverBox: {
-    width: 56,
-    height: 56,
+    width: "23.5%",
+    minWidth: 74,
+    aspectRatio: 1,
     borderRadius: 10,
     borderColor: COLORS.border,
     borderWidth: 1,
+    padding: 8,
+    justifyContent: "flex-end",
   },
   coverBoxActive: { borderColor: COLORS.accent, borderWidth: 2 },
+  coverAccent: { position: "absolute", left: 8, top: 8, width: 10, height: 18, borderRadius: 4 },
+  coverLabel: { color: "#fff", fontWeight: "800", fontSize: 12 },
 
   segmentWrap: {
     flexDirection: "row",

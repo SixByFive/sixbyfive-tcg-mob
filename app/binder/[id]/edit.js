@@ -1,7 +1,6 @@
-// app/binder/[id]/edit.js
-
+import { useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -12,170 +11,250 @@ import {
   Text,
   View,
 } from "react-native";
-import PageHeaderBackSimple from "../../../components/common/PageHeaderBackSimple";
-import { COLORS } from "../../../theme/colors";
 
 import BinderGrid from "../../../components/binders/BinderGrid";
-import AddCardsDrawer from "../../../components/binders/CardsAddDrawer";
-import PagePager from "../../../components/binders/PagePager";
-
-// Uses shared modal + constants
 import BinderOptionsModal, {
   DEFAULT_TEMPLATE_ID,
   TEMPLATES,
 } from "../../../components/binders/BinderOptionsModal";
+import AddCardsDrawer from "../../../components/binders/CardsAddDrawer";
+import PagePager from "../../../components/binders/PagePager";
+import PageHeaderBackSimple from "../../../components/common/PageHeaderBackSimple";
+import { COLORS } from "../../../theme/colors";
+
+// GraphQL
+import { BinderDocument } from "@sixbyfive/tcg-binder/client";
+
+// Shared actions
+import useBinderActions from "../../../hooks/useBinderActions";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
-// UTILS ───────────────────────────────────────────────────────────────────────
 const getTemplate = (templateId) =>
   Array.isArray(TEMPLATES)
-    ? (TEMPLATES.find((t) => t.id === templateId) || TEMPLATES[0])
+    ? TEMPLATES.find((t) => t.id === templateId) || TEMPLATES[0]
     : TEMPLATES?.[templateId] || { id: "fallback", rows: 3, cols: 3, name: "3×3" };
 
-// Resize a slots array, preserving existing values left→right,top→bottom
-function reshapeSlots(slots, rows, cols) {
-  const newSize = Math.max(1, rows * cols);
-  return Array.from({ length: newSize }, (_, i) => slots?.[i] || null);
+function inferTemplateId(rows, cols) {
+  const hit =
+    (Array.isArray(TEMPLATES) &&
+      TEMPLATES.find((t) => Number(t.rows) === Number(rows) && Number(t.cols) === Number(cols))) ||
+    null;
+  return hit?.id || DEFAULT_TEMPLATE_ID || "pocket-9";
+}
+
+// server slot -> UI slot
+function toUiSlot(slot) {
+  if (!slot) return null;
+  const c = slot.card ?? slot.item ?? slot;
+  const id = String(c?.id ?? slot?.id ?? "");
+  const name = c?.name ?? slot?.name ?? "";
+  const image =
+    c?.image ??
+    c?.thumbnail ??
+    c?.thumb ??
+    c?.images?.small ??
+    c?.images?.thumb ??
+    slot?.image ??
+    "";
+  if (!id && !image) return null;
+  return { id, image, label: name };
+}
+
+function mapBinderToPagesUI(binder) {
+  const pages = Array.isArray(binder?.pages) ? binder.pages : [];
+  return pages.map((p, i) => ({
+    id: String(p?.id ?? i),
+    title: p?.title ?? `Page ${i + 1}`,
+    slots: (Array.isArray(p?.slots) ? p.slots : []).map(toUiSlot),
+  }));
 }
 
 export default function BinderEditor() {
+  const router = useRouter();
   const { id } = useLocalSearchParams();
+  const binderId = String(id || "");
   const listRef = useRef(null);
 
-  // STATE ─────────────────────────────────────────────────────────────────────
-  const [name, setName] = useState("My Binder");
+  const {
+    addPage: addPageServer,
+    addCard: addCardServer,
+    moveSlot: moveSlotServer,
+    removeSlot: removeSlotServer,
+    savePages: savePagesServer,
+    updateBinder: updateBinderServer,
+  } = useBinderActions();
 
-  // Track the chosen template/layout (global across all pages)
-  const [templateId, setTemplateId] = useState(
-    DEFAULT_TEMPLATE_ID ||
-      (Array.isArray(TEMPLATES) ? TEMPLATES[0]?.id : Object.keys(TEMPLATES || {})[0])
-  );
-
-  // Template → rows/cols
-  const activeTemplate = useMemo(() => getTemplate(templateId), [templateId]);
-  const [layout, setLayout] = useState({
-    rows: activeTemplate.rows,
-    cols: activeTemplate.cols,
+  // Query binder
+  const { data, loading, error } = useQuery(BinderDocument, {
+    variables: { id: binderId },
+    fetchPolicy: "cache-and-network",
+    notifyOnNetworkStatusChange: true,
   });
 
-  // Initial per-page slots sized to current layout
-  const initialSlots = useMemo(
-    () => Array.from({ length: layout.rows * layout.cols }, () => null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [] // seed once at mount; later changes are handled in saveOptions()
-  );
+  const binder = data?.binder ?? null;
 
-  const [pages, setPages] = useState([
-    { id: "p1", title: "Page 1", slots: initialSlots },
-    { id: "p2", title: "Page 2", slots: initialSlots },
-  ]);
+  // UI state
+  const [name, setName] = useState("My Binder");
+  const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
+  const [layout, setLayout] = useState({ rows: 3, cols: 3 });
 
+  const pages = useMemo(() => mapBinderToPagesUI(binder), [binder]);
   const [index, setIndex] = useState(0);
+
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
 
-  // MOCK DATA ────────────────────────────────────────────────────────────────
-  const MOCK_COLLECTION = [
-    { id: "o1", name: "Bulbasaur", image: "https://placehold.co/200x280/png" },
-    { id: "o2", name: "Mewtwo", image: "https://placehold.co/200x280/png" },
-    { id: "o3", name: "Eevee", image: "https://placehold.co/200x280/png" },
-  ];
-  const MOCK_SEARCH = [
-    { id: "c1", name: "Charizard ex", image: "https://placehold.co/200x280/png" },
-    { id: "c2", name: "Lugia V", image: "https://placehold.co/200x280/png" },
-    { id: "c3", name: "Pikachu", image: "https://placehold.co/200x280/png" },
-  ];
-  const OWNED_SET = new Set(MOCK_COLLECTION.map((c) => c.id));
-
-  // EFFECTS ──────────────────────────────────────────────────────────────────
-  // Keep FlatList aligned to the selected page
   useEffect(() => {
     listRef.current?.scrollToIndex?.({ index, animated: true });
   }, [index]);
 
-  // DERIVED ──────────────────────────────────────────────────────────────────
-  const currentPage = pages[index];
+  // hydrate from server
+  useEffect(() => {
+    if (!binder) return;
+    const nextName = binder.name || "My Binder";
+    const rows = Number(binder?.layout?.rows ?? binder?.rows ?? 3) || 3;
+    const cols = Number(binder?.layout?.cols ?? binder?.cols ?? 3) || 3;
+
+    setName(nextName);
+    setLayout({ rows, cols });
+    setTemplateId(binder?.layoutId ?? binder?.templateId ?? inferTemplateId(rows, cols));
+
+    setIndex((i) => Math.max(0, Math.min(i, Math.max(0, (pages?.length || 1) - 1))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [binder?.id, binder?.name, binder?.layout, binder?.pages?.length]);
+
+  const currentPage = pages[index] || { slots: [] };
   const totalSlots = layout.rows * layout.cols;
-  const slotsLeft = (currentPage?.slots || []).filter((s) => !s).length;
 
-  // HANDLERS ────────────────────────────────────────────────────────────────
-  const onSlotPress = () => setDrawerOpen(true);
-  const openDrawer = () => setDrawerOpen(true);
+  /* ---------------- handlers ---------------- */
 
-  // Options modal open/close
   const openOptions = () => setOptionsOpen(true);
-  const closeOptions = () => setOptionsOpen(false);
 
-  // Save from BinderOptionsModal
-  // NOTE: if modal returns { name, layoutId } instead, map them here.
-  const saveOptions = ({ name: nextName, templateId: nextTemplateId, rows, cols }) => {
-    const trimmed = (nextName || "").trim();
-    if (trimmed) setName(trimmed);
+  // Add cards -> fill first empty slots (local walk). We pass real card codes.
+  const handleConfirmAdd = async (ids /*, meta */) => {
+    if (!binderId || !Array.isArray(ids) || !ids.length) return;
 
-    let chosenTemplateId =
-      nextTemplateId ||
-      templateId ||
-      (Array.isArray(TEMPLATES) ? TEMPLATES[0]?.id : Object.keys(TEMPLATES || {})[0]);
+    // local working copy for “find next empty”
+    const working = Array.from(currentPage?.slots || []);
+    const findNextEmpty = (startAt = 0) => {
+      for (let i = startAt; i < totalSlots; i++) if (!working[i]) return i;
+      return -1;
+    };
 
-    const tpl = getTemplate(chosenTemplateId);
+    let nextIdx = findNextEmpty(0);
 
-    // Allow overriding rows/cols (if modal exposes them), else use template
-    let nextRows = Number.isFinite(parseInt(rows, 10)) ? parseInt(rows, 10) : tpl.rows;
-    let nextCols = Number.isFinite(parseInt(cols, 10)) ? parseInt(cols, 10) : tpl.cols;
-
-    nextRows = Math.max(1, Math.min(10, nextRows));
-    nextCols = Math.max(1, Math.min(10, nextCols));
-
-    const layoutChanged =
-      nextRows !== layout.rows || nextCols !== layout.cols || chosenTemplateId !== templateId;
-
-    if (layoutChanged) {
-      setTemplateId(chosenTemplateId);
-      setLayout({ rows: nextRows, cols: nextCols });
-
-      // Reshape all pages to new size, preserving existing placements
-      setPages((prev) =>
-        prev.map((p) => ({ ...p, slots: reshapeSlots(p.slots, nextRows, nextCols) }))
-      );
+    for (const cardId of ids) {
+      if (nextIdx === -1) break;
+      try {
+        await addCardServer({
+          binderId,
+          pageIndex: index,
+          slotIndex: nextIdx,      // 0-based; actions convert to 1-based for bulk save
+          cardId,                  // must be the card code (e.g. "sv05-052")
+        });
+        // mark locally so subsequent picks skip this slot
+        working[nextIdx] = { id: `local-${cardId}` };
+      } catch (e) {
+        console.warn("addCard failed", e);
+      }
+      nextIdx = findNextEmpty(nextIdx + 1);
     }
 
-    setOptionsOpen(false);
+    setDrawerOpen(false);
   };
 
-  // Drawer confirm (adds into the current page)
-  const handleConfirmAdd = (ids) => {
-    if (!ids?.length) return;
+  const handleMoveWithin = async (fromIdx, toIdx) => {
+    if (!binderId || fromIdx === toIdx) return;
+    try {
+      await moveSlotServer({
+        binderId,
+        fromPage: index,
+        fromSlot: fromIdx,
+        toPage: index,
+        toSlot: toIdx, // action turns into position = toIdx + 1
+      });
+    } catch (e) {
+      console.warn("moveSlot (within) failed", e);
+    }
+  };
 
-    setPages((prev) => {
-      const next = [...prev];
-      const p = { ...next[index] };
-      const slots = [...p.slots];
+  const handleMoveToPage = async (fromIdx, dir) => {
+    if (!binderId) return;
 
-      for (let id of ids) {
-        const empty = slots.findIndex((s) => !s);
-        if (empty === -1) break;
+    let targetIndex =
+      dir === "prev" ? Math.max(0, index - 1) : Math.min((pages?.length ?? 1) - 1, index + 1);
 
-        const fromCollection = MOCK_COLLECTION.find((c) => c.id === id);
-        const fromSearch = fromCollection ? null : MOCK_SEARCH.find((c) => c.id === id);
-        const card = fromCollection || fromSearch;
+    // If dragging to next on last page → create a page first
+    if (dir === "next" && index === (pages?.length ?? 1) - 1) {
+      try {
+        const updated = await addPageServer(binderId);
+        targetIndex = Math.max(0, (updated?.pages?.length ?? (pages?.length ?? 0)) - 1);
+        setIndex(targetIndex);
+      } catch (e) {
+        console.warn("addPage (edge move) failed", e);
+        return;
+      }
+    } else {
+      setIndex(targetIndex);
+    }
 
-        slots[empty] = {
-          id,
-          image: card?.image,
-          label: card?.name,
-          source: fromSearch ? "search" : "collection",
-          notOwned: !!fromSearch,
-        };
+    // find first empty slot on destination, using our current snapshot
+    const destUi = pages[targetIndex] || { slots: [] };
+    const empty = (destUi.slots || []).findIndex((s) => !s);
+    if (empty === -1) return;
+
+    try {
+      await moveSlotServer({
+        binderId,
+        fromPage: index,
+        fromSlot: fromIdx,
+        toPage: targetIndex,
+        toSlot: empty, // converts to 1-based inside action
+      });
+    } catch (e) {
+      console.warn("moveSlot (across pages) failed", e);
+    }
+  };
+
+  const handleRemove = async (slotIdx) => {
+    if (!binderId) return;
+    try {
+      await removeSlotServer({ binderId, pageIndex: index, slotIndex: slotIdx });
+    } catch (e) {
+      console.warn("removeSlot failed", e);
+    }
+  };
+
+  // Options modal → update name/rows/cols/cover
+  const saveOptions = async ({ name: nextName, layoutId: nextLayoutId, cover, rows, cols }) => {
+    try {
+      let r = rows, c = cols;
+      if (!(Number.isFinite(r) && Number.isFinite(c))) {
+        const tpl = getTemplate(nextLayoutId || templateId);
+        r = tpl.rows; c = tpl.cols;
       }
 
-      p.slots = slots;
-      next[index] = p;
-      return next;
-    });
+      const updated = await updateBinderServer({
+        binderId,
+        name: (nextName || "").trim(),
+        rows: r,
+        cols: c,
+        cover,
+      });
+
+      if (updated?.name) setName(updated.name);
+      const newRows = Number(updated?.layout?.rows ?? r) || r;
+      const newCols = Number(updated?.layout?.cols ?? c) || c;
+      setLayout({ rows: newRows, cols: newCols });
+      setTemplateId(inferTemplateId(newRows, newCols));
+    } catch (e) {
+      Alert.alert("Update failed", e?.message || "Could not update binder options.");
+    } finally {
+      setOptionsOpen(false);
+    }
   };
 
-  // Pager swipe -> update selected page index
   const onMomentumEnd = (e) => {
     const i = Math.round(
       e.nativeEvent.contentOffset.x / e.nativeEvent.layoutMeasurement.width
@@ -183,51 +262,104 @@ export default function BinderEditor() {
     setIndex(i);
   };
 
-  // PAGE OPS  ─────────────────────────────────────────────────────
-  const addPage = () => {
-    const pid = Math.random().toString(36).slice(2, 8);
-    const newSlots = Array.from({ length: layout.rows * layout.cols }, () => null);
-    const next = [...pages, { id: pid, title: `Page ${pages.length + 1}`, slots: newSlots }];
-
-    setPages(next);
-    setIndex(next.length - 1);
+  const addPage = async () => {
+    if (!binderId) return;
+    try {
+      const updated = await addPageServer(binderId);
+      const last = Math.max(0, (updated?.pages?.length ?? 1) - 1);
+      setIndex(last);
+    } catch (e) {
+      Alert.alert("Add page failed", e?.message || "Could not add a new page.");
+    }
   };
 
-  const deletePage = () => {
-    if (pages.length <= 1) {
-      Alert.alert("Needed", "A binder must have at least one page.");
+  const deletePage = async () => {
+    if (!binderId) return;
+    if ((pages?.length || 1) <= 1) {
+      Alert.alert("Can't remove page", "A binder must have at least one page.");
       return;
     }
-    const next = pages.filter((_, i) => i !== index);
-    setPages(next);
-    setIndex((i) => Math.max(0, Math.min(i, next.length - 1)));
+    try {
+      // Build a new pages array without the current page, renumber pageOrder, keep layout/titles
+      const binderFromCache = data?.binder;
+      const rawPages = Array.isArray(binderFromCache?.pages) ? binderFromCache.pages : [];
+      const keep = rawPages.filter((_, i) => i !== index);
+
+      const payload = keep.map((p, i) => ({
+        id: String(p.id),
+        title: p?.title ?? `Page ${i + 1}`,
+        layout: p?.layout || "pocket-9",
+        pageOrder: i,
+        slots: (Array.isArray(p?.slots) ? p.slots : [])
+          .filter(Boolean)
+          .map((s, pos) => {
+            const c = s?.card ?? s;
+            const code =
+              c?.id && typeof c.id === "string" && c.id.includes("-")
+                ? c.id
+                : s?.cardId && String(s.cardId).includes("-")
+                ? String(s.cardId)
+                : s?.card?.code || s?.cardCode || s?.code || "";
+            if (!code) return null;
+            return {
+              ...(s?.id ? { id: String(s.id) } : {}),
+              cardId: code,
+              position: Number(s?.position) || pos + 1, // 1-based
+              quantity: Number.isFinite(s?.quantity) ? Number(s.quantity) : 1,
+              ...(s?.notes ? { notes: s.notes } : {}),
+            };
+          })
+          .filter(Boolean),
+      }));
+
+      const updated = await savePagesServer(binderId, payload);
+      setIndex((i) => Math.max(0, Math.min(i, (updated?.pages?.length || 1) - 1)));
+    } catch (e) {
+      Alert.alert("Remove page failed", e?.message || "Could not remove page.");
+    }
   };
 
-  // RENDER ──────────────────────────────────────────────────────────────────
+  /* ---------------- render ---------------- */
+
+  if (loading && !binder) {
+    return (
+      <View style={[styles.centerWrap]}>
+        <Text style={styles.loadingText}>Loading…</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={[styles.centerWrap, { paddingHorizontal: 24 }]}>
+        <Text style={{ color: COLORS.error, textAlign: "center", marginBottom: 12 }}>
+          {error.message}
+        </Text>
+        <Text onPress={() => router.back()} style={{ color: COLORS.accent, fontWeight: "800" }}>
+          Go back
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
       <PageHeaderBackSimple
         title={name}
-        subtitle={`Page ${index + 1} / ${pages.length}`}
+        subtitle={`Page ${index + 1} / ${pages.length || 1}`}
+        onBack={() => router.back()}
         right={
-          <Pressable
-            onPress={openDrawer}
-            style={({ pressed }) => [styles.hBtn, pressed && { opacity: 0.85 }]}
-          >
+          <Pressable onPress={() => setDrawerOpen(true)} style={({ pressed }) => [styles.hBtn, pressed && { opacity: 0.85 }]}>
             <Text style={styles.hBtnText}>Add cards</Text>
           </Pressable>
         }
         right2={
-          <Pressable
-            onPress={openOptions}
-            style={({ pressed }) => [styles.hBtn, pressed && { opacity: 0.85 }]}
-          >
-            <Ionicons name="settings-outline" size={18} color={COLORS.text} />          
+          <Pressable onPress={openOptions} style={({ pressed }) => [styles.hBtn, pressed && { opacity: 0.85 }]}>
+            <Ionicons name="settings-outline" size={18} color={COLORS.text} />
           </Pressable>
         }
       />
 
-      {/* Fullscreen pager (horizontal) */}
       <View style={{ flex: 1 }}>
         <FlatList
           ref={listRef}
@@ -244,87 +376,16 @@ export default function BinderEditor() {
                 rows={layout.rows}
                 cols={layout.cols}
                 slots={item.slots}
-                onSlotPress={onSlotPress}
-                onRemove={(removeIdx) => {
-                  setPages((prev) => {
-                    const next = [...prev];
-                    const page = { ...next[index] };
-                    const s = [...page.slots];
-                    s[removeIdx] = null;
-                    page.slots = s;
-                    next[index] = page;
-                    return next;
-                  });
-                }}
-                onMove={(fromIdx, toIdx) => {
-                  if (fromIdx === toIdx) return;
-                  setPages((prev) => {
-                    const next = [...prev];
-                    const page = { ...next[index] };
-                    const s = [...page.slots];
-                    const moving = s[fromIdx];
-                    if (!moving) return prev;
-                    // MOVE semantics: place on target, clear source
-                    s[toIdx] = moving;
-                    s[fromIdx] = null;
-                    page.slots = s;
-                    next[index] = page;
-                    return next;
-                  });
-                }}
-                onMoveToPage={(fromIdx, dir) => {
-                  setPages((prev) => {
-                    const next = [...prev];
-                    const srcPage = { ...next[index] };
-                    const srcSlots = [...srcPage.slots];
-                    const moving = srcSlots[fromIdx];
-                    if (!moving) return prev;
-
-                    const targetIndex =
-                      dir === "prev" ? Math.max(0, index - 1) : Math.min(next.length - 1, index + 1);
-                    if (targetIndex === index) return prev;
-
-                    const dstPage = { ...next[targetIndex] };
-                    const dstSlots = [...dstPage.slots];
-
-                    // find first empty slot on destination page
-                    const empty = dstSlots.findIndex((s) => !s);
-                    if (empty === -1) {
-                      // No room; could auto-add a new page here:
-                      // const pid = Math.random().toString(36).slice(2, 8);
-                      // const newSlots = Array.from({ length: layout.rows * layout.cols }, () => null);
-                      // next.push({ id: pid, title: `Page ${next.length + 1}`, slots: newSlots });
-                      // next[next.length - 1].slots[0] = moving;
-                      // srcSlots[fromIdx] = null;
-                      // srcPage.slots = srcSlots;
-                      // return next;
-                      return prev;
-                    }
-
-                    dstSlots[empty] = moving;
-                    srcSlots[fromIdx] = null;
-
-                    srcPage.slots = srcSlots;
-                    dstPage.slots = dstSlots;
-
-                    next[index] = srcPage;
-                    next[targetIndex] = dstPage;
-
-                    return next;
-                  });
-
-                  // UX: flip to target page so user sees the result
-                  setIndex((i) =>
-                    dir === "prev" ? Math.max(0, i - 1) : Math.min(pages.length - 1, i + 1)
-                  );
-                }}
+                onSlotPress={() => setDrawerOpen(true)}
+                onRemove={handleRemove}
+                onMove={handleMoveWithin}
+                onMoveToPage={handleMoveToPage}
               />
             </View>
           )}
         />
       </View>
 
-      {/* Bottom pager with + / − */}
       <PagePager
         pages={pages}
         activeIndex={index}
@@ -333,41 +394,33 @@ export default function BinderEditor() {
         onDeletePage={deletePage}
       />
 
-      {/* Drawer */}
       <AddCardsDrawer
         visible={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        destination={{
-          pageIndex: index,
-          pageLabel: `Page ${index + 1}`,
-          slotsLeft,
-        }}
-        onChangeDestination={() => {
-          // OPTIONAL: open page picker modal here
-        }}
+        destination={{ pageIndex: index, pageLabel: `Page ${index + 1}` }}
+        onChangeDestination={() => {}}
         onConfirmAdd={handleConfirmAdd}
-        collection={MOCK_COLLECTION}
-        search={MOCK_SEARCH}
-        ownedSet={OWNED_SET}
       />
 
-      {/* Options */}
       <BinderOptionsModal
         visible={optionsOpen}
-        onClose={closeOptions}
+        onClose={() => setOptionsOpen(false)}
         onSave={saveOptions}
-        // If modal expects these names, pass them; otherwise map as needed:
-        name={name}
-        templateId={templateId}
-        rows={layout.rows}
-        cols={layout.cols}
-        templates={TEMPLATES}
+        initialName={name}
+        initialLayoutId={templateId}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  centerWrap: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingText: { color: COLORS.textMuted, fontWeight: "800" },
   hBtn: {
     backgroundColor: COLORS.alt,
     borderColor: COLORS.border,

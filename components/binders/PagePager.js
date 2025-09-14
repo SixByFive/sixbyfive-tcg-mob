@@ -1,44 +1,99 @@
 // components/binder/PagePager.js
-import React from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 
 export default function PagePager({
-  pages,
-  activeIndex,
+  pages = [],
+  activeIndex = 0,
   onSelectIndex,
   onAddPage,
   onDeletePage,
 }) {
+  const listRef = useRef(null);
+
+  // Guarded values
+  const count = Array.isArray(pages) ? pages.length : 0;
+  const canDelete = count > 1;
+  const clampedActive = Math.max(0, Math.min(activeIndex ?? 0, Math.max(0, count - 1)));
+
+  // Precompute layout for FlatList (stable item size)
+  const ITEM_WIDTH = 48; // minWidth 32 + padding/gap; adjust if you change styles
+  const getItemLayout = useMemo(
+    () => (_data, index) => ({ length: ITEM_WIDTH, offset: ITEM_WIDTH * index, index }),
+    [ITEM_WIDTH]
+  );
+
+  // Keep active page in view
+  useEffect(() => {
+    if (!listRef.current || count === 0) return;
+    try {
+      listRef.current.scrollToIndex({
+        index: clampedActive,
+        animated: true,
+        viewPosition: 0.5, // center
+      });
+    } catch {
+      // In rare cases FlatList hasn't measured yet; ignore.
+    }
+  }, [clampedActive, count]);
+
   return (
     <View style={styles.wrap}>
-      <CircleBtn label="–" onPress={onDeletePage} />
+      <CircleBtn
+        label="–"
+        disabled={!canDelete}
+        onPress={canDelete ? onDeletePage : undefined}
+        accessibilityLabel={canDelete ? "Remove page" : "Cannot remove page"}
+      />
+
       <FlatList
+        ref={listRef}
         horizontal
         data={pages}
-        keyExtractor={(p) => p.id}
+        keyExtractor={(p, i) => String(p?.id ?? i)}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 8, gap: 8 }}
+        getItemLayout={getItemLayout}
         renderItem={({ index }) => {
-          const active = index === activeIndex;
+          const active = index === clampedActive;
           return (
             <Pressable
-              onPress={() => onSelectIndex(index)}
+              onPress={() => onSelectIndex?.(index)}
               style={({ pressed }) => [styles.dot, active && styles.dotActive, pressed && { opacity: 0.92 }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Go to page ${index + 1}`}
+              accessibilityState={{ selected: active }}
             >
               <Text style={[styles.dotText, active && styles.dotTextActive]}>{index + 1}</Text>
             </Pressable>
           );
         }}
       />
-      <CircleBtn label="+" onPress={onAddPage} />
+
+      <CircleBtn
+        label="+"
+        onPress={onAddPage}
+        accessibilityLabel="Add page"
+      />
     </View>
   );
 }
 
-function CircleBtn({ label, onPress }) {
+function CircleBtn({ label, onPress, disabled, accessibilityLabel }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.circle, pressed && { opacity: 0.92 }]}>
+    <Pressable
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.circle,
+        disabled && styles.circleDisabled,
+        pressed && !disabled && { opacity: 0.92 },
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ disabled: !!disabled }}
+    >
       <Text style={styles.circleText}>{label}</Text>
     </Pressable>
   );
@@ -69,6 +124,10 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent,
     alignItems: "center",
     justifyContent: "center",
+  },
+  circleDisabled: {
+    backgroundColor: "#2f3550",
+    opacity: 0.6,
   },
   circleText: { color: "#fff", fontWeight: "900", fontSize: 18, lineHeight: 18 },
 

@@ -206,11 +206,10 @@ export default function PublicProfile() {
         {tab === "binders" && (
           <BindersTab
             title="Binders"
-            isOwner={isOwner}                          // explicit guard
+            isOwner={isOwner}           // let BindersTab decide view vs edit
             binders={vm.recentBinders}
             userId={vm.id}
-            onOpenBinder={(id) => router.push(`/binder/${id}`)}
-            // no onCreateBinder → visitors will not see create UI
+            // NOTE: intentionally NOT passing onOpenBinder to avoid forcing view route
           />
         )}
 
@@ -283,7 +282,7 @@ const styles = StyleSheet.create({
   buttonPressed: { transform: [{ scale: 0.98 }], opacity: 0.95 },
   buttonPrimary: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
   buttonSecondary: { backgroundColor: COLORS.surface, borderColor: COLORS.border },
-  buttonFollowing: { backgroundColor: COLORS.background, borderColor: COLORS.accent },
+  buttonFollowing: { backgroundColor: "rgba(41,99,255,0.12)", borderColor: COLORS.accent },
 
   buttonText: { fontWeight: "900", letterSpacing: 0.2 },
   buttonTextPrimary: { color: "#fff" },
