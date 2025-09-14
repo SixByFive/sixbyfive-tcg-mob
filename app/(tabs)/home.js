@@ -125,7 +125,7 @@ export default function Home() {
         <ActionCard label="Search cards" onPress={() => router.push("/(tabs)/search")} />
       </ActionRow>
       <ActionRow>
-        <ActionCard label="Browse sets" onPress={() => router.push("/sets")} />
+        {/* <ActionCard label="Browse sets" onPress={() => router.push("/sets")} /> */}
         <ActionCard label="App settings" onPress={() => router.push("/settings")} />
       </ActionRow>
 
