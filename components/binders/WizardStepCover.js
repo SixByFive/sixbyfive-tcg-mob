@@ -61,7 +61,7 @@ export default function WizardStepCover({ value, onChange }) {
   return (
     <View style={styles.card}>
       <Text style={styles.title}>Choose a cover</Text>
-      <Text style={styles.sub}>Pick a color theme for your binder.</Text>
+      <Text style={styles.sub}>Pick a colour theme for your binder.</Text>
 
       <View style={styles.grid}>
         {STANDARD_COLOURS.map((c) => {
