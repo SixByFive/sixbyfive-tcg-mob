@@ -12,9 +12,9 @@ export default function WishlistPlaceholder({ count, onOpen, onBrowse }) {
         You have <Text style={{ color: COLORS.text, fontWeight: "800" }}>{count}</Text> items on your wishlist.
       </Text>
       <View style={styles.rowButtons}>
-        <Pressable onPress={onOpen} style={[styles.cta, { backgroundColor: COLORS.accent, flex: 1 }]}>
+        {/* <Pressable onPress={onOpen} style={[styles.cta, { backgroundColor: COLORS.accent, flex: 1 }]}>
           <Text style={styles.ctaText}>Open Wishlist</Text>
-        </Pressable>
+        </Pressable> */}
         <Pressable onPress={onBrowse} style={[styles.ctaOutline, { flex: 1 }]}>
           <Text style={styles.ctaOutlineText}>Browse</Text>
         </Pressable>
