@@ -1,24 +1,14 @@
 // components/card/InfoCard.js
-
+import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
-
-function PricePill({ label, value }) {
-  return (
-    <View style={styles.pricePill}>
-      <Text style={styles.priceLabel}>{label}</Text>
-      <Text style={styles.priceValue}>
-        {typeof value === "number" ? `£${value.toFixed(2)}` : "—"}
-      </Text>
-    </View>
-  );
-}
 
 export default function InfoCard({
   name,
   number,
   setName,
+  // kept for compatibility; not used visually
   tcgp,
   cmkt,
   average,
@@ -26,11 +16,12 @@ export default function InfoCard({
   onAddToCollection,
   onToggleWishlist,
 }) {
-
-  const showActions = 
+  const showActions =
     !hideActions &&
     typeof onAddToCollection === "function" &&
-    typeof onToggleWishlist === "function"; 
+    typeof onToggleWishlist === "function";
+
+  const avgText = typeof average === "number" ? average.toFixed(2) : "—";
 
   return (
     <View style={styles.infoCard}>
@@ -43,113 +34,166 @@ export default function InfoCard({
 
       <Text style={styles.meta}>{setName || "—"}</Text>
 
-      <View style={styles.priceRow}>
-        <View style={{ flex: 1 }}>
-          <PricePill label="TCGP" value={tcgp} />
+      {/* NEW: Single compact row – Avg + Buttons */}
+      <View style={styles.inlineRow}>
+        <View style={styles.avgWrap}>
+          <View style={styles.avgIconBubble}>
+            <Ionicons name="stats-chart" size={12} color="#fff" />
+          </View>
+          <View style={styles.avgTextCol}>
+            <Text style={styles.avgCaption}>Average</Text>
+            <View style={styles.avgValueRow}>
+              <Text style={styles.avgCurrency}>£</Text>
+              <Text style={styles.avgValue}>{avgText}</Text>
+            </View>
+          </View>
         </View>
-        <View style={{ flex: 1 }}>
-          <PricePill label="CMKT" value={cmkt} />
-        </View>
-      </View>
 
-      <View style={styles.avgPill}>
-        <Text style={styles.avgLabel}>Avg</Text>
-        <Text style={styles.avgValue}>{average != null ? `£${average.toFixed(2)}` : "—"}</Text>
-      </View>
+        {showActions && (
+          <>
+            <Pressable
+              onPress={onAddToCollection}
+              style={[styles.cta, styles.ctaPrimary]}
+            >
+              <Text style={styles.ctaPrimaryText}>Add to Collection</Text>
+            </Pressable>
 
-      {showActions && (
-        <View style={styles.ctaRow}>
-          <Pressable onPress={onAddToCollection} style={[styles.cta, { backgroundColor: COLORS.accent }]}>
-            <Text style={styles.ctaText}>Add to Collection</Text>
-          </Pressable>
-          <Pressable onPress={onToggleWishlist} style={[styles.ctaOutline, { borderColor: COLORS.accent }]}>
-            <Text style={styles.ctaOutlineText}>Wishlist</Text>
-          </Pressable>
-        </View>
-      )}
-      
+            <Pressable
+              onPress={onToggleWishlist}
+              style={[styles.cta, styles.ctaOutline]}
+            >
+              <Text style={styles.ctaOutlineText}>Wishlist</Text>
+            </Pressable>
+          </>
+        )}
+      </View>
     </View>
   );
 }
 
+const ROW_H = 40; // unified row height for pill + CTAs
+
 const styles = StyleSheet.create({
   infoCard: {
-    marginTop: 12,
+    marginTop: 8,                      // tighter
     backgroundColor: COLORS.surface,
     borderColor: COLORS.border,
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 16,
-    padding: 12,
+    padding: 10,                       // tighter
   },
-  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  name: { color: COLORS.text, fontSize: 18, fontWeight: "800", flex: 1, paddingRight: 8 },
+  rowBetween: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  name: {
+    color: COLORS.text,
+    fontSize: 17,
+    fontWeight: "800",
+    flex: 1,
+    paddingRight: 6,
+  },
   badge: {
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: 8,
     backgroundColor: COLORS.alt,
     color: COLORS.text,
     fontWeight: "800",
     overflow: "hidden",
+    fontSize: 12,
   },
-  meta: { marginTop: 6, color: COLORS.textMuted },
+  meta: {
+    marginTop: 4,
+    color: COLORS.textMuted,
+    fontSize: 12.5,
+    marginBottom: 6,                  // small bottom space before inline row
+  },
 
-  priceRow: { flexDirection: "row", gap: 8, marginTop: 12 },
-  pricePill: {
-    height: 36,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: COLORS.alt,
-    borderColor: COLORS.border,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
+  /* --- Inline row: Avg + Buttons --- */
+  inlineRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-  },
-  priceLabel: { color: COLORS.accentLight, fontSize: 11.5, fontWeight: "800" },
-  priceValue: {
-    color: COLORS.text,
-    fontSize: 13,
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"],
-    includeFontPadding: false,
+    gap: 8,
   },
 
-  avgPill: {
-    marginTop: 10,
-    alignSelf: "flex-start",
-    height: 36,
-    paddingHorizontal: 12,
-    borderRadius: 999,
+  /* Avg pill (compact, fixed height to match buttons) */
+  avgWrap: {
+    height: ROW_H,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 10,
+    borderRadius: 12,
     backgroundColor: COLORS.accent,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
   },
-  avgLabel: { color: "#fff", fontWeight: "800", opacity: 0.9 },
+  avgIconBubble: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avgTextCol: { flexDirection: "column", justifyContent: "center" },
+  avgCaption: {
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 9.5,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginBottom: 0,
+  },
+  avgValueRow: { flexDirection: "row", alignItems: "flex-end" },
+  avgCurrency: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 14,
+    marginRight: 2,
+    opacity: 0.95,
+  },
   avgValue: {
     color: "#fff",
-    fontWeight: "800",
+    fontSize: 16,
+    fontWeight: "900",
+    lineHeight: 18,
     fontVariant: ["tabular-nums"],
     includeFontPadding: false,
   },
 
-  ctaRow: { flexDirection: "row", gap: 10, marginTop: 14 },
+  /* Buttons (same row as avg pill) */
   cta: {
+    height: ROW_H,
     flex: 1,
+    borderRadius: 11,
     alignItems: "center",
-    paddingVertical: 12,
-    borderRadius: 12,
+    justifyContent: "center",
   },
-  ctaText: { color: "#fff", fontWeight: "800", letterSpacing: 0.3 },
+  ctaPrimary: {
+    backgroundColor: COLORS.accent,
+  },
+  ctaPrimaryText: {
+    color: "#fff",
+    fontWeight: "800",
+    letterSpacing: 0.25,
+  },
   ctaOutline: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 12,
-    borderRadius: 12,
     backgroundColor: COLORS.alt,
     borderWidth: 2,
+    borderColor: COLORS.accent,
   },
-  ctaOutlineText: { color: COLORS.accent, fontWeight: "800", letterSpacing: 0.3 },
+  ctaOutlineText: {
+    color: COLORS.accent,
+    fontWeight: "800",
+    letterSpacing: 0.25,
+  },
 });

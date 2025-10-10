@@ -1,11 +1,149 @@
-// components/collection/BinderGrid.js
-
+import { useQuery } from "@apollo/client";
+import { Ionicons } from "@expo/vector-icons";
+import { BinderDocument } from "@sixbyfive/tcg-binder/client";
 import React from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 
+/* ---------------- helpers ---------------- */
+
+const formatDate = (d) => {
+  if (!d) return "—";
+  try { return new Date(d).toLocaleDateString(); } catch { return "—"; }
+};
+
+const computeCardsFromPages = (pages) => {
+  if (!Array.isArray(pages)) return 0;
+  let n = 0;
+  for (const p of pages) {
+    const slots = Array.isArray(p?.slots) ? p.slots : [];
+    n += slots.filter((s) => s && (s.cardId || s.card?.id)).length;
+  }
+  return n;
+};
+
+function mergeBinder(stub, live) {
+  const b = { ...(stub || {}), ...(live || {}) };
+
+  const id = String(b?.id ?? stub?.id ?? "");
+  const name = (b?.name || b?.title || "Binder").trim();
+  const coverColor = b?.coverColor || b?.cover?.coverColor || "#23243c";
+  const accentColor = b?.accentColor || b?.cover?.accentColor || "#424a80";
+  const updatedAt = b?.updatedAt;
+
+  const pages = Array.isArray(b?.pages) ? b.pages : undefined;
+  const pagesCount =
+    typeof b?.pagesCount === "number"
+      ? b.pagesCount
+      : typeof b?.pageCount === "number"
+      ? b.pageCount
+      : pages
+      ? pages.length
+      : 0;
+
+  const cardsCount =
+    typeof b?.cardsCount === "number"
+      ? b.cardsCount
+      : typeof b?.cardCount === "number"
+      ? b.cardCount
+      : computeCardsFromPages(pages);
+
+  const coverImage = b?.coverImage || b?.cover?.image || null;
+
+  return { id, name, coverColor, accentColor, updatedAt, pagesCount, cardsCount, coverImage };
+}
+
+/* ---------------- small UI bits ---------------- */
+
+function StatPill({ icon, children }) {
+  return (
+    <View style={styles.statPill}>
+      <Ionicons name={icon} size={12} color={COLORS.textSecondary} style={{ marginRight: 6 }} />
+      <Text style={styles.statText} numberOfLines={1}>{children}</Text>
+    </View>
+  );
+}
+
+function ColorLegend({ cover, accent }) {
+  return (
+    <View style={styles.legendRow}>
+      <View style={[styles.legendDot, { backgroundColor: cover }]} />
+      <View style={[styles.legendDot, { backgroundColor: accent }]} />
+    </View>
+  );
+}
+
+/* ---------------- tile (hydrates itself) ---------------- */
+
+function HydratedTile({ stub, onOpen }) {
+  const id = String(stub?.id ?? "");
+  const { data } = useQuery(BinderDocument, {
+    variables: { id },
+    skip: !id,
+    fetchPolicy: "cache-first",
+  });
+
+  const merged = mergeBinder(stub, data?.binder);
+
+  return (
+    <Pressable
+      onPress={() => onOpen?.(merged.id)}
+      android_ripple={{ color: "#00000018" }}
+      style={({ pressed }) => [
+        styles.binderTile,
+        { borderColor: merged.accentColor + "55" },
+        pressed && { transform: [{ scale: 0.99 }] },
+      ]}
+    >
+      {/* Cover */}
+      <View style={[styles.coverWrap, { borderColor: merged.accentColor + "88" }]}>
+        {/* Accent stripe makes secondary color obvious */}
+        <View style={[styles.accentStripe, { backgroundColor: merged.accentColor }]} />
+
+        {merged.coverImage ? (
+          <>
+            <Image source={{ uri: merged.coverImage }} resizeMode="cover" style={StyleSheet.absoluteFill} />
+            <View style={styles.coverGradient} />
+          </>
+        ) : (
+          <View style={[styles.coverPlaceholder, { backgroundColor: merged.coverColor }]} />
+        )}
+
+        {/* subtle inner ring */}
+        <View style={[styles.coverInnerRing, { borderColor: merged.accentColor + "33" }]} />
+
+        {/* SixByFive brand tag (VaultX-style) */}
+        <View style={styles.brandBadge}>
+          <Text style={styles.brandText}>SixByFive</Text>
+        </View>
+      </View>
+
+      {/* Title + color legend */}
+      <View style={styles.titleRow}>
+        <Text style={styles.tileName} numberOfLines={1}>{merged.name}</Text>
+        <ColorLegend cover={merged.coverColor} accent={merged.accentColor} />
+      </View>
+
+      {/* Stats */}
+      <View style={styles.statsRow}>
+        <StatPill icon="albums-outline">
+          {merged.cardsCount} {merged.cardsCount === 1 ? "card" : "cards"}
+        </StatPill>
+        <StatPill icon="grid-outline">
+          {merged.pagesCount} {merged.pagesCount === 1 ? "page" : "pages"}
+        </StatPill>
+        {/* <StatPill icon="time-outline">{formatDate(merged.updatedAt)}</StatPill> */}
+      </View>
+    </Pressable>
+  );
+}
+
+/* ---------------- grid ---------------- */
+
 export default function BinderGrid({ binders, onCreate, onOpen }) {
-  if (!binders?.length) {
+  const list = Array.isArray(binders) ? binders : [];
+
+  if (list.length === 0) {
     return (
       <View style={styles.emptyWrap}>
         <Text style={styles.emptyText}>No binders yet.</Text>
@@ -18,28 +156,14 @@ export default function BinderGrid({ binders, onCreate, onOpen }) {
 
   return (
     <View style={styles.grid}>
-      {binders.map((b) => (
-        <Pressable key={b.id} onPress={() => onOpen(b.id)} style={styles.binderTile}>
-          <View style={styles.coverWrap}>
-            {b.coverImage ? (
-              <Image source={{ uri: b.coverImage }} resizeMode="cover" style={StyleSheet.absoluteFill} />
-            ) : (
-              <View style={styles.coverPlaceholder}>
-                <Text style={{ color: COLORS.textMuted, fontWeight: "800" }}>
-                  {(b.name || "B").slice(0, 1).toUpperCase()}
-                </Text>
-              </View>
-            )}
-          </View>
-          <Text style={styles.tileName} numberOfLines={1}>{b.name || "Untitled"}</Text>
-          <Text style={styles.tileMeta} numberOfLines={1}>
-            {b.count ?? 0} cards · {b.updatedAt ? new Date(b.updatedAt).toLocaleDateString() : "—"}
-          </Text>
-        </Pressable>
+      {list.map((stub, idx) => (
+        <HydratedTile key={String(stub?.id ?? idx)} stub={stub} onOpen={onOpen} />
       ))}
     </View>
   );
 }
+
+/* ---------------- styles ---------------- */
 
 const styles = StyleSheet.create({
   grid: {
@@ -48,31 +172,114 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 12,
   },
+
   binderTile: {
     width: "48%",
     backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 14,
-    padding: 8,
+    borderRadius: 16,
+    padding: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
   },
+
   coverWrap: {
-    borderRadius: 10,
+    borderRadius: 12,
     overflow: "hidden",
     backgroundColor: COLORS.alt,
-    borderColor: COLORS.border,
     borderWidth: StyleSheet.hairlineWidth,
     aspectRatio: 4 / 3,
-    marginBottom: 8,
     position: "relative",
+    marginBottom: 10,
+  },
+
+  // secondary color strip
+  accentStripe: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 6,
+    zIndex: 2,
+  },
+
+  coverGradient: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.08)",
+  },
+  coverInnerRing: {
+    position: "absolute",
+    left: 6,
+    top: 6,
+    right: 6,
+    bottom: 6,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   coverPlaceholder: {
     ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
   },
-  tileName: { color: COLORS.text, fontWeight: "700" },
-  tileMeta: { color: COLORS.textMuted, fontSize: 12, marginTop: 2 },
+
+  // brand tag (lower-right)
+  brandBadge: {
+    position: "absolute",
+    right: 8,
+    bottom: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.18)",
+  },
+  brandText: {
+    color: "#fff",
+    fontWeight: "800",
+    fontSize: 11,
+    letterSpacing: 0.3,
+  },
+
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  tileName: { color: COLORS.text, fontWeight: "800", fontSize: 14.5, flexShrink: 1 },
+
+  legendRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.25)",
+  },
+
+  statsRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  statPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: COLORS.alt,
+    borderColor: COLORS.border,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  statText: {
+    color: COLORS.textSecondary,
+    fontSize: 11.5,
+    fontWeight: "700",
+  },
 
   emptyWrap: { alignItems: "center", gap: 8, paddingVertical: 16 },
   emptyText: { color: COLORS.textMuted },

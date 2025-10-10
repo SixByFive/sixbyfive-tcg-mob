@@ -6,8 +6,68 @@ import { COLORS } from "../../theme/colors";
 import { getBestPrice, normalizeImageUrl } from "../../utils/cards";
 import AvgPriceBlock from "./AvgPriceBlock";
 
+/* ---------- local helpers for robust fallback ---------- */
+
+function isNum(x) {
+  return typeof x === "number" && Number.isFinite(x);
+}
+
+function pickValue(p) {
+  // prefer market → gbp → mid → low → high
+  if (!p) return undefined;
+  return (
+    (isNum(p.market) ? p.market : undefined) ??
+    (isNum(p.gbp) ? p.gbp : undefined) ??
+    (isNum(p.mid) ? p.mid : undefined) ??
+    (isNum(p.low) ? p.low : undefined) ??
+    (isNum(p.high) ? p.high : undefined)
+  );
+}
+
+function canonicalVariant(v) {
+  const s = String(v ?? "normal").toLowerCase().trim();
+  if (!s) return "normal";
+  if (["reverse", "reverse holo", "reverse-holo", "reverseholo", "reverseholofoil"].includes(s))
+    return "reverseHolofoil";
+  if (["holo", "holofoil", "holo foil"].includes(s)) return "holofoil";
+  if (["first edition", "firstedition", "1st edition", "1stedition"].includes(s)) return "firstEdition";
+  return s;
+}
+
+function hasAnyValue(p) {
+  return (
+    isNum(p?.market) ||
+    isNum(p?.gbp) ||
+    isNum(p?.mid) ||
+    isNum(p?.low) ||
+    isNum(p?.high) ||
+    isNum(p?.tcgplayer) ||
+    isNum(p?.cardmarket)
+  );
+}
+
+function localBestPrice(prices = []) {
+  if (!Array.isArray(prices) || prices.length === 0) return null;
+
+  // normalize variants for ordering
+  const rows = prices
+    .map((r) => (r ? { ...r, _v: canonicalVariant(r.variation ?? r.variant) } : null))
+    .filter(Boolean)
+    .filter(hasAnyValue);
+
+  if (rows.length === 0) return null;
+
+  const pref = ["normal", "holofoil", "holo", "reverseHolofoil", "reverse"];
+  for (const v of pref) {
+    const hit = rows.find((r) => r._v === v && pickValue(r) != null);
+    if (hit) return hit;
+  }
+
+  return rows.find((r) => pickValue(r) != null) || null;
+}
+
 export default function CardTile({
-  item = {},                    // <-- safe default
+  item = {},
   onPress,
   onAddToCollection,
   onAddToWishlist,
@@ -23,11 +83,28 @@ export default function CardTile({
   // Memoize off the *content* so re-renders don’t “reset” the pill
   const pricesKey = useMemo(() => JSON.stringify(pricesArray), [pricesArray]);
 
-  const price = useMemo(
-    () => getBestPrice({ ...item, prices: pricesArray }, { strategy: "recent" }),
+  // CHANGED: only use util result if it actually contains a price;
+  // otherwise, fall back to the robust local selector that understands market/mid/low/high.
+  const best = useMemo(() => {
+    const utilResult = getBestPrice({ ...item, prices: pricesArray }, { strategy: "recent" });
+    const useUtil = utilResult && hasAnyValue(utilResult); // <- key fix
+    return useUtil ? utilResult : localBestPrice(pricesArray);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pricesKey] // intentionally not depending on the whole item object
-  );
+  }, [pricesKey]);
+
+  // Derive values for AvgPriceBlock
+  const tcgp = useMemo(() => {
+    if (!best) return undefined;
+    return (
+      (isNum(best.tcgplayer) ? best.tcgplayer : undefined) ??
+      pickValue(best) // fallback to market/gbp/mid/low/high
+    );
+  }, [best]);
+
+  const cmkt = useMemo(() => {
+    if (!best) return undefined;
+    return isNum(best.cardmarket) ? best.cardmarket : undefined;
+  }, [best]);
 
   const imageUri = normalizeImageUrl(item?.image);
 
@@ -52,7 +129,11 @@ export default function CardTile({
         </View>
 
         <View style={{ marginTop: 8 }}>
-          <AvgPriceBlock tcgp={price.tcgplayer} cmkt={price.cardmarket} />
+          {tcgp != null || cmkt != null ? (
+            <AvgPriceBlock tcgp={tcgp} cmkt={cmkt} />
+          ) : (
+            <Text style={[styles.cardMeta, { textAlign: "right" }]}>—</Text>
+          )}
         </View>
       </View>
 

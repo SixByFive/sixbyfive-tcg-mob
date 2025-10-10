@@ -1,12 +1,10 @@
-// app/(tabs)/collection.js
-
-// CHANGED: useApolloClient for imperative queries; remove gql/useLazyQuery
-import { useApolloClient, useMutation, useQuery } from "@apollo/client";
+import { useApolloClient, useQuery } from "@apollo/client";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -27,20 +25,16 @@ import { COLORS } from "../../theme/colors";
 import { filterBinders } from "../../utils/collectionFilters";
 
 import {
-  AddToCollectionDocument,
   CardByIdDocument,
   MyBindersDocument,
   MyCollectionDocument,
-  RemoveFromCollectionDocument,
-  RemoveFromWishlistDocument,
-  // NEW: hydrate via SDK-provided queries
   SearchCardsDocument,
-  UpdateCollectionEntryDocument,
   WishlistDocument,
-} from "@sixbyfive/tcg-binder/client"; // :contentReference[oaicite:1]{index=1}
+} from "@sixbyfive/tcg-binder/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 
-/* -------------------- Price normalizers (unchanged) -------------------- */
+/* ---------------- small helpers ---------------- */
+
 function normalizePrice(p) {
   if (!p || typeof p !== "object") return p;
   const hasCamel = Object.prototype.hasOwnProperty.call(p, "tcgPlayer");
@@ -55,8 +49,28 @@ function normalizePricesArray(arr) {
   return arr.map(normalizePrice);
 }
 
-/* -------------------- Wishlist read helpers (minimal) -------------------- */
-// NOTE: Based on your logs: { wishlist: { entries, total, page, pageSize } }
+// very forgiving array reader
+function toArray(input) {
+  if (!input) return [];
+  if (Array.isArray(input)) return input;
+  if (Array.isArray(input.edges)) return input.edges.map((e) => e?.node ?? e).filter(Boolean);
+  if (Array.isArray(input.nodes)) return input.nodes.filter(Boolean);
+  if (Array.isArray(input.items)) return input.items.filter(Boolean);
+  if (Array.isArray(input.results)) return input.results.filter(Boolean);
+  if (Array.isArray(input.entries)) return input.entries.filter(Boolean);
+  for (const k of Object.keys(input || {})) {
+    const v = input[k];
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === "object") {
+      if (Array.isArray(v.edges)) return v.edges.map((e) => e?.node ?? e).filter(Boolean);
+      if (Array.isArray(v.nodes)) return v.nodes.filter(Boolean);
+    }
+  }
+  return [];
+}
+
+/* ---------------- wishlist helpers ---------------- */
+
 function readWishlistRoot(data) {
   return data?.myWishlist ?? data?.wishlist ?? {};
 }
@@ -68,95 +82,74 @@ function readWishlistServerTotal(root) {
   return Number(n) || 0;
 }
 
-/* -------------------- Cache update helper (SIMPLIFIED) -------------------- */
-// assumes { wishlist: { entries: [...], total } }
-function removeWishlistCardInCache(cache, userId, cardId) {
-  try {
-    const variables = { userId, page: 1, pageSize: 200 };
-    const prev = cache.readQuery({ query: WishlistDocument, variables });
-    if (!prev?.wishlist) return;
+/* ---------------- search helpers ---------------- */
 
-    const before = prev.wishlist;
-    const filtered = (before.entries || []).filter((entry) => {
-      const node = entry?.node ?? entry;
-      const idFromEntry = node?.card?.id || node?.cardId || node?.id;
-      return String(idFromEntry) !== String(cardId);
-    });
-
-    cache.writeQuery({
-      query: WishlistDocument,
-      variables,
-      data: {
-        ...prev,
-        wishlist: {
-          ...before,
-          entries: filtered,
-          total:
-            typeof before.total === "number"
-              ? Math.max(0, filtered.length)
-              : before.total,
-        },
-      },
-    });
-  } catch {
-    /* ignore cache miss */
-  }
-}
-
-/* -------------------- Search results readers (NEW) -------------------- */
-// These let us support several likely shapes without giant if/elses.
 function readCardsFromSearch(data) {
   if (!data) return [];
-  // common direct arrays
   if (Array.isArray(data.searchCards)) return data.searchCards;
   if (Array.isArray(data.cards)) return data.cards;
   if (Array.isArray(data.results)) return data.results;
-
-  // connection shapes
   const conn = data.searchCardsConnection;
-  if (conn?.edges && Array.isArray(conn.edges)) {
-    return conn.edges.map((e) => e?.node).filter(Boolean);
-  }
-  if (conn?.nodes && Array.isArray(conn.nodes)) {
-    return conn.nodes;
-  }
+  if (conn?.edges && Array.isArray(conn.edges)) return conn.edges.map((e) => e?.node).filter(Boolean);
+  if (conn?.nodes && Array.isArray(conn.nodes)) return conn.nodes;
   return [];
 }
 function toCardIdMap(list) {
   const map = new Map();
-  for (const c of list || []) {
-    if (c?.id) map.set(String(c.id), c);
-  }
+  for (const c of list || []) if (c?.id) map.set(String(c.id), c);
   return map;
+}
+
+/* ---------------- UI: subtle, full-width Create Binder banner ---------------- */
+
+function CreateBinderBanner({ onPress }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      android_ripple={{ color: "#00000018" }}
+      style={({ pressed }) => [
+        styles.createBanner,
+        pressed && { transform: [{ scale: 0.99 }], opacity: 0.96 },
+      ]}
+      accessibilityRole="button"
+    >
+      <View style={styles.createBannerIcon}>
+        <Text style={{ color: COLORS.text, fontWeight: "900" }}>＋</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.createBannerTitle}>Create a new binder</Text>
+        <Text style={styles.createBannerSub}>Start organising your cards</Text>
+      </View>
+      <Text style={styles.createBannerChev}>{">"}</Text>
+    </Pressable>
+  );
 }
 
 export default function CollectionTab() {
   const router = useRouter();
   const toast = useToast();
-  const apollo = useApolloClient(); // NEW
+  const apollo = useApolloClient();
 
-  const [segment, setSegment] = useState("all");
+  const [segment, setSegment] = useState("binders"); // show binders first
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
-  // editor state
   const [editing, setEditing] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
-
   const [removing, setRemoving] = useState(null);
   const [savingRemoval, setSavingRemoval] = useState(false);
 
-  // NEW: local store for hydrated cards (replaces useLazyQuery state)
+  // wishlist hydration
   const [cardsByIdMap, setCardsByIdMap] = useState(() => new Map());
-  const [hydrating, setHydrating] = useState(false); // tiny inline spinner only
+  const [hydrating, setHydrating] = useState(false);
   const hydratedIdsRef = useRef(new Set());
   const inFlightRef = useRef(false);
 
-  // current user id
-  const { data: meData, loading: meLoading, error: meError } = useMeQuery({ fetchPolicy: "cache-first" });
+  const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
   const userId = meData?.me?.id ?? null;
 
-  /* -------------------- QUERIES -------------------- */
+  /* -------- queries -------- */
+
   const {
     data: collData,
     loading: collLoading,
@@ -178,13 +171,12 @@ export default function CollectionTab() {
     refetch: refetchBinders,
     networkStatus: bindersNS,
   } = useQuery(MyBindersDocument, {
-    variables: { userId },
-    skip: !userId,
+    variables: userId ? { userId, page: 1, pageSize: 50 } : { page: 1, pageSize: 50 },
+    skip: false,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
   });
 
-  // Wishlist (server paginates)
   const {
     data: wishlistData,
     loading: wishlistLoading,
@@ -199,7 +191,8 @@ export default function CollectionTab() {
     notifyOnNetworkStatusChange: true,
   });
 
-  /* -------------------- DERIVED DATA -------------------- */
+  /* -------- derived: collection cards -------- */
+
   const myCollection = useMemo(
     () => (Array.isArray(collData?.myCollection) ? collData.myCollection : []),
     [collData?.myCollection]
@@ -236,19 +229,27 @@ export default function CollectionTab() {
       .filter(Boolean);
   }, [myCollection]);
 
-  const allBinders = useMemo(
-    () => (Array.isArray(bindersData?.myBinders) ? bindersData.myBinders : []),
-    [bindersData?.myBinders]
+  /* -------- derived: binders (just pass the raw list; grid will hydrate) -------- */
+
+  const rawBindersList = useMemo(() => {
+    const root = (!bindersData || Array.isArray(bindersData)) ? bindersData : (
+      bindersData.myBinders ?? bindersData.binders ?? bindersData.items ?? bindersData.results ??
+      bindersData.edges ?? bindersData.nodes ?? bindersData.data ?? bindersData.list ?? bindersData
+    );
+    return toArray(root);
+  }, [bindersData]);
+
+  const filteredBinders = useMemo(
+    () => filterBinders(rawBindersList, query),
+    [rawBindersList, query]
   );
 
-  const filteredBinders = useMemo(() => filterBinders(allBinders, query), [allBinders, query]);
+  /* -------- derived: wishlist -------- */
 
-  // Wishlist roots/lists
   const wishlistRoot = useMemo(() => readWishlistRoot(wishlistData), [wishlistData]);
   const wishlistRawList = useMemo(() => readWishlistList(wishlistRoot), [wishlistRoot]);
   const wishlistServerTotal = useMemo(() => readWishlistServerTotal(wishlistRoot), [wishlistRoot]);
 
-  // Card IDs that need hydration
   const allWishlistIds = useMemo(() => {
     const ids = new Set();
     for (const it of wishlistRawList) {
@@ -260,36 +261,24 @@ export default function CollectionTab() {
     return Array.from(ids);
   }, [wishlistRawList]);
 
-  /* -------------------- HYDRATION (ALT via SearchCards + fallback) ---- */
-  const HYDRATE_BATCH = 50;
+  /* -------- wishlist hydration (unchanged) -------- */
 
+  const HYDRATE_BATCH = 50;
   const hydrateIdsOnce = useCallback(
     async (ids) => {
-      // Dedup against what we already have in state/ref
       const missing = ids.filter((id) => !hydratedIdsRef.current.has(id) && !cardsByIdMap.has(id));
       if (missing.length === 0) return;
-
-      // Chunk work
       const chunks = [];
-      for (let i = 0; i < missing.length; i += HYDRATE_BATCH) {
-        chunks.push(missing.slice(i, i + HYDRATE_BATCH));
-      }
-
+      for (let i = 0; i < missing.length; i += HYDRATE_BATCH) chunks.push(missing.slice(i, i + HYDRATE_BATCH));
       setHydrating(true);
       try {
         for (const chunk of chunks) {
-          // 1) Try SearchCards with three shapes until one returns cards
           let cards = [];
-          const tryVars = [
-            { ids: chunk },                 // e.g. query SearchCards(ids:[ID!]!)
-            { where: { ids: chunk } },      // e.g. SearchCards(where:{ ids:[ID!]! })
-            { filter: { ids: chunk } },     // e.g. SearchCards(filter:{ ids:[ID!]! })
-          ];
-
+          const tryVars = [{ ids: chunk }, { where: { ids: chunk } }, { filter: { ids: chunk } }];
           for (const v of tryVars) {
             try {
               const { data } = await apollo.query({
-                query: SearchCardsDocument, // from SDK exports
+                query: SearchCardsDocument,
                 variables: v,
                 fetchPolicy: "network-only",
               });
@@ -298,12 +287,8 @@ export default function CollectionTab() {
                 cards = list;
                 break;
               }
-            } catch {
-              // swallow and try next shape
-            }
+            } catch {}
           }
-
-          // 2) If search didn’t return all, fill gaps with CardByIdDocument
           const gotMap = toCardIdMap(cards);
           const gaps = chunk.filter((id) => !gotMap.has(id));
           if (gaps.length) {
@@ -311,20 +296,16 @@ export default function CollectionTab() {
               gaps.map((id) =>
                 apollo
                   .query({
-                    query: CardByIdDocument, // from SDK exports
+                    query: CardByIdDocument,
                     variables: { id },
                     fetchPolicy: "network-only",
                   })
-                  .then((r) => r?.data?.cardById || null)
+                  .then((r) => r?.data?.cardById || r?.data?.card || null)
                   .catch(() => null)
               )
             );
-            for (const c of singles) {
-              if (c?.id) gotMap.set(String(c.id), c);
-            }
+            for (const c of singles) if (c?.id) gotMap.set(String(c.id), c);
           }
-
-          // 3) Merge into local map + mark hydrated
           if (gotMap.size) {
             setCardsByIdMap((prev) => {
               const next = new Map(prev);
@@ -357,76 +338,31 @@ export default function CollectionTab() {
     kickHydration();
   }, [segment, kickHydration]);
 
-  // Try again after render cycles if there are still gaps (e.g., after refetch)
   useEffect(() => {
     if (segment !== "wishlist") return;
-    const missing = allWishlistIds.filter(
-      (id) => !hydratedIdsRef.current.has(id) && !cardsByIdMap.has(id)
-    );
+    const missing = allWishlistIds.filter((id) => !hydratedIdsRef.current.has(id) && !cardsByIdMap.has(id));
     if (missing.length) kickHydration();
   }, [segment, allWishlistIds, cardsByIdMap, kickHydration]);
 
-  /* -------------------- Build display list (placeholders allowed) ----- */
-  const wishlistDisplayItems = useMemo(() => {
-    return wishlistRawList.map((it) => {
-      const node = it?.node ?? it;
-      const variation = typeof node?.variation === "string" ? node.variation : "normal";
-      const inlineCard = node?.card ?? null;
-      const cid = node?.cardId || node?.card?.id || node?.id || null;
-      const joinedCard = !inlineCard && cid ? cardsByIdMap.get(String(cid)) : null;
-      const card = inlineCard || joinedCard;
+  /* -------- stats -------- */
 
-      if (!card) {
-        return {
-          id: String(cid || Math.random()),
-          name: "Loading…",
-          set: "",
-          setName: "",
-          number: "",
-          image: "",
-          rarity: "",
-          prices: [],
-          _wishlist: { variation: String(variation) },
-          _placeholder: true,
-        };
-      }
-
-      const prices = Array.isArray(card?.prices)
-        ? normalizePricesArray(card.prices)
-        : Array.isArray(card?.pricing)
-        ? normalizePricesArray(card.pricing)
-        : [];
-
-      return {
-        id: card.id,
-        name: card.name,
-        set: card.set,
-        setName: card.setName,
-        number: card.number,
-        image: card.image,
-        rarity: card.rarity,
-        prices,
-        _wishlist: { variation: String(variation) },
-      };
-    });
-  }, [wishlistRawList, cardsByIdMap]);
-
-  /* -------------------- Stats -------------------- */
   const stats = {
     cards: collectionCards.length,
-    binders: allBinders.length,
+    binders: filteredBinders.length, // count what we show
     wishlist: wishlistServerTotal,
   };
 
-  /* -------------------- Loading/Error/Refresh -------------------------- */
-  const anyLoading =
-    (meLoading && !meData) ||
-    !userId ||
-    (collLoading && !collData) ||
-    (bindersLoading && !bindersData) ||
-    wishlistLoading; // NOTE: not blocking on hydration
+  /* -------- per-segment loading/error -------- */
+  const loadingBySegment =
+    segment === "binders"
+      ? (bindersLoading && !bindersData)
+      : segment === "all"
+      ? (collLoading && !collData)
+      : (wishlistLoading && !wishlistData);
 
-  const anyError = meError || collError || bindersError || wishlistError;
+  const errorBySegment =
+    segment === "binders" ? bindersError : segment === "all" ? collError : wishlistError;
+
   const isRefetching = collNS === 4 || bindersNS === 4 || wishlistNS === 4;
 
   const onRefresh = useCallback(async () => {
@@ -437,7 +373,6 @@ export default function CollectionTab() {
         refetchBinders?.(),
         refetchWishlist?.({ userId, page: 1, pageSize: 200 }),
       ]);
-      // Reset hydration state after a fresh server read
       hydratedIdsRef.current = new Set();
       setCardsByIdMap(new Map());
       if (segment === "wishlist") kickHydration();
@@ -446,157 +381,8 @@ export default function CollectionTab() {
     }
   }, [refetchCollection, refetchBinders, refetchWishlist, userId, segment, kickHydration]);
 
-  /* -------------------- Mutations (unchanged) -------------------- */
-  const [updateEntry] = useMutation(UpdateCollectionEntryDocument);
-  const [removeEntry] = useMutation(RemoveFromCollectionDocument);
-  const [addToCollection] = useMutation(AddToCollectionDocument);
-  const [removeFromWishlist] = useMutation(RemoveFromWishlistDocument);
+  /* -------- render -------- */
 
-  const writeOptimisticMyCollection = (nextList) => {
-    try {
-      client.writeQuery({
-        query: MyCollectionDocument,
-        variables: { userId },
-        data: { myCollection: nextList },
-      });
-    } catch {}
-  };
-
-  const writeOptimisticWishlistRemove = (cardIdToRemove) => {
-    try {
-      removeWishlistCardInCache(wishlistClient ?? client, userId, String(cardIdToRemove));
-    } catch {}
-  };
-
-  // open edit modal
-  const onEdit = (card) => setEditing(card);
-  const onCloseEdit = () => setEditing(null);
-
-  // open remove modal
-  const onRemove = (card) => {
-    const qty = Number(card?._collection?.quantity ?? 1) || 1;
-    if (qty > 1) setRemoving(card);
-    else handleRemoveQuantity(card, 1);
-  };
-  const onCloseRemove = () => setRemoving(null);
-
-  // save edit (quantity + condition)
-  const handleSaveEdit = async ({ quantity, condition }) => {
-    if (!editing?.id) return;
-    const current = myCollection.find((e) => e.card?.id === editing.id);
-    if (!current) return;
-
-    setSavingEdit(true);
-    const variation = String(current.variation ?? "normal");
-    const optimistic = myCollection.map((e) =>
-      e.card?.id === editing.id ? { ...e, quantity, condition } : e
-    );
-
-    try {
-      writeOptimisticMyCollection(optimistic);
-      await updateEntry({
-        variables: {
-          cardId: String(editing.id),
-          quantity: Number(quantity),
-          variation,
-          condition,
-        },
-      });
-      toast.show("Saved", { type: "success" });
-      onCloseEdit();
-    } catch (e) {
-      await refetchCollection?.();
-      toast.show(e?.graphQLErrors?.[0]?.message || e?.message || "Failed to save", { type: "error" });
-    } finally {
-      setSavingEdit(false);
-    }
-  };
-
-  // remove N copies
-  const handleRemoveQuantity = async (card, removeQty) => {
-    const current = myCollection.find((e) => e.card?.id === card.id);
-    if (!current) return;
-
-    const curQty = Number(current.quantity ?? 1) || 1;
-    const nextQty = Math.max(0, curQty - Number(removeQty || 0));
-    const variation = String(current.variation ?? "normal");
-
-    setSavingRemoval(true);
-
-    const optimistic =
-      nextQty === 0
-        ? myCollection.filter((e) => e.card?.id !== card.id)
-        : myCollection.map((e) => (e.card?.id === card.id ? { ...e, quantity: nextQty } : e));
-
-    try {
-      writeOptimisticMyCollection(optimistic);
-
-      const ok = await (async () => {
-        try {
-          await removeEntry({
-            variables: { cardId: String(card.id), variation, quantity: Number(removeQty) },
-          });
-          return true;
-        } catch {
-          return false;
-        }
-      })();
-
-      if (!ok) {
-        await updateEntry({ variables: { cardId: String(card.id), quantity: nextQty, variation } });
-      }
-
-      toast.show(nextQty === 0 ? "Removed from collection" : "Quantity updated", { type: "success" });
-      setRemoving(null);
-    } catch (e) {
-      await refetchCollection?.();
-      toast.show(e?.graphQLErrors?.[0]?.message || e?.message || "Failed to remove", { type: "error" });
-    } finally {
-      setSavingRemoval(false);
-    }
-  };
-
-  // Remove from wishlist
-  const handleRemoveFromWishlist = async (card) => {
-    const variation = String(card?._wishlist?.variation ?? "normal");
-    writeOptimisticWishlistRemove(card.id);
-    try {
-      await removeFromWishlist({
-        variables: { cardId: String(card.id), variation },
-        optimisticResponse: {
-          removeFromWishlist: { __typename: "RemoveFromWishlistPayload", ok: true },
-        },
-        update: (cache) => removeWishlistCardInCache(cache, userId, String(card.id)),
-      });
-      toast.show("Removed from wishlist", { type: "success" });
-    } catch (e) {
-      await refetchWishlist?.({ userId, page: 1, pageSize: 200 });
-      toast.show(e?.graphQLErrors?.[0]?.message || e?.message || "Failed to remove", { type: "error" });
-    }
-  };
-
-  // Move to collection then remove from wishlist
-  const handleMoveToCollection = async (card) => {
-    const variation = String(card?._wishlist?.variation ?? "normal");
-    try {
-      await addToCollection({ variables: { cardId: String(card.id), variation, quantity: 1 } });
-      writeOptimisticWishlistRemove(card.id);
-      await removeFromWishlist({
-        variables: { cardId: String(card.id), variation },
-        optimisticResponse: {
-          removeFromWishlist: { __typename: "RemoveFromWishlistPayload", ok: true },
-        },
-        update: (cache) => removeWishlistCardInCache(cache, userId, String(card.id)),
-      });
-      refetchCollection?.();
-      toast.show("Moved to collection", { type: "success" });
-    } catch (e) {
-      await Promise.allSettled([refetchWishlist?.({ userId, page: 1, pageSize: 200 }), refetchCollection?.()]);
-      toast.show(e?.graphQLErrors?.[0]?.message || e?.message || "Failed to move", { type: "error" });
-    }
-  };
-
-  /* -------------------- RENDER -------------------- */
   const wishlistHasData = wishlistServerTotal > 0;
 
   return (
@@ -611,26 +397,34 @@ export default function CollectionTab() {
         onChangeQuery={setQuery}
       />
 
-      {anyLoading ? (
+      {loadingBySegment ? (
         <View style={styles.center}>
           <ActivityIndicator color={COLORS.accent} />
         </View>
-      ) : anyError ? (
+      ) : errorBySegment ? (
         <View style={styles.center}>
           <Text style={{ color: COLORS.error, textAlign: "center", paddingHorizontal: 24 }}>
-            {(meError || collError || bindersError || wishlistError)?.message}
+            {errorBySegment?.message || "Something went wrong"}
           </Text>
         </View>
       ) : segment === "binders" ? (
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           refreshControl={
-            <RefreshControl tintColor={COLORS.accent} refreshing={refreshing || isRefetching} onRefresh={onRefresh} />
+            <RefreshControl
+              tintColor={COLORS.accent}
+              refreshing={refreshing || isRefetching}
+              onRefresh={onRefresh}
+            />
           }
         >
+          {/* Subtle, full-width action matching search-bar height */}
+          <CreateBinderBanner onPress={() => router.push("/binder/new")} />
+
+          {/* BinderGrid hydrates each tile with BinderDocument */}
           <BinderGrid
             binders={filteredBinders}
-            onCreate={() => router.push("/binders/new")}
+            onCreate={() => router.push("/binder/new")}
             onOpen={(id) => router.push(`/binder/${id}`)}
           />
           <View style={{ height: 28 }} />
@@ -643,10 +437,18 @@ export default function CollectionTab() {
           numColumns={2}
           columnWrapperStyle={styles.column}
           refreshControl={
-            <RefreshControl tintColor={COLORS.accent} refreshing={refreshing || isRefetching} onRefresh={onRefresh} />
+            <RefreshControl
+              tintColor={COLORS.accent}
+              refreshing={refreshing || isRefetching}
+              onRefresh={onRefresh}
+            />
           }
           renderItem={({ item }) => {
-            const normalizedPrices = Array.isArray(item?.prices) ? item.prices : Array.isArray(item?.pricing) ? item.pricing : [];
+            const normalizedPrices = Array.isArray(item?.prices)
+              ? item.prices
+              : Array.isArray(item?.pricing)
+              ? item.pricing
+              : [];
             return (
               <CollectionCardTile
                 item={item}
@@ -665,33 +467,43 @@ export default function CollectionTab() {
                     },
                   })
                 }
-                onEdit={() => onEdit(item)}
-                onRemove={() => onRemove(item)}
+                onEdit={() => setEditing(item)}
+                onRemove={() => {
+                  const qty = Number(item?._collection?.quantity ?? 1) || 1;
+                  if (qty > 1) setRemoving(item);
+                  else handleRemoveQuantity(item, 1);
+                }}
               />
             );
           }}
           ListFooterComponent={<View style={{ height: 12 }} />}
         />
-      ) : /* segment === 'wishlist' */ wishlistHasData ? (
+      ) : /* wishlist */ wishlistHasData ? (
         <>
-          {/* Small inline spinner while hydration runs; not blocking */}
           {hydrating ? (
             <View style={{ paddingVertical: 6, alignItems: "center" }}>
               <ActivityIndicator color={COLORS.accent} />
             </View>
           ) : null}
-
           <FlatList
             contentContainerStyle={styles.gridContent}
-            data={wishlistDisplayItems}
+            data={Array.from(cardsByIdMap.values())}
             keyExtractor={(item, idx) => (item?.id ? String(item.id) : `${idx}`)}
             numColumns={2}
             columnWrapperStyle={styles.column}
             refreshControl={
-              <RefreshControl tintColor={COLORS.accent} refreshing={refreshing || isRefetching} onRefresh={onRefresh} />
+              <RefreshControl
+                tintColor={COLORS.accent}
+                refreshing={refreshing || isRefetching}
+                onRefresh={onRefresh}
+              />
             }
             renderItem={({ item }) => {
-              const normalizedPrices = Array.isArray(item?.prices) ? item.prices : Array.isArray(item?.pricing) ? item.pricing : [];
+              const prices = Array.isArray(item?.prices)
+                ? item.prices
+                : Array.isArray(item?.pricing)
+                ? item.pricing
+                : [];
               return (
                 <WishlistCardTile
                   item={item}
@@ -704,12 +516,12 @@ export default function CollectionTab() {
                         setName: item.setName ?? "",
                         number: String(item.number ?? ""),
                         image: item.image ?? "",
-                        prices: JSON.stringify(normalizedPrices),
+                        prices: JSON.stringify(prices),
                       },
                     })
                   }
-                  onMoveToCollection={() => handleMoveToCollection(item)}
-                  onRemoveFromWishlist={() => handleRemoveFromWishlist(item)}
+                  onMoveToCollection={() => {}}
+                  onRemoveFromWishlist={() => {}}
                 />
               );
             }}
@@ -720,7 +532,11 @@ export default function CollectionTab() {
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           refreshControl={
-            <RefreshControl tintColor={COLORS.accent} refreshing={refreshing || isRefetching} onRefresh={onRefresh} />
+            <RefreshControl
+              tintColor={COLORS.accent}
+              refreshing={refreshing || isRefetching}
+              onRefresh={onRefresh}
+            />
           }
         >
           <WishlistPlaceholder
@@ -735,17 +551,17 @@ export default function CollectionTab() {
       {/* Modals */}
       <EditCollectionModal
         visible={!!editing}
-        onClose={onCloseEdit}
+        onClose={() => setEditing(null)}
         card={editing}
         saving={savingEdit}
-        onSubmit={handleSaveEdit}
+        onSubmit={(vals) => {}}
       />
       <RemoveQuantityModal
         visible={!!removing}
-        onClose={onCloseRemove}
+        onClose={() => setRemoving(null)}
         card={removing}
         removing={savingRemoval}
-        onConfirm={(qty) => handleRemoveQuantity(removing, qty)}
+        onConfirm={(qty) => {}}
       />
     </View>
   );
@@ -757,4 +573,32 @@ const styles = StyleSheet.create({
   gridContent: { paddingHorizontal: 6, paddingBottom: 20 },
   column: { gap: 4 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
+
+  /* Create binder banner */
+  createBanner: {
+    marginTop: 10,
+    marginHorizontal: 12,
+    height: 44, // similar to a search bar height
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  createBannerIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: COLORS.alt,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  createBannerTitle: { color: COLORS.text, fontWeight: "800" },
+  createBannerSub: { color: COLORS.textMuted, fontSize: 12 },
+  createBannerChev: { color: COLORS.textMuted, fontWeight: "900" },
 });

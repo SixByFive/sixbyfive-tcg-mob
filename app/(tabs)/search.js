@@ -1,7 +1,10 @@
 // app/(tabs)/search.js
-import { useLazyQuery, useMutation } from "@apollo/client";
+// CHANGED: fully switched to the new cardsearch query (limit/offset + items[])
+//          and aligned the client-side normalization to your frontend example.
+
+import { gql, useLazyQuery, useMutation } from "@apollo/client"; // CHANGED: import gql to define query here
 import { useRouter } from "expo-router";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -9,9 +12,6 @@ import {
   Text,
   View,
 } from "react-native";
-import {
-  SEARCH_CARDS_CONN_WITH_PRICES as SearchCardsConnectionDocument,
-} from "../../graphql/app-search-queries";
 
 import {
   AddToCollectionDocument,
@@ -26,109 +26,270 @@ import { PER_PAGE } from "../../constants/pagination";
 import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";
 
-/* ---------------- helpers to normalize server shapes ---------------- */
+/* ------------------------------------------------------------------ */
+/* GraphQL (NEW): cardsearch module query — mirrors your web example.  */
+/* ------------------------------------------------------------------ */
+const CARDSEARCH_QUERY = gql`
+  query CardsearchCollectionSearch($input: CardSearchInput!) {
+    searchCards: cardsearchSearchCards(input: $input) {
+      total
+      limit
+      offset
+      items {
+        cardId
+        id
+        setCode
+        number
+        name
+        rarity
+        images { small large }
+        set { code name }
+        variants { variant displayName }
+        latestPrices {
+          variant
+          market
+          mid
+          low
+          high
+          currency
+          updatedAt
+          provider
+        }
+      }
+    }
+  }
+`;
 
-function readPageInfo(payload) {
-  const root =
-    payload?.searchCardsConnection ??
-    payload?.searchCards ??
-    {};
-  const pi = root.pageInfo || root.pageinfo || root.pagination || {};
+// CHANGED: page sizing to match your example semantics
+const CARDSEARCH_PAGE_SIZE = 48;
+const CARDSEARCH_EXACT_LIMIT = 12;
+
+// GBP symbol for formatting
+const GBP_SYMBOL = "\u00A3";
+
+/* ---------------- Helpers (ported/adapted from your web example) ---------------- */
+
+// CHANGED: canonical variant names
+function canonicalVariantKey(raw) {
+  const value = String(raw ?? "normal").trim().toLowerCase();
+  if (!value) return "normal";
+  if (
+    value === "reverse" ||
+    value === "reverse holo" ||
+    value === "reverse-holo" ||
+    value === "reverseholo" ||
+    value === "reverseholofoil"
+  )
+    return "reverseHolofoil";
+  if (value === "holo" || value === "holofoil" || value === "holo foil")
+    return "holofoil";
+  if (
+    value === "firstedition" ||
+    value === "first edition" ||
+    value === "1stedition" ||
+    value === "1st edition"
+  )
+    return "firstEdition";
+  return value;
+}
+
+function firstNumber(...values) {
+  for (const v of values) {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+function hasPrice(entry) {
+  if (!entry) return false;
+  return [entry.market, entry.tcgplayer, entry.cardmarket, entry.gbp, entry.mid, entry.low, entry.high]
+    .some((val) => typeof val === "number" && Number.isFinite(val));
+}
+
+// Choose a useful price row for tiles
+function getBestPrice(prices) {
+  if (!Array.isArray(prices) || prices.length === 0) return null;
+  const pref = ["normal", "holofoil", "holo", "reverseHolofoil", "reverse"];
+  for (const key of pref) {
+    const hit = prices.find((p) => (p?.variation ?? p?.variant) === key && hasPrice(p));
+    if (hit) return hit;
+  }
+  return prices.find((p) => hasPrice(p)) || null;
+}
+
+function computeAveragePrice(entry) {
+  if (!entry || !hasPrice(entry)) return null;
+  if (typeof entry.market === "number" && Number.isFinite(entry.market)) return entry.market;
+
+  const primary = [];
+  if (typeof entry.tcgplayer === "number" && Number.isFinite(entry.tcgplayer)) primary.push(entry.tcgplayer);
+  if (typeof entry.cardmarket === "number" && Number.isFinite(entry.cardmarket)) primary.push(entry.cardmarket);
+
+  if (primary.length === 2) return (primary[0] + primary[1]) / 2;
+  if (primary.length === 1) return primary[0];
+
+  const fallback = firstNumber(entry.gbp, entry.mid, entry.low, entry.high);
+  if (fallback != null) return fallback;
+  return primary.length ? primary[0] : null;
+}
+
+function formatGBP(value) {
+  if (value == null || Number.isNaN(value)) return `${GBP_SYMBOL}--`;
+  return `${GBP_SYMBOL}${Number(value).toFixed(2)}`;
+}
+
+// Normalize a single price
+function normalizePriceEntry(price) {
+  if (!price || typeof price !== "object") return null;
+  const variation = canonicalVariantKey(price.variation ?? price.variant ?? "normal");
+  const providerRaw = price.provider ?? price.source ?? null;
+  const providerKey = providerRaw ? String(providerRaw).toLowerCase() : "";
+  const currency = String(price.currency ?? price.curr ?? "GBP").toUpperCase();
+
+  const market = firstNumber(price.market, price.mid, price.price, price.value);
+  const mid = firstNumber(price.mid);
+  const low = firstNumber(price.low);
+  const high = firstNumber(price.high);
+  const updatedAt = price.updatedAt || price.updated_at || null;
+
+  const entry = {
+    variation,
+    provider: providerRaw || null,
+    currency,
+    market,
+    mid,
+    low,
+    high,
+    updatedAt,
+  };
+
+  if (currency === "GBP" && market != null) entry.gbp = market;
+  if (currency === "USD" && market != null) entry.usd = market;
+  if (currency === "EUR" && market != null) entry.eur = market;
+
+  // heuristic mapping if provider implies a specific source
+  const tcgValue = firstNumber(price.tcgplayer, providerKey.includes("tcg") ? market : null);
+  if (tcgValue != null) entry.tcgplayer = tcgValue;
+
+  const cmktValue = firstNumber(price.cardmarket, providerKey.includes("cardmarket") ? market : null);
+  if (cmktValue != null) entry.cardmarket = cmktValue;
+
+  if (entry.market == null) {
+    entry.market = firstNumber(entry.tcgplayer, entry.cardmarket, entry.mid, entry.low, entry.high);
+  }
+
+  if (price.sampleSize != null) entry.sampleSize = price.sampleSize;
+
+  return entry;
+}
+
+function normalizePriceList(list) {
+  if (!Array.isArray(list)) return [];
+  const byVariant = new Map();
+
+  for (const price of list) {
+    const entry = normalizePriceEntry(price);
+    if (!entry) continue;
+    const key = entry.variation || "normal";
+    const existing = byVariant.get(key);
+
+    if (!existing) {
+      byVariant.set(key, { ...entry });
+      continue;
+    }
+    // Merge heuristics
+    if (entry.tcgplayer != null) existing.tcgplayer = entry.tcgplayer;
+    if (entry.cardmarket != null) existing.cardmarket = entry.cardmarket;
+    if (entry.market != null && existing.market == null) existing.market = entry.market;
+    if (entry.mid != null && existing.mid == null) existing.mid = entry.mid;
+    if (entry.low != null && existing.low == null) existing.low = entry.low;
+    if (entry.high != null && existing.high == null) existing.high = entry.high;
+    if (entry.gbp != null && existing.gbp == null) existing.gbp = entry.gbp;
+    if (entry.usd != null && existing.usd == null) existing.usd = entry.usd;
+    if (entry.eur != null && existing.eur == null) existing.eur = entry.eur;
+
+    const existingUpdated = existing.updatedAt ? Date.parse(existing.updatedAt) : null;
+    const entryUpdated = entry.updatedAt ? Date.parse(entry.updatedAt) : null;
+    if (entryUpdated != null && (existingUpdated == null || entryUpdated > existingUpdated)) {
+      existing.updatedAt = entry.updatedAt;
+    }
+  }
+
+  return Array.from(byVariant.values());
+}
+
+function collectVariantList(item) {
+  const variants = new Set();
+  const push = (v) => {
+    const key = canonicalVariantKey(v);
+    if (key) variants.add(key);
+  };
+
+  if (Array.isArray(item?.variants)) {
+    for (const v of item.variants) {
+      if (typeof v === "string") push(v);
+      else if (v && typeof v === "object") push(v.variant || v.displayName);
+    }
+  }
+  const source = Array.isArray(item?.latestPrices)
+    ? item.latestPrices
+    : Array.isArray(item?.prices)
+    ? item.prices
+    : [];
+  for (const p of source) push(p?.variant || p?.variation);
+  const out = Array.from(variants).filter(Boolean);
+  return out.length ? out : ["normal"];
+}
+
+// Normalize one item from cardsearch into the shape your mobile UI expects
+function normalizeCardsearchItem(item, index = 0) {
+  if (!item) return null;
+
+  const setRecord = item.set || {};
+  const setCode = item.setCode || setRecord.code || "";
+  const number = item.number || "";
+  const setName = setRecord.name || item.setName || setCode || "";
+  const image = item.images?.large || item.images?.small || item.image || null;
+  const variations = collectVariantList(item);
+  const prices = normalizePriceList(item.latestPrices ?? item.prices ?? []);
+
+  const preferredId =
+    item.cardId || item.id || (setCode && number ? `${setCode}-${number}` : null);
+  const id = preferredId || `card-${index}`;
+
   return {
-    hasNextPage:
-      typeof pi.hasNextPage === "boolean"
-        ? pi.hasNextPage
-        : typeof pi.hasMore === "boolean"
-        ? pi.hasMore
-        : false,
-    endCursor: pi.endCursor || pi.endcursor || pi.cursor || null,
-    total: Number(root.totalCount ?? root.total ?? pi.total ?? 0) || 0,
+    id,
+    cardId: preferredId || id,
+    name: item.name || "",
+    set: setCode || "",
+    setCode: setCode || "",
+    setName,
+    number: number || "",
+    image,
+    tcgImageUrl: image,
+    rarity: item.rarity || null,
+    variations,
+    prices,
   };
 }
 
-// unify a single price record (tcgplayer vs tcgPlayer; keep other fields)
-function normalizePrice(p) {
-  if (!p || typeof p !== "object") return p;
-  const hasCamel = Object.prototype.hasOwnProperty.call(p, "tcgPlayer");
-  const hasLower = Object.prototype.hasOwnProperty.call(p, "tcgplayer");
-  return {
-    ...p,
-    tcgplayer: hasLower ? p.tcgplayer : hasCamel ? p.tcgPlayer : p.tcgplayer ?? p.tcgPlayer ?? null,
-  };
+function mapCardsearchItems(items) {
+  if (!Array.isArray(items) || !items.length) return [];
+  return items.map((item, i) => normalizeCardsearchItem(item, i)).filter(Boolean);
 }
 
-function normalizePricesArray(arr) {
-  if (!Array.isArray(arr)) return [];
-  return arr.map(normalizePrice);
-}
-
-// Prefer `searchCardsConnection.edges[].node`, but keep flat `cards[]` fallback
-function readCards(payload) {
-  const root =
-    payload?.searchCardsConnection ??
-    payload?.searchCards ??
-    {};
-
-  // flat array form
-  if (Array.isArray(root.cards))
-    return root.cards.map((n) => ({
-      ...n,
-      prices: Array.isArray(n?.prices)
-        ? normalizePricesArray(n.prices)
-        : Array.isArray(n?.pricing)
-        ? normalizePricesArray(n.pricing)
-        : [],
-    }));
-
-  // relay-style edges
-  if (Array.isArray(root.edges))
-    return root.edges
-      .map((e) => e?.node)
-      .filter(Boolean)
-      .map((n) => ({
-        ...n,
-        prices: Array.isArray(n?.prices)
-          ? normalizePricesArray(n.prices)
-          : Array.isArray(n?.pricing)
-          ? normalizePricesArray(n.pricing)
-          : [],
-      }));
-  return [];
-}
-
-// --- Exclude TCG Pocket locally (until server-side filter is wired) ---
+// CHANGED: pocket filter kept (local-only opt-out)
 function isPocketCard(card) {
   const name = (card?.setName || "").toLowerCase();
   const code = (card?.set || "").toLowerCase();
-  // Heuristics: set name contains "pocket" OR codes commonly used for Pocket
   return name.includes("pocket") || code.startsWith("pocket") || code.startsWith("pkp");
 }
-
 function filterOutPocket(cards, exclude = true) {
   if (!exclude) return cards;
   return cards.filter((c) => !isPocketCard(c));
 }
 
-function readHasMore(payload, pageSize, isExact) {
-  const { hasNextPage, total } = readPageInfo(payload);
-  if (typeof hasNextPage === "boolean") return hasNextPage;
-  if (total && !isExact) {
-    const len = readCards(payload).length;
-    return len < total;
-  }
-  const len = readCards(payload).length;
-  return len === (pageSize ?? PER_PAGE) && !isExact;
-}
-
-function readEndCursor(payload) {
-  return readPageInfo(payload).endCursor || null;
-}
-
-// CHANGED: remove client-side set mapping; let backend handle abbreviations/canonicalization
-function sanitizeSet(input) {
-  const s = (input ?? "").trim();
-  return s || null;
-}
+/* ---------------- Component ---------------- */
 
 export default function SearchTab() {
   const router = useRouter();
@@ -139,40 +300,139 @@ export default function SearchTab() {
   const [setCode, setSetCode] = useState("");
   const [number, setNumber] = useState("");
 
-  // paging state
-  const pageRef = useRef(1);
-  const afterRef = useRef(null);
-  const loadingMoreRef = useRef(false);
+  // paging (CHANGED: offset/limit instead of cursor/after)
+  const [results, setResults] = useState([]);
   const [hasMore, setHasMore] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [pageSize, setPageSize] = useState(PER_PAGE); // will be overwritten by API
+  const [totalCount, setTotalCount] = useState(0);
 
-  // Use the connection query
   const [runSearch, { data, loading, error, fetchMore, called }] = useLazyQuery(
-    SearchCardsConnectionDocument,
+    CARDSEARCH_QUERY, // CHANGED: new document
     {
-      notifyOnNetworkStatusChange: true,
       fetchPolicy: "network-only",
       nextFetchPolicy: "cache-first",
+      notifyOnNetworkStatusChange: true,
       returnPartialData: false,
     }
   );
 
-  // Normalize + filter pocket
-  const results = useMemo(() => {
-    const cards = readCards(data);
-    return filterOutPocket(cards, !/pocket/i.test(setCode || ""));
-  }, [data, setCode]);
+  // CHANGED: exact search limit behavior like your web example
+  const isExactCardSearch = useMemo(
+    () => Boolean((setCode ?? "").trim() && (number ?? "").trim()),
+    [setCode, number]
+  );
 
-  // --- Mutations (flat var shape: $cardId, etc.) ---
+  const canSearch = useMemo(
+    () =>
+      (name ?? "").trim().length > 0 ||
+      (setCode ?? "").trim().length > 0 ||
+      (number ?? "").trim().length > 0,
+    [name, setCode, number]
+  );
+
+  // CHANGED: initial search using limit/offset + mapping to mobile shape
+  const onSearch = useCallback(() => {
+    if (!canSearch) return;
+
+    // reset local paging
+    setResults([]);
+    setOffset(0);
+    setHasMore(false);
+    setTotalCount(0);
+
+    const limit = isExactCardSearch
+      ? Math.min(CARDSEARCH_PAGE_SIZE, CARDSEARCH_EXACT_LIMIT)
+      : CARDSEARCH_PAGE_SIZE;
+
+    runSearch({
+      variables: {
+        input: {
+          name: name || undefined,
+          set: (setCode || undefined),
+          number: number || undefined,
+          limit,
+          offset: 0,
+        },
+      },
+      onCompleted: (res) => {
+        const payload = res?.searchCards;
+        const items = mapCardsearchItems(payload?.items || []);
+        const filtered = filterOutPocket(items, !/pocket/i.test(setCode || ""));
+
+        const total = Number(payload?.total ?? filtered.length);
+        const lim = Number(payload?.limit ?? limit);
+        const off = Number(payload?.offset ?? 0);
+
+        setResults(filtered);
+        setTotalCount(total);
+        setPageSize(lim);
+        const nextOffset = Math.min(off + (payload?.items?.length || filtered.length), total);
+        setOffset(nextOffset);
+        setHasMore(nextOffset < total);
+      },
+    });
+  }, [canSearch, isExactCardSearch, name, setCode, number, runSearch]);
+
+  // CHANGED: loadMore via limit/offset
+  const loadingMoreRef = useRef(false);
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loading || loadingMoreRef.current || !called) return;
+    loadingMoreRef.current = true;
+
+    try {
+      const res = await fetchMore({
+        variables: {
+          input: {
+            name: name || undefined,
+            set: (setCode || undefined),
+            number: number || undefined,
+            limit: pageSize,
+            offset,
+          },
+        },
+        updateQuery: (prev, { fetchMoreResult }) => fetchMoreResult || prev,
+      });
+
+      const payload = res?.data?.searchCards;
+      const newItems = mapCardsearchItems(payload?.items || []);
+      const filteredNew = filterOutPocket(newItems, !/pocket/i.test(setCode || ""));
+
+      // dedupe by id
+      const byId = new Map();
+      for (const c of [...results, ...filteredNew]) {
+        if (c?.id != null) byId.set(String(c.id), c);
+      }
+      const merged = Array.from(byId.values());
+
+      const total = Number(payload?.total ?? totalCount);
+      const lim = Number(payload?.limit ?? pageSize);
+      const off = Number(payload?.offset ?? offset);
+      const nextOffset = Math.min(off + (payload?.items?.length || filteredNew.length), total);
+      setResults(merged);
+      setTotalCount(total);
+      setPageSize(lim);
+      setOffset(nextOffset);
+      setHasMore(nextOffset < total);
+    } finally {
+      loadingMoreRef.current = false;
+    }
+  }, [hasMore, loading, called, fetchMore, name, setCode, number, pageSize, offset, results, totalCount]);
+
+  // --- Mutations (unchanged) ---
   const [addToWishlist] = useMutation(AddToWishlistDocument);
   const [addToCollection] = useMutation(AddToCollectionDocument);
 
   const onAddToWishlist = async (card) => {
-    if (!card?.id) return;
+    if (!card?.id && !card?.cardId) return;
     try {
       await addToWishlist({
         variables: {
-          cardId: String(card.id),
-          variation: "normal",
+          cardId: String(card.cardId || card.id),
+          variation:
+            Array.isArray(card?.variations) && card.variations.length
+              ? String(card.variations[0])
+              : "normal",
         },
       });
       toast.show("Added to wishlist", { type: "success" });
@@ -183,12 +443,15 @@ export default function SearchTab() {
   };
 
   const onAddToCollection = async (card) => {
-    if (!card?.id) return;
+    if (!card?.id && !card?.cardId) return;
     try {
       await addToCollection({
         variables: {
-          cardId: String(card.id),
-          variation: "normal",
+          cardId: String(card.cardId || card.id),
+          variation:
+            Array.isArray(card?.variations) && card.variations.length
+              ? String(card.variations[0])
+              : "normal",
           quantity: 1,
         },
       });
@@ -196,110 +459,6 @@ export default function SearchTab() {
     } catch (e) {
       console.warn("addToCollection failed:", e);
       toast.show("Couldn't add to collection", { type: "error" });
-    }
-  };
-
-  const isExactCardSearch = useMemo(
-    () => Boolean(sanitizeSet(setCode) && number.trim()),
-    [setCode, number]
-  );
-
-  const canSearch = useMemo(
-    () =>
-      name.trim().length > 0 ||
-      setCode.trim().length > 0 ||
-      number.trim().length > 0,
-    [name, setCode, number]
-  );
-
-  const onSearch = () => {
-    if (!canSearch) return;
-    pageRef.current = 1;
-    afterRef.current = null;
-    loadingMoreRef.current = false;
-    setHasMore(false);
-
-    const setParam = sanitizeSet(setCode);
-
-    // when searching by set only, send only 'set' (name/number null)
-    // and set trustUpstream:true so backend respects filters strictly.
-    runSearch({
-      variables: {
-        input: {
-          name: name.trim() || null,
-          set: setParam,
-          number: number.trim() || null,
-          first: PER_PAGE,
-          after: null,
-          trustUpstream: true,
-        },
-        includePrices: true,
-      },
-      onCompleted: (res) => {
-        setHasMore(readHasMore(res, PER_PAGE, isExactCardSearch));
-        afterRef.current = readEndCursor(res);
-      },
-    });
-  };
-
-  const loadMore = async () => {
-    if (!hasMore || loading || loadingMoreRef.current || !called) return;
-    loadingMoreRef.current = true;
-
-    const nextAfter = afterRef.current;
-    const nextPage = pageRef.current + 1;
-
-    try {
-      await fetchMore({
-        variables: {
-          input: {
-            name: name.trim() || null,
-            set: sanitizeSet(setCode),
-            number: number.trim() || null,
-            first: PER_PAGE,
-            after: nextAfter,
-            trustUpstream: true,
-          },
-          includePrices: true,
-        },
-        updateQuery: (prev, { fetchMoreResult }) => {
-          const prevCards = filterOutPocket(readCards(prev), !/pocket/i.test(setCode || ""));
-          const nextCards = filterOutPocket(readCards(fetchMoreResult), !/pocket/i.test(setCode || ""));
-
-          // dedupe by id
-          const byId = new Map();
-          for (const c of [...prevCards, ...nextCards]) {
-            if (c?.id != null) byId.set(String(c.id), c);
-          }
-          const merged = Array.from(byId.values());
-
-          // progress?
-          const prevIds = new Set(prevCards.map((c) => String(c?.id)));
-          const gotNew = nextCards.some((c) => !prevIds.has(String(c?.id)));
-          if (gotNew) pageRef.current = nextPage;
-
-          const nextHasMore = readHasMore(
-            fetchMoreResult,
-            PER_PAGE,
-            Boolean(sanitizeSet(setCode) && number.trim())
-          );
-          setHasMore(gotNew && nextHasMore);
-          afterRef.current = readEndCursor(fetchMoreResult);
-
-          const root =
-            fetchMoreResult?.searchCardsConnection ??
-            fetchMoreResult?.searchCards ??
-            {};
-          return {
-            searchCardsConnection: {
-              ...root,
-              edges: merged.map((node) => ({ cursor: null, node })),
-            },
-          };
-        },
-      });
-    } finally {
-      loadingMoreRef.current = false;
     }
   };
 
@@ -334,15 +493,20 @@ export default function SearchTab() {
           }
           numColumns={2}
           columnWrapperStyle={styles.column}
-          renderItem={({ item }) => {
-            const normalizedPrices = Array.isArray(item?.prices)
-              ? item.prices
-              : Array.isArray(item?.pricing)
-              ? item.pricing
-              : [];
+          renderItem={({ item, index }) => {
+            // CHANGED: compute price summary identical to your web logic
+            const best = getBestPrice(item?.prices || []);
+            const avg = computeAveragePrice(best);
+
             return (
               <CardTile
-                item={item}
+                item={{
+                  ...item,
+                  // Provide precomputed helpers to downstream if desired
+                  averagePrice: avg,
+                  bestPrice: best,
+                  averagePriceFormatted: formatGBP(avg),
+                }}
                 onAddToWishlist={onAddToWishlist}
                 onAddToCollection={onAddToCollection}
                 onPress={() =>
@@ -354,8 +518,8 @@ export default function SearchTab() {
                       number: String(item.number ?? ""),
                       setName: item.setName ?? "",
                       image: item.image ?? "",
-                      prices: JSON.stringify(normalizedPrices),
-                      pricing: JSON.stringify(normalizedPrices),
+                      prices: JSON.stringify(item?.prices || []),
+                      pricing: JSON.stringify(item?.prices || []),
                     },
                   })
                 }
@@ -366,7 +530,9 @@ export default function SearchTab() {
             hasMore ? (
               <View style={styles.footerLoading}>
                 <ActivityIndicator color={COLORS.accent} />
-                <Text style={styles.footerLoadingText}>Loading more…</Text>
+                <Text style={styles.footerLoadingText}>
+                  Loading more…
+                </Text>
               </View>
             ) : null
           }

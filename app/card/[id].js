@@ -1,4 +1,6 @@
 // app/card/[id].js
+// UPDATED: simplified to use only unified `average` pricing (removed tcgp/cmkt props)
+
 import { useMutation, useQuery } from "@apollo/client";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
@@ -31,21 +33,77 @@ import CardImageBlock from "../../components/card/CardImageBlock";
 import InfoCard from "../../components/card/InfoCard";
 import PricingHistory from "../../components/card/PricingHistory";
 
+/* ----------------------- Local helpers (match CardTile) ----------------------- */
+
+function isNum(x) {
+  return typeof x === "number" && Number.isFinite(x);
+}
+
+function canonicalVariant(v) {
+  const s = String(v ?? "normal").toLowerCase().trim();
+  if (!s) return "normal";
+  if (["reverse", "reverse holo", "reverse-holo", "reverseholo", "reverseholofoil"].includes(s))
+    return "reverseHolofoil";
+  if (["holo", "holofoil", "holo foil"].includes(s)) return "holofoil";
+  if (["first edition", "firstedition", "1st edition", "1stedition"].includes(s)) return "firstEdition";
+  return s;
+}
+
+function pickMarketishValue(p) {
+  if (!p) return undefined;
+  return (
+    (isNum(p.market) ? p.market : undefined) ??
+    (isNum(p.gbp) ? p.gbp : undefined) ??
+    (isNum(p.mid) ? p.mid : undefined) ??
+    (isNum(p.low) ? p.low : undefined) ??
+    (isNum(p.high) ? p.high : undefined)
+  );
+}
+
+function hasAnyPriceValue(p) {
+  return (
+    isNum(p?.market) ||
+    isNum(p?.gbp) ||
+    isNum(p?.mid) ||
+    isNum(p?.low) ||
+    isNum(p?.high)
+  );
+}
+
+function localBestPrice(prices = []) {
+  if (!Array.isArray(prices) || prices.length === 0) return null;
+
+  const rows = prices
+    .map((r) => (r ? { ...r, _v: canonicalVariant(r.variation ?? r.variant) } : null))
+    .filter(Boolean)
+    .filter(hasAnyPriceValue);
+
+  if (!rows.length) return null;
+
+  const pref = ["normal", "holofoil", "holo", "reverseHolofoil", "reverse"];
+  for (const key of pref) {
+    const hit = rows.find((r) => r._v === key && pickMarketishValue(r) != null);
+    if (hit) return hit;
+  }
+  return rows.find((r) => pickMarketishValue(r) != null) || null;
+}
+
+/* ----------------------------------------------------------------------------------- */
+
 export default function CardDetailsScreen() {
   const router = useRouter();
   const toast = useToast();
   const params = useLocalSearchParams();
   const routeId = params.id ? String(params.id) : null;
 
-  const [range, setRange] = useState("30D"); // "7D" | "30D" | "90D" | "1Y"
+  const [range, setRange] = useState("30D");
   const hideActions =
     params?.hideActions === "1" ||
     params?.hideActions === 1 ||
     params?.hideActions === true;
 
-  // Immediate UI from params (fallback)
+  // --- Fallback from navigation params
   const fallback = useMemo(() => {
-    // accept either `prices` or `pricing` from params
     let prices = [];
     try {
       const raw =
@@ -62,51 +120,46 @@ export default function CardDetailsScreen() {
       number: params.number ?? "",
       setName: params.setName ?? "",
       image: params.image ?? "",
-      prices, // ensures downstream code always sees `prices`
+      prices,
     };
   }, [params]);
 
-  // Query the live card
+  // --- Query the live card
   const { data, loading, error } = useQuery(CARD_BY_ID, {
     variables: { id: routeId ?? "" },
     skip: !routeId,
     fetchPolicy: "cache-first",
   });
 
-  // Prefer live; fall back to nav params
   const rawCard = data?.card ?? { id: routeId, ...fallback };
 
-  // Normalize prices/pricing -> prices so downstream code is stable
+  // Normalize -> always expose `prices`
   const card = useMemo(() => {
-    const prices = Array.isArray(rawCard?.prices)
-      ? rawCard.prices
-      : Array.isArray(rawCard?.pricing)
-      ? rawCard.pricing
-      : [];
+    const fromLatest = Array.isArray(rawCard?.latestPrices) ? rawCard.latestPrices : null;
+    const fromPrices = Array.isArray(rawCard?.prices) ? rawCard.prices : null;
+    const fromPricing = Array.isArray(rawCard?.pricing) ? rawCard.pricing : null;
+    const prices = fromPrices || fromLatest || fromPricing || [];
     return { ...rawCard, prices };
   }, [rawCard]);
 
   const img = normalizeImageUrl(card?.image);
 
   // pick most-recent priced variation
-  const price = useMemo(() => getBestPrice(card, { strategy: "recent" }), [card]);
+  const price = useMemo(() => {
+    const utilRow = getBestPrice(card, { strategy: "recent" }) || null;
+    const useUtil = utilRow && hasAnyPriceValue(utilRow);
+    return useUtil ? utilRow : localBestPrice(card?.prices);
+  }, [card]);
 
-  // Average across TCGP + CMKT
+  // unified average price
   const average = useMemo(() => {
-    const vals = [price.tcgplayer, price.cardmarket].filter(
-      (n) => typeof n === "number" && !Number.isNaN(n)
-    );
-    if (!vals.length) return null;
-    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-    return Number.isFinite(avg) ? avg : null;
+    if (!price) return null;
+    const m = pickMarketishValue(price);
+    return isNum(m) ? m : null;
   }, [price]);
 
-  // ----- Placeholder pricing series -----
-  const baseForSeries =
-    (typeof average === "number" && average) ||
-    (typeof price.tcgplayer === "number" && price.tcgplayer) ||
-    (typeof price.cardmarket === "number" && price.cardmarket) ||
-    10;
+  // --- Placeholder pricing chart values
+  const baseForSeries = isNum(average) ? average : 10;
 
   const series = useMemo(() => {
     const points = TIMEFRAME_POINTS[range] ?? 30;
@@ -114,9 +167,9 @@ export default function CardDetailsScreen() {
   }, [baseForSeries, range]);
 
   const { min, max, avg } = useMemo(() => seriesStats(series), [series]);
-  const barHeights = useMemo(() => toBarHeights(series, 80), [series]); // 80px chart area
+  const barHeights = useMemo(() => toBarHeights(series, 80), [series]);
 
-  /* ------------------ Mutations (add to collection / wishlist) ------------------ */
+  /* ------------------ Mutations ------------------ */
   const [addToCollection, { loading: addingCollection }] = useMutation(
     AddToCollectionDocument
   );
@@ -124,7 +177,6 @@ export default function CardDetailsScreen() {
     AddToWishlistDocument
   );
 
-  // Resolve a valid cardId from multiple sources
   const resolvedCardId =
     (card && card.id ? String(card.id) : null) ||
     (routeId ? String(routeId) : null) ||
@@ -140,11 +192,9 @@ export default function CardDetailsScreen() {
     try {
       await addToCollection({
         variables: {
-
-            cardId: resolvedCardId,
-            variation,
-            quantity: 1,
-
+          cardId: resolvedCardId,
+          variation,
+          quantity: 1,
         },
       });
       toast.show("Added to collection", { type: "success" });
@@ -164,10 +214,8 @@ export default function CardDetailsScreen() {
     try {
       await addToWishlist({
         variables: {
-
-            cardId: resolvedCardId,
-            variation,
-
+          cardId: resolvedCardId,
+          variation,
         },
       });
       toast.show("Added to wishlist", { type: "success" });
@@ -179,7 +227,6 @@ export default function CardDetailsScreen() {
     }
   };
 
-  // Only include action handlers when actions are visible
   const actionProps = hideActions
     ? {}
     : {
@@ -212,9 +259,7 @@ export default function CardDetailsScreen() {
             name={card.name}
             number={card.number}
             setName={card.setName}
-            tcgp={price.tcgplayer}
-            cmkt={price.cardmarket}
-            average={average}
+            average={isNum(average) ? average : null}
             variationLabel={
               price?.variation ? String(price.variation).toUpperCase() : "—"
             }
