@@ -16,6 +16,7 @@ import { CardByIdDocument as CARD_BY_ID } from "@sixbyfive/tcg-binder";
 import {
   AddToCollectionDocument,
   AddToWishlistDocument,
+  CardPriceHistoryDocument,
 } from "@sixbyfive/tcg-binder/client";
 
 import useToast from "../../hooks/useToast";
@@ -142,6 +143,11 @@ export default function CardDetailsScreen() {
     return { ...rawCard, prices };
   }, [rawCard]);
 
+  const resolvedCardId =
+    (card && card.id ? String(card.id) : null) ||
+    (routeId ? String(routeId) : null) ||
+    (params?.cardId ? String(params.cardId) : null);
+
   const img = normalizeImageUrl(card?.image);
 
   // pick most-recent priced variation
@@ -158,16 +164,86 @@ export default function CardDetailsScreen() {
     return isNum(m) ? m : null;
   }, [price]);
 
-  // --- Placeholder pricing chart values
+  const activeVariant = canonicalVariant(price?.variation ?? "normal");
+
+  const { data: historyData } = useQuery(CardPriceHistoryDocument, {
+    variables: { cardId: resolvedCardId ?? "", days: 365 },
+    skip: !resolvedCardId,
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+  });
+
+  const historyByVariant = useMemo(() => {
+    const points = Array.isArray(historyData?.cardPriceHistory)
+      ? historyData.cardPriceHistory
+      : [];
+    if (!points.length) return new Map();
+
+    const toFinite = (value) => {
+      if (typeof value === "number" && Number.isFinite(value)) return value;
+      if (typeof value === "string") {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+      }
+      return null;
+    };
+
+    const grouped = new Map();
+    for (const point of points) {
+      if (!point) continue;
+      const key = canonicalVariant(point.variation ?? "normal");
+      const normalized = {
+        ...point,
+        variation: key,
+        market: toFinite(point.market),
+        mid: toFinite(point.mid),
+        low: toFinite(point.low),
+        high: toFinite(point.high),
+        gbp: toFinite(point.gbp),
+        tcgplayer: toFinite(point.tcgplayer),
+        cardmarket: toFinite(point.cardmarket),
+        updatedAt: point.updatedAt ?? point.date ?? null,
+      };
+
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(normalized);
+    }
+
+    for (const arr of grouped.values()) {
+      arr.sort((a, b) => {
+        const ta = new Date(a.updatedAt || a.date || 0).getTime();
+        const tb = new Date(b.updatedAt || b.date || 0).getTime();
+        return ta - tb;
+      });
+    }
+
+    return grouped;
+  }, [historyData]);
+
+  const variantHistory = useMemo(() => {
+    if (!historyByVariant.size) return [];
+    if (historyByVariant.has(activeVariant)) return historyByVariant.get(activeVariant) ?? [];
+    if (historyByVariant.has("normal")) return historyByVariant.get("normal") ?? [];
+    const first = historyByVariant.values().next().value;
+    return Array.isArray(first) ? first : [];
+  }, [historyByVariant, activeVariant]);
+
   const baseForSeries = isNum(average) ? average : 10;
 
-  const series = useMemo(() => {
-    const points = TIMEFRAME_POINTS[range] ?? 30;
-    return makePlaceholderSeries(baseForSeries, points);
-  }, [baseForSeries, range]);
+  const hasHistory = variantHistory.length > 0;
 
-  const { min, max, avg } = useMemo(() => seriesStats(series), [series]);
-  const barHeights = useMemo(() => toBarHeights(series, 80), [series]);
+  const placeholder = useMemo(() => {
+    if (hasHistory) return null;
+    const points = TIMEFRAME_POINTS[range] ?? 30;
+    const series = makePlaceholderSeries(baseForSeries, points);
+    const stats = seriesStats(series);
+    return {
+      bars: toBarHeights(series, 80),
+      avg: stats.avg,
+      min: stats.min,
+      max: stats.max,
+    };
+  }, [hasHistory, range, baseForSeries]);
 
   /* ------------------ Mutations ------------------ */
   const [addToCollection, { loading: addingCollection }] = useMutation(
@@ -176,11 +252,6 @@ export default function CardDetailsScreen() {
   const [addToWishlist, { loading: addingWishlist }] = useMutation(
     AddToWishlistDocument
   );
-
-  const resolvedCardId =
-    (card && card.id ? String(card.id) : null) ||
-    (routeId ? String(routeId) : null) ||
-    (params?.cardId ? String(params.cardId) : null);
 
   const variation = price?.variation ? String(price.variation) : "normal";
 
@@ -270,10 +341,11 @@ export default function CardDetailsScreen() {
           <PricingHistory
             range={range}
             onChangeRange={setRange}
-            barHeights={barHeights}
-            avg={avg}
-            min={min}
-            max={max}
+            history={hasHistory ? variantHistory : null}
+            barHeights={placeholder?.bars}
+            avg={placeholder?.avg}
+            min={placeholder?.min}
+            max={placeholder?.max}
           />
 
           <View style={{ height: 28 }} />
