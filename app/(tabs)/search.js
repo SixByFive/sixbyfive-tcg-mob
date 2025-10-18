@@ -17,6 +17,7 @@ import {
   AddToCollectionDocument,
   AddToWishlistDocument,
 } from "@sixbyfive/tcg-binder/client";
+import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 
 import EmptyState from "../../components/common/EmptyState";
 import CardTile from "../../components/search/CardTile";
@@ -25,6 +26,10 @@ import SearchHeader from "../../components/search/SearchHeader";
 import { PER_PAGE } from "../../constants/pagination";
 import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";
+import {
+  buildMyCollectionRefetchQueries,
+  upsertMyCollectionEntry,
+} from "../../utils/apolloCollectionCache";
 
 /* ------------------------------------------------------------------ */
 /* GraphQL (NEW): cardsearch module query — mirrors your web example.  */
@@ -419,9 +424,18 @@ export default function SearchTab() {
     }
   }, [hasMore, loading, called, fetchMore, name, setCode, number, pageSize, offset, results, totalCount]);
 
-  // --- Mutations (unchanged) ---
+  // --- Mutations ---
+  const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
+  const userId = meData?.me?.id ?? null;
+
   const [addToWishlist] = useMutation(AddToWishlistDocument);
-  const [addToCollection] = useMutation(AddToCollectionDocument);
+  const [addToCollection] = useMutation(AddToCollectionDocument, {
+    update: (cache, { data }) => {
+      upsertMyCollectionEntry(cache, data?.addToCollection);
+    },
+    refetchQueries: () => buildMyCollectionRefetchQueries(userId),
+    awaitRefetchQueries: false,
+  });
 
   const onAddToWishlist = async (card) => {
     if (!card?.id && !card?.cardId) return;

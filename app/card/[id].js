@@ -18,6 +18,7 @@ import {
   AddToWishlistDocument,
   CardPriceHistoryDocument,
 } from "@sixbyfive/tcg-binder/client";
+import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 
 import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";
@@ -28,6 +29,10 @@ import {
   seriesStats,
   toBarHeights,
 } from "../../utils/priceSeries";
+import {
+  buildMyCollectionRefetchQueries,
+  upsertMyCollectionEntry,
+} from "../../utils/apolloCollectionCache";
 
 import CardHeader from "../../components/card/CardHeader";
 import CardImageBlock from "../../components/card/CardImageBlock";
@@ -246,8 +251,18 @@ export default function CardDetailsScreen() {
   }, [hasHistory, range, baseForSeries]);
 
   /* ------------------ Mutations ------------------ */
+  const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
+  const userId = meData?.me?.id ?? null;
+
   const [addToCollection, { loading: addingCollection }] = useMutation(
-    AddToCollectionDocument
+    AddToCollectionDocument,
+    {
+      update: (cache, { data }) => {
+        upsertMyCollectionEntry(cache, data?.addToCollection);
+      },
+      refetchQueries: () => buildMyCollectionRefetchQueries(userId),
+      awaitRefetchQueries: false,
+    }
   );
   const [addToWishlist, { loading: addingWishlist }] = useMutation(
     AddToWishlistDocument
