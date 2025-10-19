@@ -2,7 +2,7 @@
 // CHANGED: fully switched to the new cardsearch query (limit/offset + items[])
 //          and aligned the client-side normalization to your frontend example.
 
-import { gql, useLazyQuery, useMutation } from "@apollo/client"; // CHANGED: import gql to define query here
+import { gql, useApolloClient, useLazyQuery, useMutation } from "@apollo/client"; // CHANGED: import gql to define query here
 import { useRouter } from "expo-router";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
@@ -16,6 +16,7 @@ import {
 import {
   AddToCollectionDocument,
   AddToWishlistDocument,
+  CardByIdDocument,
 } from "@sixbyfive/tcg-binder/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 
@@ -65,6 +66,37 @@ const CARDSEARCH_QUERY = gql`
   }
 `;
 
+const CARDSEARCH_CARD_BY_ID = gql`
+  query CardsearchCardEnsureMobile($cardId: ID!, $variant: String) {
+    cardsearchCardById(cardId: $cardId, variant: $variant) {
+      cardId
+      id
+      setCode
+      number
+      name
+      rarity
+      set {
+        code
+        name
+      }
+      variants {
+        variant
+        displayName
+      }
+      latestPrices {
+        variant
+        market
+        mid
+        low
+        high
+        currency
+        updatedAt
+        provider
+      }
+    }
+  }
+`;
+
 // CHANGED: page sizing to match your example semantics
 const CARDSEARCH_PAGE_SIZE = 48;
 const CARDSEARCH_EXACT_LIMIT = 12;
@@ -73,6 +105,23 @@ const CARDSEARCH_EXACT_LIMIT = 12;
 const GBP_SYMBOL = "\u00A3";
 
 /* ---------------- Helpers (ported/adapted from your web example) ---------------- */
+
+function extractErrorMessage(error) {
+  if (!error) return "";
+  const graphQlMessage =
+    (Array.isArray(error.graphQLErrors) &&
+      error.graphQLErrors.map((err) => err?.message).find(Boolean)) ||
+    null;
+  if (graphQlMessage) return graphQlMessage;
+  if (typeof error.message === "string" && error.message.trim()) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  return "";
+}
+
+function isForeignKeyConstraintError(error) {
+  const message = extractErrorMessage(error);
+  return typeof message === "string" && /foreign key/i.test(message);
+}
 
 // CHANGED: canonical variant names
 function canonicalVariantKey(raw) {
@@ -361,6 +410,7 @@ function filterOutPocket(cards, exclude = true) {
 export default function SearchTab() {
   const router = useRouter();
   const toast = useToast();
+  const apollo = useApolloClient();
 
   // form state
   const [name, setName] = useState("");
@@ -490,6 +540,58 @@ export default function SearchTab() {
   const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
   const userId = meData?.me?.id ?? null;
 
+  const hydrateCardById = useCallback(
+    async (cardId, variation = "normal") => {
+      if (!cardId) return false;
+
+      const checkLegacy = async () => {
+        const { data: cardData } = await apollo.query({
+          query: CardByIdDocument,
+          variables: { id: cardId },
+          fetchPolicy: "network-only",
+        });
+        const cardRecord = cardData?.card ?? cardData?.cardById ?? cardData?.Card ?? null;
+        return Boolean(cardRecord?.id);
+      };
+
+      try {
+        if (await checkLegacy()) {
+          return true;
+        }
+      } catch (legacyErr) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn("hydrateCardById initial check failed", { err: legacyErr, cardId });
+        }
+      }
+
+      try {
+        await apollo.query({
+          query: CARDSEARCH_CARD_BY_ID,
+          variables: { cardId, variant: variation || undefined },
+          fetchPolicy: "network-only",
+        });
+      } catch (err) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn("cardsearchCardById hydrate failed", { err, cardId, variation });
+        }
+        return false;
+      }
+
+      try {
+        return await checkLegacy();
+      } catch (finalErr) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn("hydrateCardById final check failed", { err: finalErr, cardId });
+        }
+        return false;
+      }
+    },
+    [apollo]
+  );
+
   const [addToWishlist] = useMutation(AddToWishlistDocument);
   const [addToCollection] = useMutation(AddToCollectionDocument, {
     update: (cache, { data }) => {
@@ -506,17 +608,30 @@ export default function SearchTab() {
       return;
     }
     const variation = resolveVariation(card);
+    const variables = {
+      cardId,
+      variation,
+    };
     try {
-      await addToWishlist({
-        variables: {
-          cardId,
-          variation,
-        },
-      });
+      await addToWishlist({ variables });
       toast.show("Added to wishlist", { type: "success" });
+      return;
     } catch (e) {
-      console.warn("addToWishlist failed:", { error: e, card, cardId, variation });
-      const message = e?.graphQLErrors?.[0]?.message || e?.message || "Couldn't add to wishlist";
+      let finalError = e;
+      if (isForeignKeyConstraintError(e)) {
+        const hydrated = await hydrateCardById(cardId, variation);
+        if (hydrated) {
+          try {
+            await addToWishlist({ variables });
+            toast.show("Added to wishlist", { type: "success" });
+            return;
+          } catch (retryError) {
+            finalError = retryError;
+          }
+        }
+      }
+      console.warn("addToWishlist failed:", { error: finalError, card, cardId, variation });
+      const message = extractErrorMessage(finalError) || "Couldn't add to wishlist";
       toast.show(message, { type: "error" });
     }
   };
@@ -528,18 +643,31 @@ export default function SearchTab() {
       return;
     }
     const variation = resolveVariation(card);
+    const variables = {
+      cardId,
+      variation,
+      quantity: 1,
+    };
     try {
-      await addToCollection({
-        variables: {
-          cardId,
-          variation,
-          quantity: 1,
-        },
-      });
+      await addToCollection({ variables });
       toast.show("Added to collection", { type: "success" });
+      return;
     } catch (e) {
-      console.warn("addToCollection failed:", { error: e, card, cardId, variation });
-      const message = e?.graphQLErrors?.[0]?.message || e?.message || "Couldn't add to collection";
+      let finalError = e;
+      if (isForeignKeyConstraintError(e)) {
+        const hydrated = await hydrateCardById(cardId, variation);
+        if (hydrated) {
+          try {
+            await addToCollection({ variables });
+            toast.show("Added to collection", { type: "success" });
+            return;
+          } catch (retryError) {
+            finalError = retryError;
+          }
+        }
+      }
+      console.warn("addToCollection failed:", { error: finalError, card, cardId, variation });
+      const message = extractErrorMessage(finalError) || "Couldn't add to collection";
       toast.show(message, { type: "error" });
     }
   };
