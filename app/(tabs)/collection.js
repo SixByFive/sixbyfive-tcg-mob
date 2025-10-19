@@ -1,4 +1,4 @@
-import { useApolloClient, useQuery } from "@apollo/client";
+import { useApolloClient, useMutation, useQuery } from "@apollo/client";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -28,7 +28,9 @@ import {
   CardByIdDocument,
   MyBindersDocument,
   MyCollectionDocument,
+  RemoveFromCollectionDocument,
   SearchCardsDocument,
+  UpdateCollectionEntryDocument,
   WishlistDocument,
 } from "@sixbyfive/tcg-binder/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
@@ -138,6 +140,9 @@ export default function CollectionTab() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [removing, setRemoving] = useState(null);
   const [savingRemoval, setSavingRemoval] = useState(false);
+
+  const [updateCollectionEntry] = useMutation(UpdateCollectionEntryDocument);
+  const [removeFromCollection] = useMutation(RemoveFromCollectionDocument);
 
   // wishlist hydration
   const [cardsByIdMap, setCardsByIdMap] = useState(() => new Map());
@@ -352,6 +357,100 @@ export default function CollectionTab() {
     wishlist: wishlistServerTotal,
   };
 
+  const refetchCollectionSafe = useCallback(async () => {
+    try {
+      await refetchCollection();
+    } catch (err) {
+      console.warn("Failed to refetch collection after mutation", err);
+    }
+  }, [refetchCollection]);
+
+  const mutateCollectionEntry = useCallback(
+    async (card, { quantity, condition }) => {
+      if (!card) throw new Error("Missing card");
+      const cardId = card?.id ?? card?._collection?.cardId;
+      if (!cardId) throw new Error("Missing card id");
+      const variation = String(card?._collection?.variation ?? "normal");
+
+      const normalizedQty =
+        typeof quantity === "number" && Number.isFinite(quantity)
+          ? Math.max(0, Math.round(quantity))
+          : undefined;
+      const normalizedCondition = condition ? String(condition) : undefined;
+
+      if (normalizedQty != null && normalizedQty <= 0) {
+        await removeFromCollection({ variables: { cardId: String(cardId), variation } });
+        return { removed: true };
+      }
+
+      const variables = { cardId: String(cardId), variation };
+      if (normalizedQty != null) variables.quantity = normalizedQty;
+      if (normalizedCondition) variables.condition = normalizedCondition;
+
+      await updateCollectionEntry({ variables });
+      return { removed: false };
+    },
+    [removeFromCollection, updateCollectionEntry]
+  );
+
+  const handleEditSubmit = useCallback(
+    async (card, values = {}) => {
+      if (!card) return;
+      const nextQuantity = Number(values.quantity ?? card?._collection?.quantity ?? 0);
+      const nextCondition = values.condition ?? card?._collection?.condition ?? "near_mint";
+
+      setSavingEdit(true);
+      try {
+        const result = await mutateCollectionEntry(card, {
+          quantity: nextQuantity,
+          condition: nextCondition,
+        });
+        await refetchCollectionSafe();
+        toast.show(
+          result.removed ? "Removed from your collection." : "Updated your collection.",
+          { type: "success" }
+        );
+        setEditing(null);
+      } catch (err) {
+        console.error("Failed to save collection entry", err);
+        toast.show("Couldn't update your collection. Please try again.", { type: "error" });
+      } finally {
+        setSavingEdit(false);
+      }
+    },
+    [mutateCollectionEntry, refetchCollectionSafe, toast]
+  );
+
+  const handleRemoveQuantity = useCallback(
+    async (card, count, { closeModal = false } = {}) => {
+      if (!card) return;
+      const removeCount = Math.max(0, Number(count) || 0);
+      if (removeCount <= 0) return;
+      const currentQty = Number(card?._collection?.quantity ?? 0) || 0;
+      const nextQty = Math.max(0, currentQty - removeCount);
+
+      if (closeModal) setSavingRemoval(true);
+      try {
+        const result = await mutateCollectionEntry(card, {
+          quantity: nextQty,
+          condition: card?._collection?.condition,
+        });
+        await refetchCollectionSafe();
+        toast.show(
+          result.removed ? "Removed from your collection." : "Updated your collection.",
+          { type: "success" }
+        );
+        setRemoving(null);
+      } catch (err) {
+        console.error("Failed to remove from collection", err);
+        toast.show("Couldn't update your collection. Please try again.", { type: "error" });
+      } finally {
+        if (closeModal) setSavingRemoval(false);
+      }
+    },
+    [mutateCollectionEntry, refetchCollectionSafe, toast]
+  );
+
   /* -------- per-segment loading/error -------- */
   const loadingBySegment =
     segment === "binders"
@@ -554,14 +653,14 @@ export default function CollectionTab() {
         onClose={() => setEditing(null)}
         card={editing}
         saving={savingEdit}
-        onSubmit={(vals) => {}}
+        onSubmit={(vals) => handleEditSubmit(editing, vals)}
       />
       <RemoveQuantityModal
         visible={!!removing}
         onClose={() => setRemoving(null)}
         card={removing}
         removing={savingRemoval}
-        onConfirm={(qty) => {}}
+        onConfirm={(qty) => handleRemoveQuantity(removing, qty, { closeModal: true })}
       />
     </View>
   );

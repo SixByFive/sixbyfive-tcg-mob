@@ -236,14 +236,76 @@ function collectVariantList(item) {
       else if (v && typeof v === "object") push(v.variant || v.displayName);
     }
   }
+  if (Array.isArray(item?.variations)) {
+    for (const v of item.variations) {
+      if (typeof v === "string") push(v);
+      else if (v && typeof v === "object") push(v.variant || v.displayName || v.variation);
+    }
+  }
   const source = Array.isArray(item?.latestPrices)
     ? item.latestPrices
     : Array.isArray(item?.prices)
     ? item.prices
     : [];
-  for (const p of source) push(p?.variant || p?.variation);
+  for (const p of source) {
+    if (typeof p === "string") push(p);
+    else push(p?.variant || p?.variation);
+  }
   const out = Array.from(variants).filter(Boolean);
   return out.length ? out : ["normal"];
+}
+
+function resolveCardIdentifier(card) {
+  const normalize = (value) => {
+    if (value == null) return null;
+    const str = String(value).trim();
+    if (!str) return null;
+    if (/^card-\d+$/i.test(str)) return null;
+    if (/^local-\w+/i.test(str)) return null;
+    return str;
+  };
+
+  const looksLikeCode = (value) => {
+    if (!value) return false;
+    const upper = value.toUpperCase();
+    if (upper.startsWith("CARD-")) return false;
+    return upper.includes("-") || upper.includes("/") || /\d/.test(upper);
+  };
+
+  const candidates = [
+    normalize(card?.cardId),
+    normalize(card?.id),
+    normalize(card?.code),
+    normalize(card?.card?.id),
+    normalize(card?.cardCode),
+    normalize(card?.card?.code),
+    normalize(
+      card?.setCode && card?.number ? `${card.setCode}-${card.number}` : null
+    ),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (looksLikeCode(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0] ?? null;
+}
+
+function resolveVariation(card) {
+  if (!card) return "normal";
+  if (Array.isArray(card?.variations) && card.variations.length > 0) {
+    for (const entry of card.variations) {
+      if (!entry) continue;
+      if (typeof entry === "string") return canonicalVariantKey(entry);
+      if (typeof entry === "object") {
+        return canonicalVariantKey(entry.variant || entry.variation || entry.displayName);
+      }
+    }
+  }
+  if (card?.variation) return canonicalVariantKey(card.variation);
+  return "normal";
 }
 
 // Normalize one item from cardsearch into the shape your mobile UI expects
@@ -438,41 +500,47 @@ export default function SearchTab() {
   });
 
   const onAddToWishlist = async (card) => {
-    if (!card?.id && !card?.cardId) return;
+    const cardId = resolveCardIdentifier(card);
+    if (!cardId) {
+      toast.show("Missing card id", { type: "error" });
+      return;
+    }
+    const variation = resolveVariation(card);
     try {
       await addToWishlist({
         variables: {
-          cardId: String(card.cardId || card.id),
-          variation:
-            Array.isArray(card?.variations) && card.variations.length
-              ? String(card.variations[0])
-              : "normal",
+          cardId,
+          variation,
         },
       });
       toast.show("Added to wishlist", { type: "success" });
     } catch (e) {
-      console.warn("addToWishlist failed:", e);
-      toast.show("Couldn't add to wishlist", { type: "error" });
+      console.warn("addToWishlist failed:", { error: e, card, cardId, variation });
+      const message = e?.graphQLErrors?.[0]?.message || e?.message || "Couldn't add to wishlist";
+      toast.show(message, { type: "error" });
     }
   };
 
   const onAddToCollection = async (card) => {
-    if (!card?.id && !card?.cardId) return;
+    const cardId = resolveCardIdentifier(card);
+    if (!cardId) {
+      toast.show("Missing card id", { type: "error" });
+      return;
+    }
+    const variation = resolveVariation(card);
     try {
       await addToCollection({
         variables: {
-          cardId: String(card.cardId || card.id),
-          variation:
-            Array.isArray(card?.variations) && card.variations.length
-              ? String(card.variations[0])
-              : "normal",
+          cardId,
+          variation,
           quantity: 1,
         },
       });
       toast.show("Added to collection", { type: "success" });
     } catch (e) {
-      console.warn("addToCollection failed:", e);
-      toast.show("Couldn't add to collection", { type: "error" });
+      console.warn("addToCollection failed:", { error: e, card, cardId, variation });
+      const message = e?.graphQLErrors?.[0]?.message || e?.message || "Couldn't add to collection";
+      toast.show(message, { type: "error" });
     }
   };
 
