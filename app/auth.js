@@ -1,8 +1,8 @@
 // app/auth.js
-import { useMutation } from "@apollo/client";
+import { useApolloClient, useMutation } from "@apollo/client";
 import { LoginDocument, RegisterDocument } from "@sixbyfive/tcg-binder";
 import { router } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -40,6 +40,8 @@ export default function Auth() {
   const emailRef = useRef(null);
   const pwRef = useRef(null);
 
+  const apolloClient = useApolloClient();
+
   // focus first field when screen mounts / mode changes
   useEffect(() => {
     const t = setTimeout(() => idRef.current?.focus(), 100);
@@ -57,25 +59,69 @@ export default function Auth() {
     return identifier.trim().length > 0 && email.trim().length > 0 && pw.length >= 8;
   }, [mode, identifier, email, pw]);
 
+  const performLogin = useCallback(
+    async (rawIdentifier, password, { silent = false } = {}) => {
+      const cleaned = String(rawIdentifier ?? "").trim();
+      if (!cleaned || !password) return null;
+      const variables = cleaned.includes("@")
+        ? { email: cleaned, password }
+        : { username: cleaned, password };
+      try {
+        const { data } = await login({ variables });
+        const token = data?.login?.token ?? null;
+        if (token) {
+          await setToken(token);
+          try {
+            await apolloClient.clearStore();
+          } catch (storeErr) {
+            console.warn("Failed to clear Apollo store after login", storeErr);
+          }
+          router.replace("/home");
+        }
+        return token;
+      } catch (err) {
+        if (silent) {
+          console.warn("Silent login attempt failed", err);
+          return null;
+        }
+        throw err;
+      }
+    },
+    [apolloClient, login]
+  );
+
   const onSubmit = async () => {
     if (!canSubmit || busy) return;
     try {
       if (mode === "login") {
-        const variables = identifier.includes("@")
-          ? { email: identifier.trim(), password: pw }
-          : { username: identifier.trim(), password: pw };
-
-        const { data } = await login({ variables });
-        const token = data?.login?.token;
-        if (token) {
-          await setToken(token);
-          router.replace("/home");
-        }
+        await performLogin(identifier, pw);
       } else {
+        const cleanedUsername = identifier.trim();
+        const cleanedEmail = email.trim();
+        const password = pw;
         const { data } = await register({
-          variables: { username: identifier.trim(), email: email.trim(), password: pw },
+          variables: { username: cleanedUsername, email: cleanedEmail, password },
         });
-        if (data?.register?.user) setMode("login");
+
+        if (data?.register?.user) {
+          try {
+            let token = null;
+            if (cleanedEmail) {
+              token = await performLogin(cleanedEmail, password, { silent: true });
+            }
+            if (!token) {
+              token = await performLogin(cleanedUsername, password, { silent: true });
+            }
+            if (token) {
+              return;
+            }
+          } catch (loginAfterRegisterError) {
+            console.warn("Auto-login after registration failed", loginAfterRegisterError);
+          }
+
+          setMode("login");
+          setIdentifier(cleanedUsername);
+        }
       }
     } catch (e) {
       // errors are already surfaced via Apollo error -> errMsg

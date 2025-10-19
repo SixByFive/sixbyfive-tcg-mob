@@ -1,9 +1,53 @@
-// app/(tabs)/_layout.js (or wherever this component lives)
 import { Ionicons } from "@expo/vector-icons";
-import { Tabs } from "expo-router";
+import { Tabs, useRouter } from "expo-router";
+import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import { useEffect, useRef } from "react";
+import { clearToken } from "../../lib/auth";
 import { FEATURES } from "../../lib/features";
 
 export default function TabsLayout() {
+  const router = useRouter();
+  const { data, loading, error } = useMeQuery({ fetchPolicy: "cache-first" });
+  const autoLoggedOutRef = useRef(false);
+
+  useEffect(() => {
+    if (autoLoggedOutRef.current) return;
+    if (loading) return;
+
+    const user = data?.me;
+    if (user) return;
+
+    const graphQlErrors = Array.isArray(error?.graphQLErrors) ? error.graphQLErrors : [];
+    const hasAuthGraphQLError = graphQlErrors.some((err) => {
+      const code = String(err?.extensions?.code || "").toUpperCase();
+      return code === "UNAUTHENTICATED" || code === "FORBIDDEN";
+    });
+
+    const networkError = error?.networkError;
+    const statusCode =
+      networkError && typeof networkError === "object"
+        ? networkError.statusCode ?? networkError.status ?? networkError.response?.status
+        : null;
+    const hasAuthNetworkError = statusCode === 401 || statusCode === 403;
+
+    const completedWithoutUser = !error && data && !user;
+
+    if (!hasAuthGraphQLError && !hasAuthNetworkError && !completedWithoutUser) {
+      return;
+    }
+
+    autoLoggedOutRef.current = true;
+
+    (async () => {
+      try {
+        await clearToken();
+      } catch (e) {
+        console.warn("Failed to clear auth token after auth error", e);
+      }
+      router.replace("/auth");
+    })();
+  }, [data, error, loading, router]);
+
   return (
     <Tabs
       screenOptions={{
