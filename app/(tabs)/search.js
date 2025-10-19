@@ -66,6 +66,37 @@ const CARDSEARCH_QUERY = gql`
   }
 `;
 
+const CARDSEARCH_CARD_BY_ID = gql`
+  query CardsearchCardEnsureMobile($cardId: ID!, $variant: String) {
+    cardsearchCardById(cardId: $cardId, variant: $variant) {
+      cardId
+      id
+      setCode
+      number
+      name
+      rarity
+      set {
+        code
+        name
+      }
+      variants {
+        variant
+        displayName
+      }
+      latestPrices {
+        variant
+        market
+        mid
+        low
+        high
+        currency
+        updatedAt
+        provider
+      }
+    }
+  }
+`;
+
 // CHANGED: page sizing to match your example semantics
 const CARDSEARCH_PAGE_SIZE = 48;
 const CARDSEARCH_EXACT_LIMIT = 12;
@@ -510,9 +541,10 @@ export default function SearchTab() {
   const userId = meData?.me?.id ?? null;
 
   const hydrateCardById = useCallback(
-    async (cardId) => {
+    async (cardId, variation = "normal") => {
       if (!cardId) return false;
-      try {
+
+      const checkLegacy = async () => {
         const { data: cardData } = await apollo.query({
           query: CardByIdDocument,
           variables: { id: cardId },
@@ -520,10 +552,39 @@ export default function SearchTab() {
         });
         const cardRecord = cardData?.card ?? cardData?.cardById ?? cardData?.Card ?? null;
         return Boolean(cardRecord?.id);
+      };
+
+      try {
+        if (await checkLegacy()) {
+          return true;
+        }
+      } catch (legacyErr) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn("hydrateCardById initial check failed", { err: legacyErr, cardId });
+        }
+      }
+
+      try {
+        await apollo.query({
+          query: CARDSEARCH_CARD_BY_ID,
+          variables: { cardId, variant: variation || undefined },
+          fetchPolicy: "network-only",
+        });
       } catch (err) {
         if (__DEV__) {
           // eslint-disable-next-line no-console
-          console.warn("hydrateCardById failed", { err, cardId });
+          console.warn("cardsearchCardById hydrate failed", { err, cardId, variation });
+        }
+        return false;
+      }
+
+      try {
+        return await checkLegacy();
+      } catch (finalErr) {
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.warn("hydrateCardById final check failed", { err: finalErr, cardId });
         }
         return false;
       }
@@ -558,7 +619,7 @@ export default function SearchTab() {
     } catch (e) {
       let finalError = e;
       if (isForeignKeyConstraintError(e)) {
-        const hydrated = await hydrateCardById(cardId);
+        const hydrated = await hydrateCardById(cardId, variation);
         if (hydrated) {
           try {
             await addToWishlist({ variables });
@@ -594,7 +655,7 @@ export default function SearchTab() {
     } catch (e) {
       let finalError = e;
       if (isForeignKeyConstraintError(e)) {
-        const hydrated = await hydrateCardById(cardId);
+        const hydrated = await hydrateCardById(cardId, variation);
         if (hydrated) {
           try {
             await addToCollection({ variables });
