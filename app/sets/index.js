@@ -2,7 +2,7 @@
 // Uses PageHeaderBackSimple for the page header.
 // Keeps the compact horizontal chips + modal era picker.
 
-import { gql, useQuery } from "@apollo/client";
+import { useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
@@ -21,6 +21,7 @@ import PageHeaderBackSimple from "../../components/common/PageHeaderBackSimple";
 import SetLogo from "../../components/sets/SetLogo.native";
 import { COLORS } from "../../theme/colors";
 import inferSetEra from "../../utils/setEra.native";
+import { SearchSetsDocument } from "@sixbyfive/tcg-binder/client";
 
 /* ---------------- Era labels & order ---------------- */
 const ERA_LABELS = {
@@ -74,19 +75,6 @@ function compareByCode(a, b) {
   return 0;
 }
 
-/* ---------------- GraphQL ---------------- */
-const CARDSEARCH_SETS = gql`
-  query CardsearchSetsMobile($limit: Int!, $offset: Int!) {
-    cardsearchSets(limit: $limit, offset: $offset) {
-      code
-      name
-      abbr
-      series
-      total
-    }
-  }
-`;
-
 const PAGE_SIZE = 500;
 
 export default function SetsIndexScreen() {
@@ -95,13 +83,13 @@ export default function SetsIndexScreen() {
   const [eraFilter, setEraFilter] = useState("all");
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const { data, loading, error } = useQuery(CARDSEARCH_SETS, {
-    variables: { limit: PAGE_SIZE, offset: 0 },
+  const { data, loading, error } = useQuery(SearchSetsDocument, {
+    variables: { query: null, limit: PAGE_SIZE, offset: 0 },
     fetchPolicy: "cache-first",
   });
 
   const sets = useMemo(() => {
-    const raw = Array.isArray(data?.cardsearchSets) ? data.cardsearchSets : [];
+    const raw = Array.isArray(data?.searchSets) ? data.searchSets : [];
     return raw
       .map((s) => ({
         code: s.code,

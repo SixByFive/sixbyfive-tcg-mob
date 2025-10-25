@@ -2,17 +2,18 @@
 import { useApolloClient, useMutation } from "@apollo/client";
 import {
   AddCardToBinderDocument,
-  BinderDocument,
   BrowseBindersDocument,
   CreateBinderDocument,
   DeleteBinderDocument,
   MoveBinderSlotDocument,
-  MyBindersDocument,
   MyCollectionDocument,
   RemoveBinderSlotDocument,
   SaveBinderPagesAndSlotsDocument,
   UpdateBinderDocument,
 } from "@sixbyfive/tcg-binder/client";
+import { BINDER_SAFE, MY_BINDERS_SAFE } from "../graphql/binders-temp";
+import { useCallback } from "react";
+import useToast from "./useToast";
 
 /* ----------------------------- debug helpers ----------------------------- */
 
@@ -74,13 +75,16 @@ function layoutFromRowsCols(rows, cols) {
 
 /** Extract a usable card id (actual `cards.id` = code like "sv05-052") from a slot shape */
 function slotCardId(s) {
-  const id =
-    s?.cardId ||
-    s?.card?.code ||
-    s?.card?.id ||
-    s?.cardCode ||
+  // accept a wide range of shapes; NEVER assume a `card` object exists
+  const c =
+    s?.cardId ??
+    s?.cardCode ??
+    s?.card_id ??
+    s?.card?.code ??
+    s?.card?.id ??
     (typeof s?.id === "string" && (s.id.match(/-/g) || []).length === 1 ? s.id : null);
-  return id ? String(id) : null;
+
+  return c ? String(c) : null;
 }
 
 /** Unique + in-range positions; drop overflow if needed */
@@ -89,7 +93,7 @@ function normalizePositions(slots, capacity) {
   const cleaned = [];
 
   for (const s of slots) {
-    if (!s?.cardId) continue;
+    if (!s || !s.cardId) continue;
     let pos = Number(s.position);
     if (!Number.isFinite(pos)) continue;
     pos = Math.max(1, Math.min(capacity, pos));
@@ -135,21 +139,29 @@ const CODE_RE = /^[a-z]{2,4}\d{1,4}-[0-9a-z]{2,6}$/i;
 
 function coerceCardCodeFromCache(apollo, v) {
   const s = String(v || "");
-  if (CODE_RE.test(s)) return s;
-  if (!UUID_RE.test(s)) return s;
+  if (CODE_RE.test(s)) return s; // already like "sv05-052"
+  if (!UUID_RE.test(s)) return s; // not a UUID → pass through
   try {
     const data = apollo.readQuery({ query: MyCollectionDocument });
     const arr =
-      (data?.myCollection?.edges?.map(e => e?.node).filter(Boolean)) ||
-      data?.myCollection || data?.collection || [];
+      (data?.myCollection?.edges?.map((e) => e?.node).filter(Boolean)) ||
+      data?.myCollection ||
+      data?.collection ||
+      [];
     for (const row of arr) {
       if (String(row?.id) === s) {
         const code =
-          row?.card?.code || row?.code || row?.cardCode || row?.cardId;
+          row?.card?.code ||
+          row?.card?.id || // some schemas store code in id
+          row?.code ||
+          row?.cardCode ||
+          row?.cardId;
         if (code && CODE_RE.test(String(code))) return String(code);
       }
     }
-  } catch {}
+  } catch {
+    // cache miss is fine
+  }
   return s;
 }
 
@@ -180,17 +192,15 @@ function buildPagesPayload(binder, patch) {
       for (let i = 0; i < slotsArr.length; i++) {
         const s = slotsArr[i];
         if (!s) continue;
-        const cId = slotCardId(s);
-        if (!cId) continue;
+        const code = slotCardId(s);
+        if (!code) continue;
 
         const pos =
-          Number.isFinite(s?.position) && Number(s.position) > 0
-            ? Number(s.position)
-            : i + 1;
+          Number.isFinite(s?.position) && Number(s.position) > 0 ? Number(s.position) : i + 1;
 
         slots.push({
           ...(s?.id ? { id: sid(s.id) } : {}),
-          cardId: sid(cId),
+          cardId: sid(code),
           position: pos, // 1-based for server
           quantity: isFiniteNum(s?.quantity) ? Number(s.quantity) : 1,
           ...(s?.notes ? { notes: s.notes } : {}),
@@ -200,7 +210,8 @@ function buildPagesPayload(binder, patch) {
       // Optional patch → add one card into the correct page
       const matchesPatchById = patch?.pageId && sid(patch.pageId) === sid(p.id);
       const matchesPatchByIndex =
-        !patch?.pageId && Number(patch?.pageIndex) === (Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx);
+        !patch?.pageId &&
+        Number(patch?.pageIndex) === (Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx);
 
       if (patch && (matchesPatchById || matchesPatchByIndex)) {
         slots.push({
@@ -215,7 +226,8 @@ function buildPagesPayload(binder, patch) {
 
       return {
         id: sid(p.id),
-        title: p?.title ?? `Page ${(Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx) + 1}`,
+        title:
+          p?.title ?? `Page ${(Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx) + 1}`,
         layout,
         pageOrder: Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx,
         slots: saneSlots,
@@ -243,9 +255,7 @@ function buildPagesPayloadWithNewLayout(binder, newLayoutKey) {
             ...(s?.id ? { id: sid(s.id) } : {}),
             cardId: sid(slotCardId(s) || ""),
             position:
-              Number.isFinite(s?.position) && Number(s.position) > 0
-                ? Number(s.position)
-                : i + 1,
+              Number.isFinite(s?.position) && Number(s.position) > 0 ? Number(s.position) : i + 1,
             quantity: isFiniteNum(s?.quantity) ? Number(s.quantity) : 1,
             ...(s?.notes ? { notes: s.notes } : {}),
           })),
@@ -254,7 +264,8 @@ function buildPagesPayloadWithNewLayout(binder, newLayoutKey) {
 
       return {
         id: sid(p.id),
-        title: p?.title ?? `Page ${(Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx) + 1}`,
+        title:
+          p?.title ?? `Page ${(Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx) + 1}`,
         layout: newLayoutKey,
         pageOrder: Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx,
         slots: saneSlots,
@@ -270,21 +281,22 @@ export default function useBinderActions() {
   const [createBinderMut] = useMutation(CreateBinderDocument);
   const [updateBinderMut] = useMutation(UpdateBinderDocument);
   const [deleteBinderMut] = useMutation(DeleteBinderDocument);
-  const [savePagesMut]    = useMutation(SaveBinderPagesAndSlotsDocument);
-  const [addCardMut]      = useMutation(AddCardToBinderDocument);
-  const [moveSlotMut]     = useMutation(MoveBinderSlotDocument);
-  const [removeSlotMut]   = useMutation(RemoveBinderSlotDocument);
+  const [savePagesMut] = useMutation(SaveBinderPagesAndSlotsDocument);
+  const [addCardMut] = useMutation(AddCardToBinderDocument);
+  const [moveSlotMut] = useMutation(MoveBinderSlotDocument);
+  const [removeSlotMut] = useMutation(RemoveBinderSlotDocument);
 
+  /** keep browse/my lists fresh after meta changes */
   function upsertBinderListCache(binder) {
     try {
-      const mine = apollo.readQuery({ query: MyBindersDocument });
+      const mine = apollo.readQuery({ query: MY_BINDERS_SAFE });
       const list = mine?.myBinders;
       if (Array.isArray(list)) {
         const exists = list.some((b) => sid(b.id) === sid(binder.id));
         const myBinders = exists
           ? list.map((b) => (sid(b.id) === sid(binder.id) ? { ...b, ...binder } : b))
           : [binder, ...list];
-        apollo.writeQuery({ query: MyBindersDocument, data: { myBinders } });
+        apollo.writeQuery({ query: MY_BINDERS_SAFE, data: { myBinders } });
       }
     } catch {}
     try {
@@ -296,9 +308,15 @@ export default function useBinderActions() {
           ? root.map((b) => (sid(b.id) === sid(binder.id) ? { ...b, ...binder } : b))
           : [binder, ...root];
         if (browse?.browseBinders) {
-          apollo.writeQuery({ query: BrowseBindersDocument, data: { browseBinders: newList } });
+          apollo.writeQuery({
+            query: BrowseBindersDocument,
+            data: { browseBinders: newList },
+          });
         } else if (browse?.binders) {
-          apollo.writeQuery({ query: BrowseBindersDocument, data: { binders: newList } });
+          apollo.writeQuery({
+            query: BrowseBindersDocument,
+            data: { binders: newList },
+          });
         } else {
           apollo.writeQuery({ query: BrowseBindersDocument, data: newList });
         }
@@ -367,8 +385,9 @@ export default function useBinderActions() {
       (isFiniteNum(rows) && isFiniteNum(cols)) || (typeof templateId === "string" && templateId);
 
     if (wantsLayoutChange) {
-      const desiredLayout = (typeof templateId === "string" && templateId) || layoutFromRowsCols(rows, cols);
-      const cached = apollo.readQuery({ query: BinderDocument, variables: { id } });
+      const desiredLayout =
+        (typeof templateId === "string" && templateId) || layoutFromRowsCols(rows, cols);
+      const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id } });
       const binder = cached?.binder;
       if (binder) {
         const pagesPayload = buildPagesPayloadWithNewLayout(binder, desiredLayout);
@@ -387,10 +406,10 @@ export default function useBinderActions() {
       await deleteBinderMut({ variables: vars });
       // prune lists
       try {
-        const mine = apollo.readQuery({ query: MyBindersDocument });
+        const mine = apollo.readQuery({ query: MY_BINDERS_SAFE });
         if (mine?.myBinders) {
           apollo.writeQuery({
-            query: MyBindersDocument,
+            query: MY_BINDERS_SAFE,
             data: { myBinders: mine.myBinders.filter((b) => sid(b.id) !== id) },
           });
         }
@@ -401,9 +420,15 @@ export default function useBinderActions() {
         if (Array.isArray(root)) {
           const next = root.filter((b) => sid(b.id) !== id);
           if (browse?.browseBinders) {
-            apollo.writeQuery({ query: BrowseBindersDocument, data: { browseBinders: next } });
+            apollo.writeQuery({
+              query: BrowseBindersDocument,
+              data: { browseBinders: next },
+            });
           } else if (browse?.binders) {
-            apollo.writeQuery({ query: BrowseBindersDocument, data: { binders: next } });
+            apollo.writeQuery({
+              query: BrowseBindersDocument,
+              data: { binders: next },
+            });
           } else {
             apollo.writeQuery({ query: BrowseBindersDocument, data: next });
           }
@@ -421,7 +446,7 @@ export default function useBinderActions() {
    */
   async function addPage(binderId) {
     const id = sid(binderId);
-    const cached = apollo.readQuery({ query: BinderDocument, variables: { id } });
+    const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id } });
     const binder = cached?.binder;
     const pages = Array.isArray(binder?.pages) ? binder.pages : [];
     const layout = pages[0]?.layout || "pocket-9";
@@ -439,7 +464,7 @@ export default function useBinderActions() {
     try {
       const { data } = await savePagesMut({
         variables: { binderId: id, pages: payload },
-        refetchQueries: [{ query: BinderDocument, variables: { id } }],
+        refetchQueries: [{ query: BINDER_SAFE, variables: { id } }],
       });
       return data?.saveBinderPagesAndSlots ?? data?.binder ?? null;
     } catch (e) {
@@ -453,7 +478,7 @@ export default function useBinderActions() {
    */
   async function removePage(binderId, pageIndexOrId) {
     const id = sid(binderId);
-    const cached = apollo.readQuery({ query: BinderDocument, variables: { id } });
+    const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id } });
     const binder = cached?.binder;
     const pages = Array.isArray(binder?.pages) ? binder.pages : [];
     if (pages.length <= 1) {
@@ -504,11 +529,15 @@ export default function useBinderActions() {
     try {
       await savePagesMut({
         variables: { binderId: id, pages: payload },
-        refetchQueries: [{ query: BinderDocument, variables: { id } }],
+        refetchQueries: [{ query: BINDER_SAFE, variables: { id } }],
       });
       return true;
     } catch (e) {
-      logError("Binder/removePage", e, { id, pageIndexOrId, payloadSummary: summarizePagesPayload(payload) });
+      logError("Binder/removePage", e, {
+        id,
+        pageIndexOrId,
+        payloadSummary: summarizePagesPayload(payload),
+      });
       throw e;
     }
   }
@@ -519,7 +548,7 @@ export default function useBinderActions() {
     try {
       const { data } = await savePagesMut({
         variables: { binderId: id, pages },
-        refetchQueries: [{ query: BinderDocument, variables: { id } }],
+        refetchQueries: [{ query: BINDER_SAFE, variables: { id } }],
       });
       return data?.saveBinderPagesAndSlots ?? data?.binder ?? null;
     } catch (e) {
@@ -554,12 +583,13 @@ export default function useBinderActions() {
 
     if (!pid) {
       if (!bId) throw new Error("addCard requires pageId or binderId");
-      const cached = apollo.readQuery({ query: BinderDocument, variables: { id: bId } });
+      const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id: bId } });
       const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
       const p = pages[Number(pageIndex) || 0];
       if (!p?.id) throw new Error("Unable to resolve pageId from binder cache");
       pid = sid(p.id);
-      pos0 = isFiniteNum(slotIndex) ? Number(slotIndex) : (Array.isArray(p.slots) ? p.slots.length : 0);
+      pos0 =
+        isFiniteNum(slotIndex) ? Number(slotIndex) : Array.isArray(p.slots) ? p.slots.length : 0;
     }
     const pos1 = Number(pos0) + 1;
 
@@ -577,7 +607,7 @@ export default function useBinderActions() {
     try {
       const { data } = await addCardMut({
         variables: fastVars,
-        refetchQueries: bId ? [{ query: BinderDocument, variables: { id: bId } }] : undefined,
+        refetchQueries: bId ? [{ query: BINDER_SAFE, variables: { id: bId } }] : undefined,
       });
       const added = data?.addCardToBinder ?? null;
       log("[Binder/addCard fast] ok:", !!added);
@@ -586,28 +616,38 @@ export default function useBinderActions() {
       logError("Binder/addCard fast", e, { vars: fastVars });
 
       // Fallback — build FULL pages payload, patch the specific page by pageId.
-      const binderIdToUse = bId || (() => {
-        // If only pageId is known, scan cache for a binder that contains this page.
-        // Most editors already pass binderId; this is a best-effort fallback.
-        try {
-          const cache = apollo.readQuery({ query: BinderDocument, variables: { id: pid } });
-          return sid(cache?.binder?.id || "");
-        } catch {
+      // If binderId isn't provided, locate it by scanning cached binders for this pageId.
+      const binderIdToUse =
+        bId ||
+        (() => {
+          try {
+            const mine = apollo.readQuery({ query: MY_BINDERS_SAFE })?.myBinders || [];
+            for (const b of mine) {
+              try {
+                const cached = apollo.readQuery({
+                  query: BINDER_SAFE,
+                  variables: { id: sid(b.id) },
+                });
+                const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
+                if (pages.some((pg) => sid(pg?.id) === pid)) return sid(b.id);
+              } catch {}
+            }
+          } catch {}
           return "";
-        }
-      })();
+        })();
       if (!binderIdToUse) throw e;
 
-      const cachedBinder = apollo.readQuery({
-        query: BinderDocument,
-        variables: { id: binderIdToUse },
-      })?.binder;
+      const cachedBinder =
+        apollo.readQuery({
+          query: BINDER_SAFE,
+          variables: { id: binderIdToUse },
+        })?.binder || null;
       if (!cachedBinder) throw e;
 
       const patch = {
-        pageId: pid,              // target by pageId (more reliable than index)
-        pageIndex,                // kept for completeness; ignored when pageId present
-        slotIndex: pos0 || 0,     // UI 0-based
+        pageId: pid, // target by pageId (more reliable than index)
+        pageIndex, // kept for completeness; ignored when pageId present
+        slotIndex: pos0 || 0, // UI 0-based
         cardId: code,
         quantity: isFiniteNum(quantity) ? Number(quantity) : 1,
         notes,
@@ -621,7 +661,7 @@ export default function useBinderActions() {
       try {
         const { data } = await savePagesMut({
           variables: { binderId: binderIdToUse, pages: pagesPayload },
-          refetchQueries: [{ query: BinderDocument, variables: { id: binderIdToUse } }],
+          refetchQueries: [{ query: BINDER_SAFE, variables: { id: binderIdToUse } }],
         });
         const ok = data?.saveBinderPagesAndSlots ?? data?.binder ?? null;
         log("[Binder/addCard fallback] ok:", !!ok);
@@ -642,11 +682,11 @@ export default function useBinderActions() {
    */
   async function moveSlot({ binderId, fromPage, fromSlot, toPage, toSlot }) {
     const bId = sid(binderId);
-    const cached = apollo.readQuery({ query: BinderDocument, variables: { id: bId } });
+    const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id: bId } });
     const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
 
     const fromPg = pages[Number(fromPage) || 0];
-    const toPg   = pages[Number(toPage)   || 0];
+    const toPg = pages[Number(toPage) || 0];
 
     const slot = Array.isArray(fromPg?.slots) ? fromPg.slots[Number(fromSlot) || 0] : null;
     const slotId = slot?.id ? sid(slot.id) : null;
@@ -659,7 +699,7 @@ export default function useBinderActions() {
     try {
       await moveSlotMut({
         variables: vars,
-        refetchQueries: [{ query: BinderDocument, variables: { id: bId } }],
+        refetchQueries: [{ query: BINDER_SAFE, variables: { id: bId } }],
       });
       return true;
     } catch (e) {
@@ -671,10 +711,10 @@ export default function useBinderActions() {
   /** Remove a slot (resolve id from page/slot index) */
   async function removeSlot({ binderId, pageIndex, slotIndex }) {
     const bId = sid(binderId);
-    const cached = apollo.readQuery({ query: BinderDocument, variables: { id: bId } });
+    const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id: bId } });
     const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
-    const page  = pages[Number(pageIndex) || 0];
-    const slot  = Array.isArray(page?.slots) ? page.slots[Number(slotIndex) || 0] : null;
+    const page = pages[Number(pageIndex) || 0];
+    const slot = Array.isArray(page?.slots) ? page.slots[Number(slotIndex) || 0] : null;
 
     const slotId = slot?.id ? sid(slot.id) : null;
     if (!slotId) throw new Error("Unable to resolve slotId from cache");
@@ -684,7 +724,7 @@ export default function useBinderActions() {
     try {
       await removeSlotMut({
         variables: vars,
-        refetchQueries: [{ query: BinderDocument, variables: { id: bId } }],
+        refetchQueries: [{ query: BINDER_SAFE, variables: { id: bId } }],
       });
       return true;
     } catch (e) {

@@ -10,7 +10,7 @@ import PageHeaderBackSimple from "../../../components/common/PageHeaderBackSimpl
 import { COLORS } from "../../../theme/colors";
 
 // GraphQL
-import { BinderDocument } from "@sixbyfive/tcg-binder/client";
+import { BINDER_SAFE } from "../../../graphql/binders-temp";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -27,22 +27,17 @@ function rcFromLayoutId(layoutId) {
   return TEMPLATES[layoutId] || fallbackRC;
 }
 
-// server slot -> UI slot (read-only)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const looksLikeCode = (v) => typeof v === "string" && v.includes("-") && !UUID_RE.test(v);
+
 function toUiSlot(slot) {
   if (!slot) return null;
-  const c = slot.card ?? slot.item ?? slot;
-  const id = String(c?.id ?? slot?.id ?? "");
-  const name = c?.name ?? slot?.name ?? "";
-  const image =
-    c?.image ??
-    c?.thumbnail ??
-    c?.thumb ??
-    c?.images?.small ??
-    c?.images?.thumb ??
-    slot?.image ??
-    "";
-  if (!id && !image) return null;
-  return { id, image, label: name };
+  const rawCode = slot?.cardId ?? (looksLikeCode(slot?.id) ? slot.id : null);
+  const code = rawCode ? String(rawCode) : null;
+  const id = code || (slot?.id ? String(slot.id) : "");
+  if (!id) return null;
+  const label = slot?.label || slot?.name || (code ? code.toUpperCase() : "");
+  return { id, code, cardId: code, image: "", label };
 }
 
 function mapBinderToPagesUI(binder) {
@@ -66,7 +61,7 @@ export default function BinderViewer() {
   const binderId = String(id || "");
   const listRef = useRef(null);
 
-  const { data, loading, error } = useQuery(BinderDocument, {
+  const { data, loading, error } = useQuery(BINDER_SAFE, {
     variables: { id: binderId },
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,

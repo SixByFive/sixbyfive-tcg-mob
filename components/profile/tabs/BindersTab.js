@@ -4,13 +4,10 @@ import { router } from "expo-router";
 import React, { useCallback, useMemo } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
-import {
-  BrowseBindersDocument,
-  MeDocument,
-  MyBindersDocument,
-} from "@sixbyfive/tcg-binder/client";
+import { BrowseBindersDocument, MeDocument } from "@sixbyfive/tcg-binder/client";
 import { COLORS } from "../../../theme/colors";
 import RecentBinders from "../ProfileRecentBinders";
+import { MY_BINDERS_SAFE } from "../../../graphql/binders-temp";
 
 /* ---------------- helpers ---------------- */
 
@@ -38,7 +35,14 @@ const countCardsFromPages = (pages) => {
   let total = 0;
   for (const p of pages) {
     const slots = Array.isArray(p?.slots) ? p.slots : [];
-    total += slots.filter((s) => s && (s.cardId || s.card?.id)).length;
+    for (const slot of slots) {
+      if (!slot) continue;
+      const hasCard =
+        (typeof slot.cardId === "string" && slot.cardId) || slot?.card?.id || slot?.card?.cardId;
+      if (!hasCard) continue;
+      const qty = Number(slot?.quantity);
+      total += Number.isFinite(qty) && qty > 0 ? qty : 1;
+    }
   }
   return total;
 };
@@ -112,8 +116,8 @@ export default function BindersTab({
   // 3) mine (fallback)
   const shouldFetchMine = fromProp.length === 0 && (!userId || (userId && fromBrowse.length === 0));
   const { data: myData, loading: loadingMine, error: myError } = useQuery(
-    MyBindersDocument,
-    { variables: userId ? { userId, page: 1, pageSize } : { page: 1, pageSize }, skip: !shouldFetchMine, fetchPolicy: "cache-and-network", notifyOnNetworkStatusChange: true }
+    MY_BINDERS_SAFE,
+    { skip: !shouldFetchMine, fetchPolicy: "cache-and-network", notifyOnNetworkStatusChange: true }
   );
   const fromMine = useMemo(() => normalizeBindersInput(myData?.myBinders ?? myData ?? []), [myData]);
 

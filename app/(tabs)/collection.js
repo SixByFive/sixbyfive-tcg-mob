@@ -1,4 +1,10 @@
-import { useApolloClient, useMutation, useQuery } from "@apollo/client";
+// app/(tabs)/collection.js
+// CHANGED: Use shared set-name resolver so set names show immediately.
+// CHANGED: Wishlist displays placeholders (id-based image + setName) until hydration completes.
+// CHANGED: Keep TCGdex-first image fallback and pass resolved setName/image to tiles/routes.
+// CHANGED: Normalize binders (name/color/cards/pages) and pass normalized list to BinderGrid.
+
+import { gql, useApolloClient, useMutation, useQuery } from "@apollo/client";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -26,16 +32,138 @@ import { filterBinders } from "../../utils/collectionFilters";
 
 import {
   CardByIdDocument,
-  MyBindersDocument,
-  MyCollectionDocument,
   RemoveFromCollectionDocument,
-  SearchCardsDocument,
   UpdateCollectionEntryDocument,
-  WishlistDocument,
 } from "@sixbyfive/tcg-binder/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import { MY_BINDERS_SAFE } from "../../graphql/binders-temp";
 
-/* ---------------- small helpers ---------------- */
+// Shared set-name resolver (also used by Cards/Wishlist tabs)
+import { resolveSetNameForCardlike } from "../../utils/setNames";
+
+/* ---------------- GraphQL (INLINE, schema-safe) ---------------- */
+
+const MY_COLLECTION_APP = gql`
+  query MyCollectionApp {
+    myCollection {
+      id
+      cardId
+      quantity
+      variation
+      condition
+      wishlist
+      card {
+        id
+        name
+        number
+        image
+        rarity
+        setName
+      }
+    }
+  }
+`;
+
+const MY_WISHLIST = gql`
+  query MyWishlist {
+    myWishlist {
+      total
+      entries {
+        id
+        cardId
+        variation
+        card {
+          id
+          name
+          number
+          image
+          setName
+        }
+      }
+    }
+  }
+`;
+
+/* ---------------- debug logger (dev-only) ---------------- */
+const debugLog = (...args) => {
+  if (__DEV__) console.log("[CollectionTab]", ...args);
+};
+
+/* ---------------- id + image helpers ---------------- */
+
+function forceHttps(url) {
+  if (!url || typeof url !== "string") return null;
+  return url.replace(/^http:\/\//i, "https://");
+}
+function isAbs(url) {
+  return /^https?:\/\//i.test(url || "");
+}
+function normalizeSetCode(code) {
+  if (!code) return "";
+  return String(code).trim().toLowerCase().replace(/\s+/g, "");
+}
+function inferEraFromSetCode(code) {
+  const c = normalizeSetCode(code);
+  if (!c) return null;
+  const m = c.match(/^[a-z]+/);
+  return m ? m[0] : null; // "sv" from "sv05"
+}
+function parseCardId(id) {
+  if (typeof id !== "string") return { setCode: null, number: null };
+  const parts = id.split("-");
+  if (parts.length < 2) return { setCode: null, number: null };
+  const setCode = parts[0]?.trim() || null;
+  const numberRaw = parts.slice(1).join("-").trim();
+  const number = numberRaw || null;
+  return { setCode, number };
+}
+function tcgdexFromParts(setCode, number, era = null, quality = "high") {
+  if (!setCode || !number) return null;
+  const eraSlug = (era || inferEraFromSetCode(setCode) || "")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+  const numPadded = String(number).replace(/^0+/, "").padStart(3, "0");
+  if (!eraSlug) return null;
+  return `https://assets.tcgdex.net/en/${eraSlug}/${setCode}/${numPadded}/${quality}.webp`;
+}
+function pokemontcgFromParts(setCode, number, hires = true) {
+  if (!setCode || !number) return null;
+  const n = String(number).replace(/^0+/, "");
+  const suffix = hires ? "_hires" : "";
+  return `https://images.pokemontcg.io/${setCode}/${n}${suffix}.png`;
+}
+function buildImageCandidates(cardish) {
+  const out = [];
+  const raw = cardish?.image;
+  if (raw && isAbs(raw)) out.push(forceHttps(raw));
+
+  const parsed = parseCardId(cardish?.id || cardish?.cardId || cardish?._collection?.cardId || "");
+  if (parsed.setCode && parsed.number) {
+    const era = inferEraFromSetCode(parsed.setCode);
+    // TCGdex first
+    const dHigh = tcgdexFromParts(parsed.setCode, parsed.number, era, "high");
+    const dLow = tcgdexFromParts(parsed.setCode, parsed.number, era, "low");
+    if (dHigh) out.push(dHigh);
+    if (dLow) out.push(dLow);
+    // then PokemonTCG
+    const pHires = pokemontcgFromParts(parsed.setCode, parsed.number, true);
+    const pStd = pokemontcgFromParts(parsed.setCode, parsed.number, false);
+    if (pHires) out.push(pHires);
+    if (pStd) out.push(pStd);
+  }
+  const seen = new Set();
+  const list = out.filter((u) => {
+    const k = String(u || "");
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const tcgdexFirst =
+    list.find((u) => u.includes("assets.tcgdex.net")) || list[0] || "";
+  return [tcgdexFirst, ...list.filter((u) => u !== tcgdexFirst)];
+}
+
+/* ---------------- misc helpers ---------------- */
 
 function normalizePrice(p) {
   if (!p || typeof p !== "object") return p;
@@ -50,8 +178,6 @@ function normalizePricesArray(arr) {
   if (!Array.isArray(arr)) return [];
   return arr.map(normalizePrice);
 }
-
-// very forgiving array reader
 function toArray(input) {
   if (!input) return [];
   if (Array.isArray(input)) return input;
@@ -84,25 +210,7 @@ function readWishlistServerTotal(root) {
   return Number(n) || 0;
 }
 
-/* ---------------- search helpers ---------------- */
-
-function readCardsFromSearch(data) {
-  if (!data) return [];
-  if (Array.isArray(data.searchCards)) return data.searchCards;
-  if (Array.isArray(data.cards)) return data.cards;
-  if (Array.isArray(data.results)) return data.results;
-  const conn = data.searchCardsConnection;
-  if (conn?.edges && Array.isArray(conn.edges)) return conn.edges.map((e) => e?.node).filter(Boolean);
-  if (conn?.nodes && Array.isArray(conn.nodes)) return conn.nodes;
-  return [];
-}
-function toCardIdMap(list) {
-  const map = new Map();
-  for (const c of list || []) if (c?.id) map.set(String(c.id), c);
-  return map;
-}
-
-/* ---------------- UI: subtle, full-width Create Binder banner ---------------- */
+/* ---------------- UI ---------------- */
 
 function CreateBinderBanner({ onPress }) {
   return (
@@ -132,7 +240,7 @@ export default function CollectionTab() {
   const toast = useToast();
   const apollo = useApolloClient();
 
-  const [segment, setSegment] = useState("binders"); // show binders first
+  const [segment, setSegment] = useState("binders");
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
@@ -161,12 +269,20 @@ export default function CollectionTab() {
     error: collError,
     refetch: refetchCollection,
     networkStatus: collNS,
-    client,
-  } = useQuery(MyCollectionDocument, {
-    variables: { userId },
+  } = useQuery(MY_COLLECTION_APP, {
     skip: !userId,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
+    onError: (err) => {
+      if (__DEV__) {
+        console.warn("[CollectionTab] myCollection GraphQL error", {
+          message: err.message,
+          graphQLErrors: err.graphQLErrors?.map((e) => e.message),
+          networkError: err.networkError?.message || err.networkError,
+          statusCode: err?.networkError?.statusCode || 400,
+        });
+      }
+    },
   });
 
   const {
@@ -175,11 +291,20 @@ export default function CollectionTab() {
     error: bindersError,
     refetch: refetchBinders,
     networkStatus: bindersNS,
-  } = useQuery(MyBindersDocument, {
-    variables: userId ? { userId, page: 1, pageSize: 50 } : { page: 1, pageSize: 50 },
-    skip: false,
+  } = useQuery(MY_BINDERS_SAFE, {
+    skip: !userId,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
+    onError: (err) => {
+      if (__DEV__) {
+        console.warn("[CollectionTab] myBinders GraphQL error", {
+          message: err.message,
+          graphQLErrors: err.graphQLErrors?.map((e) => e.message),
+          networkError: err.networkError?.message || err.networkError,
+          statusCode: err?.networkError?.statusCode,
+        });
+      }
+    },
   });
 
   const {
@@ -188,39 +313,74 @@ export default function CollectionTab() {
     error: wishlistError,
     refetch: refetchWishlist,
     networkStatus: wishlistNS,
-    client: wishlistClient,
-  } = useQuery(WishlistDocument, {
-    variables: { userId, page: 1, pageSize: 200 },
+  } = useQuery(MY_WISHLIST, {
     skip: !userId,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
+    onError: (err) => {
+      if (__DEV__) {
+        console.warn("[CollectionTab] myWishlist GraphQL error", {
+          message: err.message,
+          graphQLErrors: err.graphQLErrors?.map((e) => e.message),
+          networkError: err.networkError?.message || err.networkError,
+          statusCode: err?.networkError?.statusCode || 400,
+        });
+      }
+    },
   });
 
   /* -------- derived: collection cards -------- */
 
-  const myCollection = useMemo(
-    () => (Array.isArray(collData?.myCollection) ? collData.myCollection : []),
-    [collData?.myCollection]
-  );
+  const myCollection = useMemo(() => {
+    if (!collData) return [];
+    if (Array.isArray(collData.myCollection)) return collData.myCollection;
+    if (collData.myCollection) return toArray(collData.myCollection);
+    return toArray(collData);
+  }, [collData]);
+
+  useEffect(() => {
+    if (!collData) return;
+    const preview =
+      Array.isArray(collData?.myCollection) && collData.myCollection.length
+        ? collData.myCollection.slice(0, 1)
+        : collData?.myCollection;
+    debugLog("collection raw payload", {
+      keys: Object.keys(collData || {}),
+      hasMyCollection: !!collData?.myCollection,
+      preview,
+    });
+  }, [collData]);
 
   const collectionCards = useMemo(() => {
     return myCollection
       .map((entry) => {
         const card = entry?.card ?? null;
         if (!card) return null;
+
         const prices = Array.isArray(card?.prices)
           ? normalizePricesArray(card.prices)
           : Array.isArray(card?.pricing)
           ? normalizePricesArray(card.pricing)
           : [];
+
+        // Resolve set name immediately (from card payload OR id fallback)
+        const resolvedSetName = resolveSetNameForCardlike({
+          id: card?.id ?? entry?.cardId,
+          setName: card?.setName,
+          set: card?.set,
+        });
+
+        // Robust image (prefer TCGdex)
+        const candidates = buildImageCandidates({ id: card?.id ?? entry?.cardId, image: card?.image });
+        const displayImage = candidates[0] || card?.image || "";
+
         return {
           id: card.id,
           name: card.name,
-          set: card.set,
-          setName: card.setName,
           number: card.number,
-          image: card.image,
+          image: displayImage,
           rarity: card.rarity,
+          setName: resolvedSetName,
           prices,
           _collection: {
             entryId: entry.id,
@@ -234,26 +394,190 @@ export default function CollectionTab() {
       .filter(Boolean);
   }, [myCollection]);
 
-  /* -------- derived: binders (just pass the raw list; grid will hydrate) -------- */
+  const collectionCardsCount = Array.isArray(collectionCards) ? collectionCards.length : 0;
+
+  useEffect(() => {
+    debugLog("collection query state", {
+      loading: collLoading,
+      networkStatus: collNS,
+      entries: collectionCardsCount,
+    });
+  }, [collLoading, collNS, collectionCardsCount]);
+
+  /* -------- derived: binders -------- */
 
   const rawBindersList = useMemo(() => {
-    const root = (!bindersData || Array.isArray(bindersData)) ? bindersData : (
-      bindersData.myBinders ?? bindersData.binders ?? bindersData.items ?? bindersData.results ??
-      bindersData.edges ?? bindersData.nodes ?? bindersData.data ?? bindersData.list ?? bindersData
-    );
+    const root =
+      !bindersData || Array.isArray(bindersData)
+        ? bindersData
+        : bindersData.myBinders ??
+          bindersData.binders ??
+          bindersData.items ??
+          bindersData.results ??
+          bindersData.edges ??
+          bindersData.nodes ??
+          bindersData.data ??
+          bindersData.list ??
+          bindersData;
     return toArray(root);
   }, [bindersData]);
 
-  const filteredBinders = useMemo(
-    () => filterBinders(rawBindersList, query),
-    [rawBindersList, query]
+  // Normalization so BinderGrid gets consistent fields (name/color/cards/pages)
+  const DEFAULT_BINDER_COVER = "#23243c";
+  const DEFAULT_BINDER_ACCENT = "#424a80";
+
+  const asNumber = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  function coerceColor(value, fallback = COLORS.alt) {
+    if (!value && value !== 0) return fallback;
+    const s = String(value).trim();
+    if (!s) return fallback;
+    if (/^[0-9a-f]{6}$/i.test(s)) return `#${s}`;
+    if (/^#[0-9a-f]{3,8}$/i.test(s)) return s;
+    return s;
+  }
+
+  function countCardsFromPages(pages) {
+    if (!Array.isArray(pages)) return 0;
+    let total = 0;
+    for (const page of pages) {
+      const slots = Array.isArray(page?.slots) ? page.slots : [];
+      for (const slot of slots) {
+        if (!slot) continue;
+        const hasCard =
+          (typeof slot.cardId === "string" && slot.cardId.trim()) ||
+          slot?.card?.id ||
+          slot?.card?.cardId;
+        if (!hasCard) continue;
+        const qty = Number(slot?.quantity);
+        total += Number.isFinite(qty) && qty > 0 ? qty : 1;
+      }
+    }
+    return total;
+  }
+
+  function normalizeBinder(b) {
+    if (!b) return null;
+    const id = b.id ?? b._id ?? b.uuid ?? b.key;
+    const name = b.name ?? b.title ?? b.label ?? "Binder";
+
+    const pagesArray =
+      Array.isArray(b.pages) ? b.pages :
+      Array.isArray(b.sheets) ? b.sheets :
+      Array.isArray(b.children) ? b.children :
+      null;
+    const pagesCount =
+      asNumber(b?.pagesCount) ??
+      asNumber(b?.pageCount) ??
+      asNumber(b?.numPages) ??
+      (pagesArray ? pagesArray.length : 0);
+
+    const cardsCount =
+      asNumber(b?.cardsCount) ??
+      asNumber(b?.cardCount) ??
+      asNumber(b?.totalCards) ??
+      asNumber(b?.count) ??
+      countCardsFromPages(pagesArray);
+
+    const coverColor = coerceColor(
+      b?.coverColor ??
+        b?.cover?.coverColor ??
+        b?.color ??
+        b?.colour ??
+        b?.colorHex ??
+        b?.colourHex ??
+        b?.themeColor ??
+        b?.theme,
+      DEFAULT_BINDER_COVER
+    );
+
+    const accentColor = coerceColor(
+      b?.accentColor ??
+        b?.cover?.accentColor ??
+        b?.spineColor ??
+        b?.highlightColor ??
+        b?.secondaryColor,
+      DEFAULT_BINDER_ACCENT
+    );
+
+    // Provide multiple aliases so any grid implementation can pick what it expects
+    return {
+      ...b,
+      id: id != null ? String(id) : undefined,
+      name,
+      title: name,
+      color: coverColor,
+      colour: coverColor,
+      colorHex: coverColor,
+      coverColor,
+      themeColor: coverColor,
+      accentColor,
+      cardsCount,
+      cardCount: cardsCount,
+      totalCards: cardsCount,
+      pagesCount,
+      pageCount: pagesCount,
+      numPages: pagesCount,
+      _stats: { cards: cardsCount, pages: pagesCount },
+    };
+  }
+
+  const normalizedBinders = useMemo(
+    () => rawBindersList.map(normalizeBinder).filter(Boolean),
+    [rawBindersList]
   );
+
+  const filteredBinders = useMemo(
+    () => filterBinders(normalizedBinders, query),
+    [normalizedBinders, query]
+  );
+  const filteredBindersCount = Array.isArray(filteredBinders) ? filteredBinders.length : 0;
+
+  useEffect(() => {
+    debugLog("binders query state", {
+      loading: bindersLoading,
+      networkStatus: bindersNS,
+      received: Array.isArray(rawBindersList) ? rawBindersList.length : 0,
+      filtered: filteredBindersCount,
+      query,
+    });
+  }, [bindersLoading, bindersNS, rawBindersList, filteredBindersCount, query]);
 
   /* -------- derived: wishlist -------- */
 
   const wishlistRoot = useMemo(() => readWishlistRoot(wishlistData), [wishlistData]);
   const wishlistRawList = useMemo(() => readWishlistList(wishlistRoot), [wishlistRoot]);
   const wishlistServerTotal = useMemo(() => readWishlistServerTotal(wishlistRoot), [wishlistRoot]);
+  const wishlistRawCount = Array.isArray(wishlistRawList) ? wishlistRawList.length : 0;
+
+  useEffect(() => {
+    if (!wishlistData) return;
+    const preview =
+      Array.isArray(wishlistRawList) && wishlistRawList.length
+        ? wishlistRawList.slice(0, 1)
+        : wishlistData?.myWishlist || wishlistData?.wishlist;
+    debugLog("wishlist raw payload", {
+      keys: Object.keys(wishlistData || {}),
+      hasMyWishlist: !!wishlistData?.myWishlist,
+      preview,
+    });
+  }, [wishlistData, wishlistRawList]);
+
+  const wishlistVariationMap = useMemo(() => {
+    const variationMap = new Map();
+    for (const it of wishlistRawList) {
+      const node = it?.node ?? it;
+      const card = node?.card ?? null;
+      const cid = card?.id ?? node?.cardId ?? node?.id ?? null;
+      if (!cid) continue;
+      const variation = typeof node?.variation === "string" ? node.variation : "normal";
+      variationMap.set(String(cid), variation);
+    }
+    return variationMap;
+  }, [wishlistRawList]);
 
   const allWishlistIds = useMemo(() => {
     const ids = new Set();
@@ -266,96 +590,220 @@ export default function CollectionTab() {
     return Array.from(ids);
   }, [wishlistRawList]);
 
-  /* -------- wishlist hydration (unchanged) -------- */
+  const pendingWishlistHydration = Array.isArray(allWishlistIds) ? allWishlistIds.length : 0;
 
-  const HYDRATE_BATCH = 50;
-  const hydrateIdsOnce = useCallback(
-    async (ids) => {
-      const missing = ids.filter((id) => !hydratedIdsRef.current.has(id) && !cardsByIdMap.has(id));
-      if (missing.length === 0) return;
-      const chunks = [];
-      for (let i = 0; i < missing.length; i += HYDRATE_BATCH) chunks.push(missing.slice(i, i + HYDRATE_BATCH));
-      setHydrating(true);
-      try {
-        for (const chunk of chunks) {
-          let cards = [];
-          const tryVars = [{ ids: chunk }, { where: { ids: chunk } }, { filter: { ids: chunk } }];
-          for (const v of tryVars) {
-            try {
-              const { data } = await apollo.query({
-                query: SearchCardsDocument,
-                variables: v,
-                fetchPolicy: "network-only",
-              });
-              const list = readCardsFromSearch(data);
-              if (list.length) {
-                cards = list;
-                break;
-              }
-            } catch {}
-          }
-          const gotMap = toCardIdMap(cards);
-          const gaps = chunk.filter((id) => !gotMap.has(id));
-          if (gaps.length) {
-            const singles = await Promise.all(
-              gaps.map((id) =>
-                apollo
-                  .query({
-                    query: CardByIdDocument,
-                    variables: { id },
-                    fetchPolicy: "network-only",
-                  })
-                  .then((r) => r?.data?.cardById || r?.data?.card || null)
-                  .catch(() => null)
-              )
-            );
-            for (const c of singles) if (c?.id) gotMap.set(String(c.id), c);
-          }
-          if (gotMap.size) {
-            setCardsByIdMap((prev) => {
-              const next = new Map(prev);
-              for (const [id, card] of gotMap) {
-                next.set(id, card);
-                hydratedIdsRef.current.add(id);
-              }
-              return next;
+  useEffect(() => {
+    debugLog("wishlist query state", {
+      loading: wishlistLoading,
+      networkStatus: wishlistNS,
+      entries: wishlistRawCount,
+      hydrated: cardsByIdMap.size,
+      pendingIds: pendingWishlistHydration,
+    });
+  }, [wishlistLoading, wishlistNS, wishlistRawCount, cardsByIdMap.size, pendingWishlistHydration]);
+
+  // Build a display list that shows immediately (hydrated, inline, or placeholder)
+  const wishlistDisplayItems = useMemo(() => {
+    const list = [];
+    for (const it of wishlistRawList) {
+      const node = it?.node ?? it;
+      const inline = node?.card ?? null;
+      const cid = inline?.id ?? node?.cardId ?? node?.id ?? null;
+      if (!cid) continue;
+      const key = String(cid);
+
+      const hydrated = cardsByIdMap.get(key);
+      if (hydrated) {
+        list.push(hydrated);
+        continue;
+      }
+
+      if (inline) {
+        const candidates = buildImageCandidates({ id: key, image: inline?.image });
+        const displayImage = candidates[0] || inline?.image || "";
+        const setName = resolveSetNameForCardlike({
+          id: key,
+          setName: inline?.setName,
+          set: inline?.set,
+        });
+        list.push({ ...inline, id: key, image: displayImage, setName });
+        continue;
+      }
+
+      const setName = resolveSetNameForCardlike({ id: key });
+      const candidates = buildImageCandidates({ id: key, image: null });
+      const displayImage = candidates[0] || "";
+      list.push({
+        id: key,
+        name: "Card",
+        image: displayImage,
+        setName,
+        number: undefined,
+        prices: [],
+        _wishlist: { variation: wishlistVariationMap.get(key) ?? "normal" },
+      });
+    }
+    return list;
+  }, [wishlistRawList, cardsByIdMap, wishlistVariationMap]);
+
+  useEffect(() => {
+    setCardsByIdMap((prev) => {
+      const next = new Map();
+      let changed = false;
+
+      for (const it of wishlistRawList) {
+        const node = it?.node ?? it;
+        const card = node?.card ?? null;
+        const cid = card?.id ?? node?.cardId ?? node?.id ?? null;
+        if (!cid) continue;
+        const key = String(cid);
+        const variation = wishlistVariationMap.get(key) ?? "normal";
+
+        if (card) {
+          // enhance: image + setName
+          hydratedIdsRef.current.add(key);
+          const candidates = buildImageCandidates({ id: key, image: card?.image });
+          const displayImage = candidates[0] || card?.image || "";
+          const setName = resolveSetNameForCardlike({
+            id: key,
+            setName: card?.setName,
+            set: card?.set,
+          });
+
+          const prevEntry = prev.get(key);
+          const enhanced = { ...card, image: displayImage, setName };
+
+          if (
+            prevEntry?.__sourceCard === card &&
+            prevEntry?._wishlist?.variation === variation
+          ) {
+            next.set(key, prevEntry);
+          } else {
+            next.set(key, {
+              ...enhanced,
+              _wishlist: { variation },
+              __sourceCard: card,
             });
+            changed = true;
+          }
+        } else if (prev.has(key)) {
+          const prevEntry = prev.get(key);
+          if ((prevEntry?._wishlist?.variation ?? "normal") !== variation) {
+            next.set(key, { ...prevEntry, _wishlist: { variation } });
+            changed = true;
+          } else {
+            next.set(key, prevEntry);
           }
         }
-      } finally {
-        setHydrating(false);
       }
-    },
-    [apollo, cardsByIdMap]
-  );
 
-  const kickHydration = useCallback(() => {
-    if (inFlightRef.current) return;
-    if (!allWishlistIds.length) return;
-    inFlightRef.current = true;
-    hydrateIdsOnce(allWishlistIds).finally(() => {
-      inFlightRef.current = false;
+      if (!changed) {
+        if (next.size !== prev.size) {
+          changed = true;
+        } else {
+          for (const [key, value] of next.entries()) {
+            if (prev.get(key) !== value) {
+              changed = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (changed) {
+        debugLog("wishlist map updated", {
+          total: next.size,
+          hydrated: hydratedIdsRef.current.size,
+        });
+      }
+
+      return changed ? next : prev;
     });
-  }, [allWishlistIds, hydrateIdsOnce]);
+  }, [wishlistRawList, wishlistVariationMap]);
+
+  /* -------- wishlist hydration (CardById only) -------- */
+
+  const hydrateMissingWishlistCards = useCallback(async () => {
+    if (inFlightRef.current) return;
+    const targets = allWishlistIds.filter(
+      (id) => !hydratedIdsRef.current.has(id) && !cardsByIdMap.has(id)
+    );
+    if (!targets.length) return;
+
+    inFlightRef.current = true;
+    setHydrating(true);
+    debugLog("wishlist hydrate start", { pending: targets.length });
+    try {
+      for (const id of targets) {
+        const variation = wishlistVariationMap.get(id) ?? "normal";
+        try {
+          const { data } = await apollo.query({
+            query: CardByIdDocument,
+            variables: { id },
+            fetchPolicy: "network-only",
+          });
+          const card = data?.card ?? data?.cardById ?? data?.Card ?? null;
+          if (card?.id) {
+            const candidates = buildImageCandidates({ id, image: card?.image });
+            const displayImage = candidates[0] || card?.image || "";
+            const setName = resolveSetNameForCardlike({
+              id,
+              setName: card?.setName,
+              set: card?.set,
+            });
+
+            hydratedIdsRef.current.add(id);
+            setCardsByIdMap((prev) => {
+              const next = new Map(prev);
+              next.set(id, {
+                ...card,
+                image: displayImage,
+                setName,
+                _wishlist: { variation },
+                __sourceCard: card,
+              });
+              return next;
+            });
+            debugLog("wishlist card hydrated", { id });
+          } else {
+            hydratedIdsRef.current.add(id);
+          }
+        } catch (err) {
+          if (__DEV__) {
+            console.warn("Failed to hydrate wishlist card", { err, id });
+          }
+        }
+      }
+    } finally {
+      setHydrating(false);
+      inFlightRef.current = false;
+      debugLog("wishlist hydrate complete", {
+        hydrated: hydratedIdsRef.current.size,
+        mapSize: cardsByIdMap.size,
+      });
+    }
+  }, [allWishlistIds, apollo, cardsByIdMap, wishlistVariationMap]);
 
   useEffect(() => {
     if (segment !== "wishlist") return;
-    kickHydration();
-  }, [segment, kickHydration]);
+    hydrateMissingWishlistCards();
+  }, [segment, hydrateMissingWishlistCards]);
 
   useEffect(() => {
-    if (segment !== "wishlist") return;
-    const missing = allWishlistIds.filter((id) => !hydratedIdsRef.current.has(id) && !cardsByIdMap.has(id));
-    if (missing.length) kickHydration();
-  }, [segment, allWishlistIds, cardsByIdMap, kickHydration]);
+    debugLog("segment changed", { segment });
+  }, [segment]);
 
   /* -------- stats -------- */
 
   const stats = {
-    cards: collectionCards.length,
-    binders: filteredBinders.length, // count what we show
-    wishlist: wishlistServerTotal,
+    cards: collectionCardsCount,
+    binders: filteredBindersCount, // use normalized & filtered count
+    wishlist: wishlistServerTotal || wishlistRawCount || cardsByIdMap.size,
   };
+
+  useEffect(() => {
+    debugLog("stats updated", stats);
+  }, [stats.cards, stats.binders, stats.wishlist]);
 
   const refetchCollectionSafe = useCallback(async () => {
     try {
@@ -454,10 +902,10 @@ export default function CollectionTab() {
   /* -------- per-segment loading/error -------- */
   const loadingBySegment =
     segment === "binders"
-      ? (bindersLoading && !bindersData)
+      ? bindersLoading && !bindersData
       : segment === "all"
-      ? (collLoading && !collData)
-      : (wishlistLoading && !wishlistData);
+      ? collLoading && !collData
+      : wishlistLoading && !wishlistData;
 
   const errorBySegment =
     segment === "binders" ? bindersError : segment === "all" ? collError : wishlistError;
@@ -466,23 +914,26 @@ export default function CollectionTab() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    debugLog("pull-to-refresh start");
     try {
       await Promise.allSettled([
         refetchCollection?.(),
         refetchBinders?.(),
-        refetchWishlist?.({ userId, page: 1, pageSize: 200 }),
+        refetchWishlist?.(),
       ]);
       hydratedIdsRef.current = new Set();
       setCardsByIdMap(new Map());
-      if (segment === "wishlist") kickHydration();
     } finally {
       setRefreshing(false);
+      debugLog("pull-to-refresh complete");
     }
-  }, [refetchCollection, refetchBinders, refetchWishlist, userId, segment, kickHydration]);
+  }, [refetchCollection, refetchBinders, refetchWishlist]);
 
   /* -------- render -------- */
 
-  const wishlistHasData = wishlistServerTotal > 0;
+  // Consider any of: total > 0, raw entries > 0, or hydrated map > 0
+  const wishlistHasData =
+    wishlistServerTotal > 0 || wishlistRawCount > 0 || cardsByIdMap.size > 0;
 
   return (
     <View style={styles.container}>
@@ -517,11 +968,9 @@ export default function CollectionTab() {
             />
           }
         >
-          {/* Subtle, full-width action matching search-bar height */}
           <CreateBinderBanner onPress={() => router.push("/binder/new")} />
-
-          {/* BinderGrid hydrates each tile with BinderDocument */}
           <BinderGrid
+            // pass normalized binders so name/color/cards/pages are present
             binders={filteredBinders}
             onCreate={() => router.push("/binder/new")}
             onOpen={(id) => router.push(`/binder/${id}`)}
@@ -548,6 +997,7 @@ export default function CollectionTab() {
               : Array.isArray(item?.pricing)
               ? item.pricing
               : [];
+
             return (
               <CollectionCardTile
                 item={item}
@@ -586,7 +1036,7 @@ export default function CollectionTab() {
           ) : null}
           <FlatList
             contentContainerStyle={styles.gridContent}
-            data={Array.from(cardsByIdMap.values())}
+            data={wishlistDisplayItems}
             keyExtractor={(item, idx) => (item?.id ? String(item.id) : `${idx}`)}
             numColumns={2}
             columnWrapperStyle={styles.column}
@@ -677,7 +1127,7 @@ const styles = StyleSheet.create({
   createBanner: {
     marginTop: 10,
     marginHorizontal: 12,
-    height: 44, // similar to a search bar height
+    height: 44,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: COLORS.border,

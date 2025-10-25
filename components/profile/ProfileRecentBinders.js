@@ -1,6 +1,4 @@
 // components/profile/RecentBinders.js
-import { useQuery } from "@apollo/client";
-import { BinderDocument } from "@sixbyfive/tcg-binder/client";
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import EmptyState from "../../components/common/EmptyState";
@@ -11,28 +9,32 @@ const formatDate = (d) => {
   if (!d) return "—";
   try { return new Date(d).toLocaleDateString(); } catch { return "—"; }
 };
+const toNumber = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
 const computeCardsFromPages = (pages) => {
   if (!Array.isArray(pages)) return 0;
-  let n = 0;
+  let total = 0;
   for (const p of pages) {
     const slots = Array.isArray(p?.slots) ? p.slots : [];
-    n += slots.filter((s) => s && (s.cardId || s.card?.id)).length;
+    for (const slot of slots) {
+      if (!slot) continue;
+      const hasCard =
+        (typeof slot.cardId === "string" && slot.cardId) || slot?.card?.id || slot?.card?.cardId;
+      if (!hasCard) continue;
+      const qty = Number(slot?.quantity);
+      total += Number.isFinite(qty) && qty > 0 ? qty : 1;
+    }
   }
-  return n;
+  return total;
 };
 
 /* ---------------- row (fetch + merge) ---------------- */
 function Row({ stub, onOpenBinder }) {
   const id = String(stub?.id ?? "");
-  const { data } = useQuery(BinderDocument, {
-    variables: { id },
-    fetchPolicy: "cache-first",         // hit cache if parent already fetched
-    notifyOnNetworkStatusChange: false,
-    skip: !id,
-  });
-
-  // prefer live data > stub
-  const b = data?.binder ?? stub ?? {};
+  const b = stub ?? {};
   const ownerId =
     (b?.userId && String(b.userId)) ||
     (stub?.userId && String(stub.userId)) ||
@@ -43,8 +45,7 @@ function Row({ stub, onOpenBinder }) {
   const accentColor = b?.accentColor || b?.cover?.accentColor || "#424a80";
   const updatedAt = b?.updatedAt;
 
-  const cardsCount =
-    typeof b?.cardsCount === "number" ? b.cardsCount : computeCardsFromPages(b?.pages);
+  const cardsCount = toNumber(b?.cardsCount) ?? computeCardsFromPages(b?.pages);
 
   return (
     <Pressable onPress={() => onOpenBinder?.(id, ownerId)} style={styles.itemRow}>

@@ -8,7 +8,6 @@ export { AddToWishlistDocument } from "@sixbyfive/tcg-binder/client";
 export { AuditLogCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";
 export { AuthPayloadCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";
 export { BinderCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";
-export { BinderDocument } from "@sixbyfive/tcg-binder/client";
 export { BinderPageCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";
 export { BinderPageResultCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";
 export { BinderSlotCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";

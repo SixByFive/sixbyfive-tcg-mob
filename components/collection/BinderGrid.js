@@ -1,11 +1,14 @@
-import { useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
-import { BinderDocument } from "@sixbyfive/tcg-binder/client";
 import React from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 
 /* ---------------- helpers ---------------- */
+
+const toNumber = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 
 const formatDate = (d) => {
   if (!d) return "—";
@@ -17,13 +20,17 @@ const computeCardsFromPages = (pages) => {
   let n = 0;
   for (const p of pages) {
     const slots = Array.isArray(p?.slots) ? p.slots : [];
-    n += slots.filter((s) => s && (s.cardId || s.card?.id)).length;
+    for (const slot of slots) {
+      if (!slot || typeof slot?.cardId !== "string" || !slot.cardId) continue;
+      const qty = Number(slot?.quantity);
+      n += Number.isFinite(qty) && qty > 0 ? qty : 1;
+    }
   }
   return n;
 };
 
-function mergeBinder(stub, live) {
-  const b = { ...(stub || {}), ...(live || {}) };
+function mergeBinder(stub) {
+  const b = { ...(stub || {}) };
 
   const id = String(b?.id ?? stub?.id ?? "");
   const name = (b?.name || b?.title || "Binder").trim();
@@ -31,22 +38,16 @@ function mergeBinder(stub, live) {
   const accentColor = b?.accentColor || b?.cover?.accentColor || "#424a80";
   const updatedAt = b?.updatedAt;
 
-  const pages = Array.isArray(b?.pages) ? b.pages : undefined;
+  const pages = Array.isArray(b?.pages) ? b.pages : [];
   const pagesCount =
-    typeof b?.pagesCount === "number"
-      ? b.pagesCount
-      : typeof b?.pageCount === "number"
-      ? b.pageCount
-      : pages
-      ? pages.length
-      : 0;
+    toNumber(b?.pagesCount) ??
+    toNumber(b?.pageCount) ??
+    (pages ? pages.length : 0);
 
   const cardsCount =
-    typeof b?.cardsCount === "number"
-      ? b.cardsCount
-      : typeof b?.cardCount === "number"
-      ? b.cardCount
-      : computeCardsFromPages(pages);
+    toNumber(b?.cardsCount) ??
+    toNumber(b?.cardCount) ??
+    computeCardsFromPages(pages);
 
   const coverImage = b?.coverImage || b?.cover?.image || null;
 
@@ -76,14 +77,8 @@ function ColorLegend({ cover, accent }) {
 /* ---------------- tile (hydrates itself) ---------------- */
 
 function HydratedTile({ stub, onOpen }) {
-  const id = String(stub?.id ?? "");
-  const { data } = useQuery(BinderDocument, {
-    variables: { id },
-    skip: !id,
-    fetchPolicy: "cache-first",
-  });
-
-  const merged = mergeBinder(stub, data?.binder);
+  const merged = mergeBinder(stub);
+  if (!merged?.id) return null;
 
   return (
     <Pressable

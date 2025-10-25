@@ -1,18 +1,42 @@
 // components/home/SnapshotCard.js
-// Live counts from queries with graceful fallbacks/overrides.
+// Live counts from inline queries with graceful fallbacks/overrides.
+// Mirrors OverviewTab logic, but uses schema-safe inline docs to avoid 400s.
 
 import React, { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 
-import { useQuery } from "@apollo/client";
-import {
-  MyBindersDocument,
-  MyCollectionDocument,
-  MyWishlistDocument, // ← correct doc name
-} from "@sixbyfive/tcg-binder/client";
+import { gql, useQuery } from "@apollo/client";
 
-/* wishlist helpers */
+// --- Inline, minimal docs (avoid problematic package docs) ---
+const MY_COLLECTION_MIN = gql`
+  query MyCollection_Min {
+    myCollection {
+      id
+    }
+  }
+`;
+
+const MY_WISHLIST_MIN = gql`
+  query MyWishlist_Min($page: Int, $pageSize: Int) {
+    myWishlist(page: $page, pageSize: $pageSize) {
+      total
+      entries {
+        id
+      }
+    }
+  }
+`;
+
+const MY_BINDERS_DOC = gql`
+  query MyBinders_Min {
+    myBinders {
+      id
+    }
+  }
+`;
+
+/* wishlist helpers (same as OverviewTab) */
 function wlRoot(data) {
   return data?.myWishlist ?? data?.wishlist ?? {};
 }
@@ -42,26 +66,29 @@ export default function SnapshotCard({
   bindersCount,
   wishlistCount,
 }) {
-  // 🔄 Always query for the signed-in user on the home snapshot
-  const { data: colData } = useQuery(MyCollectionDocument, {
+  // Always query for the signed-in user on the home snapshot
+  const { data: colData } = useQuery(MY_COLLECTION_MIN, {
     fetchPolicy: "cache-and-network",
     nextFetchPolicy: "cache-first",
     notifyOnNetworkStatusChange: true,
   });
-  const { data: bindersData } = useQuery(MyBindersDocument, {
+  const { data: bindersData } = useQuery(MY_BINDERS_DOC, {
     fetchPolicy: "cache-and-network",
     nextFetchPolicy: "cache-first",
     notifyOnNetworkStatusChange: true,
   });
-  const { data: wlData } = useQuery(MyWishlistDocument, {
+  const { data: wlData } = useQuery(MY_WISHLIST_MIN, {
+    variables: { page: 1, pageSize: 1 }, // we only need total; tiny page for safety
     fetchPolicy: "cache-and-network",
     nextFetchPolicy: "cache-first",
     notifyOnNetworkStatusChange: true,
   });
 
   const { cards, binders, wishlist } = useMemo(() => {
-    const has = (v) => typeof v === "number" && !Number.isNaN(v);
+    const hasNum = (v) => typeof v === "number" && !Number.isNaN(v);
 
+    // EXACT match to OverviewTab semantics:
+    // only trust counts if GraphQL returned arrays (or "total" for wishlist).
     const cardsFromQ = Array.isArray(colData?.myCollection)
       ? colData.myCollection.length
       : undefined;
@@ -73,6 +100,7 @@ export default function SnapshotCard({
     const root = wlRoot(wlData);
     const wishlistFromQ = wlTotal(root, wlList(root).length);
 
+    // Fallbacks from user.stats
     const stats = user?.stats ?? {};
     const cardsFromUser = Number(stats.totalCards ?? stats.cards ?? 0) || 0;
     const bindersFromUser = Number(stats.binders ?? 0) || 0;
@@ -80,22 +108,28 @@ export default function SnapshotCard({
 
     return {
       cards:
-        (has(cardsCount) ? cardsCount : undefined) ??
-        (has(cardsFromQ) ? cardsFromQ : undefined) ??
+        (hasNum(cardsCount) ? cardsCount : undefined) ??
+        (hasNum(cardsFromQ) ? cardsFromQ : undefined) ??
         cardsFromUser,
       binders:
-        (has(bindersCount) ? bindersCount : undefined) ??
-        (has(bindersFromQ) ? bindersFromQ : undefined) ??
+        (hasNum(bindersCount) ? bindersCount : undefined) ??
+        (hasNum(bindersFromQ) ? bindersFromQ : undefined) ??
         bindersFromUser,
       wishlist:
-        (has(wishlistCount) ? wishlistCount : undefined) ??
-        (has(wishlistFromQ) ? wishlistFromQ : undefined) ??
+        (hasNum(wishlistCount) ? wishlistCount : undefined) ??
+        (hasNum(wishlistFromQ) ? wishlistFromQ : undefined) ??
         wishlistFromUser,
     };
   }, [cardsCount, bindersCount, wishlistCount, user, colData, bindersData, wlData]);
 
-  const show = (n) =>
-    loading && !user ? "…" : Intl.NumberFormat().format(Number(n || 0));
+  const fmt = (n) => {
+    try {
+      return new Intl.NumberFormat().format(Number(n || 0));
+    } catch {
+      return String(n ?? 0);
+    }
+  };
+  const show = (n) => (loading && !user ? "…" : fmt(n));
 
   return (
     <View style={styles.card}>

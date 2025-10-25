@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Dimensions, FlatList, StyleSheet, Text, View } from "react-native";
 
-import { BinderDocument } from "@sixbyfive/tcg-binder/client";
+import { BINDER_SAFE } from "../../../graphql/binders-temp";
 import BinderGrid from "../../../components/binders/BinderGrid";
 import PagePager from "../../../components/binders/PagePager";
 import PageHeaderBackSimple from "../../../components/common/PageHeaderBackSimple";
@@ -22,21 +22,19 @@ const LAYOUT_SIZES = {
 const sizeFor = (layout) => LAYOUT_SIZES[String(layout || "").toLowerCase()] || { rows: 3, cols: 3 };
 
 /* ---------- slot mapping ---------- */
+/* ---------- slot mapping (robust, no bare `card`) ---------- */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const looksLikeCode = (v) => typeof v === "string" && v.includes("-") && !UUID_RE.test(v);
+
+/** Server slot → UI slot */
 function toUiSlot(slot) {
   if (!slot) return null;
-  const c = slot.card ?? slot.item ?? slot;
-  const id = String(c?.id ?? slot?.id ?? "");
-  const name = c?.name ?? slot?.name ?? "";
-  const image =
-    c?.image ??
-    c?.thumbnail ??
-    c?.thumb ??
-    c?.images?.small ??
-    c?.images?.thumb ??
-    slot?.image ??
-    "";
-  if (!id && !image) return null;
-  return { id, image, label: name };
+  const rawCode = slot?.cardId ?? (looksLikeCode(slot?.id) ? slot.id : null);
+  const code = rawCode ? String(rawCode) : null;
+  const id = code || (slot?.id ? String(slot.id) : "");
+  if (!id) return null;
+  const label = slot?.label || slot?.name || (code ? code.toUpperCase() : "");
+  return { id, code, cardId: code, image: "", label };
 }
 
 export default function BinderReadOnly() {
@@ -45,7 +43,7 @@ export default function BinderReadOnly() {
   const binderId = String(id || "");
   const listRef = useRef(null);
 
-  const { data, loading, error } = useQuery(BinderDocument, {
+  const { data, loading, error } = useQuery(BINDER_SAFE, {
     variables: { id: binderId },
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,

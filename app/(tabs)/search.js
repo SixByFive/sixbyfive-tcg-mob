@@ -1,8 +1,8 @@
 // app/(tabs)/search.js
-// CHANGED: fully switched to the new cardsearch query (limit/offset + items[])
-//          and aligned the client-side normalization to your frontend example.
+// FIX: Mutations use errorPolicy:"all" and treat data+errors as success.
+//      Hydration retry kept; no error toast if the mutation actually succeeded.
 
-import { gql, useApolloClient, useLazyQuery, useMutation } from "@apollo/client"; // CHANGED: import gql to define query here
+import { useApolloClient, useLazyQuery, useMutation } from "@apollo/client";
 import { useRouter } from "expo-router";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
@@ -17,6 +17,7 @@ import {
   AddToCollectionDocument,
   AddToWishlistDocument,
   CardByIdDocument,
+  SearchCardsDocument,
 } from "@sixbyfive/tcg-binder/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 
@@ -32,79 +33,11 @@ import {
   upsertMyCollectionEntry,
 } from "../../utils/apolloCollectionCache";
 
-/* ------------------------------------------------------------------ */
-/* GraphQL (NEW): cardsearch module query — mirrors your web example.  */
-/* ------------------------------------------------------------------ */
-const CARDSEARCH_QUERY = gql`
-  query CardsearchCollectionSearch($input: CardSearchInput!) {
-    searchCards: cardsearchSearchCards(input: $input) {
-      total
-      limit
-      offset
-      items {
-        cardId
-        id
-        setCode
-        number
-        name
-        rarity
-        images { small large }
-        set { code name }
-        variants { variant displayName }
-        latestPrices {
-          variant
-          market
-          mid
-          low
-          high
-          currency
-          updatedAt
-          provider
-        }
-      }
-    }
-  }
-`;
-
-const CARDSEARCH_CARD_BY_ID = gql`
-  query CardsearchCardEnsureMobile($cardId: ID!, $variant: String) {
-    cardsearchCardById(cardId: $cardId, variant: $variant) {
-      cardId
-      id
-      setCode
-      number
-      name
-      rarity
-      set {
-        code
-        name
-      }
-      variants {
-        variant
-        displayName
-      }
-      latestPrices {
-        variant
-        market
-        mid
-        low
-        high
-        currency
-        updatedAt
-        provider
-      }
-    }
-  }
-`;
-
-// CHANGED: page sizing to match your example semantics
 const CARDSEARCH_PAGE_SIZE = 48;
 const CARDSEARCH_EXACT_LIMIT = 12;
-
-// GBP symbol for formatting
 const GBP_SYMBOL = "\u00A3";
 
-/* ---------------- Helpers (ported/adapted from your web example) ---------------- */
+/* ---------------- Helpers ---------------- */
 
 function extractErrorMessage(error) {
   if (!error) return "";
@@ -117,50 +50,28 @@ function extractErrorMessage(error) {
   if (typeof error === "string" && error.trim()) return error;
   return "";
 }
-
 function isForeignKeyConstraintError(error) {
   const message = extractErrorMessage(error);
   return typeof message === "string" && /foreign key/i.test(message);
 }
 
-// CHANGED: canonical variant names
 function canonicalVariantKey(raw) {
   const value = String(raw ?? "normal").trim().toLowerCase();
   if (!value) return "normal";
-  if (
-    value === "reverse" ||
-    value === "reverse holo" ||
-    value === "reverse-holo" ||
-    value === "reverseholo" ||
-    value === "reverseholofoil"
-  )
-    return "reverseHolofoil";
-  if (value === "holo" || value === "holofoil" || value === "holo foil")
-    return "holofoil";
-  if (
-    value === "firstedition" ||
-    value === "first edition" ||
-    value === "1stedition" ||
-    value === "1st edition"
-  )
-    return "firstEdition";
+  if (["reverse","reverse holo","reverse-holo","reverseholo","reverseholofoil"].includes(value)) return "reverseHolofoil";
+  if (["holo","holofoil","holo foil"].includes(value)) return "holofoil";
+  if (["firstedition","first edition","1stedition","1st edition"].includes(value)) return "firstEdition";
   return value;
 }
-
 function firstNumber(...values) {
-  for (const v of values) {
-    if (typeof v === "number" && Number.isFinite(v)) return v;
-  }
+  for (const v of values) if (typeof v === "number" && Number.isFinite(v)) return v;
   return null;
 }
-
 function hasPrice(entry) {
   if (!entry) return false;
   return [entry.market, entry.tcgplayer, entry.cardmarket, entry.gbp, entry.mid, entry.low, entry.high]
     .some((val) => typeof val === "number" && Number.isFinite(val));
 }
-
-// Choose a useful price row for tiles
 function getBestPrice(prices) {
   if (!Array.isArray(prices) || prices.length === 0) return null;
   const pref = ["normal", "holofoil", "holo", "reverseHolofoil", "reverse"];
@@ -170,7 +81,6 @@ function getBestPrice(prices) {
   }
   return prices.find((p) => hasPrice(p)) || null;
 }
-
 function computeAveragePrice(entry) {
   if (!entry || !hasPrice(entry)) return null;
   if (typeof entry.market === "number" && Number.isFinite(entry.market)) return entry.market;
@@ -186,13 +96,11 @@ function computeAveragePrice(entry) {
   if (fallback != null) return fallback;
   return primary.length ? primary[0] : null;
 }
-
 function formatGBP(value) {
   if (value == null || Number.isNaN(value)) return `${GBP_SYMBOL}--`;
   return `${GBP_SYMBOL}${Number(value).toFixed(2)}`;
 }
 
-// Normalize a single price
 function normalizePriceEntry(price) {
   if (!price || typeof price !== "object") return null;
   const variation = canonicalVariantKey(price.variation ?? price.variant ?? "normal");
@@ -221,7 +129,6 @@ function normalizePriceEntry(price) {
   if (currency === "USD" && market != null) entry.usd = market;
   if (currency === "EUR" && market != null) entry.eur = market;
 
-  // heuristic mapping if provider implies a specific source
   const tcgValue = firstNumber(price.tcgplayer, providerKey.includes("tcg") ? market : null);
   if (tcgValue != null) entry.tcgplayer = tcgValue;
 
@@ -236,22 +143,18 @@ function normalizePriceEntry(price) {
 
   return entry;
 }
-
 function normalizePriceList(list) {
   if (!Array.isArray(list)) return [];
   const byVariant = new Map();
-
   for (const price of list) {
     const entry = normalizePriceEntry(price);
     if (!entry) continue;
     const key = entry.variation || "normal";
     const existing = byVariant.get(key);
-
     if (!existing) {
       byVariant.set(key, { ...entry });
       continue;
     }
-    // Merge heuristics
     if (entry.tcgplayer != null) existing.tcgplayer = entry.tcgplayer;
     if (entry.cardmarket != null) existing.cardmarket = entry.cardmarket;
     if (entry.market != null && existing.market == null) existing.market = entry.market;
@@ -268,42 +171,21 @@ function normalizePriceList(list) {
       existing.updatedAt = entry.updatedAt;
     }
   }
-
   return Array.from(byVariant.values());
 }
-
 function collectVariantList(item) {
   const variants = new Set();
-  const push = (v) => {
-    const key = canonicalVariantKey(v);
-    if (key) variants.add(key);
-  };
+  const push = (v) => { const key = canonicalVariantKey(v); if (key) variants.add(key); };
 
-  if (Array.isArray(item?.variants)) {
-    for (const v of item.variants) {
-      if (typeof v === "string") push(v);
-      else if (v && typeof v === "object") push(v.variant || v.displayName);
-    }
-  }
-  if (Array.isArray(item?.variations)) {
-    for (const v of item.variations) {
-      if (typeof v === "string") push(v);
-      else if (v && typeof v === "object") push(v.variant || v.displayName || v.variation);
-    }
-  }
-  const source = Array.isArray(item?.latestPrices)
-    ? item.latestPrices
-    : Array.isArray(item?.prices)
-    ? item.prices
-    : [];
-  for (const p of source) {
-    if (typeof p === "string") push(p);
-    else push(p?.variant || p?.variation);
-  }
+  if (Array.isArray(item?.variants)) for (const v of item.variants) typeof v === "string" ? push(v) : push(v?.variant || v?.displayName);
+  if (Array.isArray(item?.variations)) for (const v of item.variations) typeof v === "string" ? push(v) : push(v?.variant || v?.displayName || v?.variation);
+
+  const source = Array.isArray(item?.latestPrices) ? item.latestPrices : Array.isArray(item?.prices) ? item.prices : [];
+  for (const p of source) typeof p === "string" ? push(p) : push(p?.variant || p?.variation);
+
   const out = Array.from(variants).filter(Boolean);
   return out.length ? out : ["normal"];
 }
-
 function resolveCardIdentifier(card) {
   const normalize = (value) => {
     if (value == null) return null;
@@ -313,14 +195,12 @@ function resolveCardIdentifier(card) {
     if (/^local-\w+/i.test(str)) return null;
     return str;
   };
-
   const looksLikeCode = (value) => {
     if (!value) return false;
     const upper = value.toUpperCase();
     if (upper.startsWith("CARD-")) return false;
     return upper.includes("-") || upper.includes("/") || /\d/.test(upper);
   };
-
   const candidates = [
     normalize(card?.cardId),
     normalize(card?.id),
@@ -328,39 +208,26 @@ function resolveCardIdentifier(card) {
     normalize(card?.card?.id),
     normalize(card?.cardCode),
     normalize(card?.card?.code),
-    normalize(
-      card?.setCode && card?.number ? `${card.setCode}-${card.number}` : null
-    ),
+    normalize(card?.setCode && card?.number ? `${card.setCode}-${card.number}` : null),
   ].filter(Boolean);
-
-  for (const candidate of candidates) {
-    if (looksLikeCode(candidate)) {
-      return candidate;
-    }
-  }
-
+  for (const candidate of candidates) if (looksLikeCode(candidate)) return candidate;
   return candidates[0] ?? null;
 }
-
 function resolveVariation(card) {
   if (!card) return "normal";
   if (Array.isArray(card?.variations) && card.variations.length > 0) {
     for (const entry of card.variations) {
       if (!entry) continue;
       if (typeof entry === "string") return canonicalVariantKey(entry);
-      if (typeof entry === "object") {
-        return canonicalVariantKey(entry.variant || entry.variation || entry.displayName);
-      }
+      if (typeof entry === "object") return canonicalVariantKey(entry.variant || entry.variation || entry.displayName);
     }
   }
   if (card?.variation) return canonicalVariantKey(card.variation);
   return "normal";
 }
 
-// Normalize one item from cardsearch into the shape your mobile UI expects
 function normalizeCardsearchItem(item, index = 0) {
   if (!item) return null;
-
   const setRecord = item.set || {};
   const setCode = item.setCode || setRecord.code || "";
   const number = item.number || "";
@@ -368,11 +235,8 @@ function normalizeCardsearchItem(item, index = 0) {
   const image = item.images?.large || item.images?.small || item.image || null;
   const variations = collectVariantList(item);
   const prices = normalizePriceList(item.latestPrices ?? item.prices ?? []);
-
-  const preferredId =
-    item.cardId || item.id || (setCode && number ? `${setCode}-${number}` : null);
+  const preferredId = item.cardId || item.id || (setCode && number ? `${setCode}-${number}` : null);
   const id = preferredId || `card-${index}`;
-
   return {
     id,
     cardId: preferredId || id,
@@ -388,13 +252,11 @@ function normalizeCardsearchItem(item, index = 0) {
     prices,
   };
 }
-
 function mapCardsearchItems(items) {
   if (!Array.isArray(items) || !items.length) return [];
   return items.map((item, i) => normalizeCardsearchItem(item, i)).filter(Boolean);
 }
 
-// CHANGED: pocket filter kept (local-only opt-out)
 function isPocketCard(card) {
   const name = (card?.setName || "").toLowerCase();
   const code = (card?.set || "").toLowerCase();
@@ -412,47 +274,35 @@ export default function SearchTab() {
   const toast = useToast();
   const apollo = useApolloClient();
 
-  // form state
   const [name, setName] = useState("");
   const [setCode, setSetCode] = useState("");
   const [number, setNumber] = useState("");
 
-  // paging (CHANGED: offset/limit instead of cursor/after)
   const [results, setResults] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
-  const [pageSize, setPageSize] = useState(PER_PAGE); // will be overwritten by API
+  const [pageSize, setPageSize] = useState(PER_PAGE);
   const [totalCount, setTotalCount] = useState(0);
 
-  const [runSearch, { data, loading, error, fetchMore, called }] = useLazyQuery(
-    CARDSEARCH_QUERY, // CHANGED: new document
-    {
-      fetchPolicy: "network-only",
-      nextFetchPolicy: "cache-first",
-      notifyOnNetworkStatusChange: true,
-      returnPartialData: false,
-    }
-  );
+  const [runSearch, { data, loading, error, fetchMore, called }] = useLazyQuery(SearchCardsDocument, {
+    fetchPolicy: "network-only",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+    returnPartialData: false,
+  });
 
-  // CHANGED: exact search limit behavior like your web example
   const isExactCardSearch = useMemo(
     () => Boolean((setCode ?? "").trim() && (number ?? "").trim()),
     [setCode, number]
   );
-
   const canSearch = useMemo(
-    () =>
-      (name ?? "").trim().length > 0 ||
-      (setCode ?? "").trim().length > 0 ||
-      (number ?? "").trim().length > 0,
+    () => (name ?? "").trim().length > 0 || (setCode ?? "").trim().length > 0 || (number ?? "").trim().length > 0,
     [name, setCode, number]
   );
 
-  // CHANGED: initial search using limit/offset + mapping to mobile shape
   const onSearch = useCallback(() => {
     if (!canSearch) return;
 
-    // reset local paging
     setResults([]);
     setOffset(0);
     setHasMore(false);
@@ -491,7 +341,6 @@ export default function SearchTab() {
     });
   }, [canSearch, isExactCardSearch, name, setCode, number, runSearch]);
 
-  // CHANGED: loadMore via limit/offset
   const loadingMoreRef = useRef(false);
   const loadMore = useCallback(async () => {
     if (!hasMore || loading || loadingMoreRef.current || !called) return;
@@ -515,11 +364,8 @@ export default function SearchTab() {
       const newItems = mapCardsearchItems(payload?.items || []);
       const filteredNew = filterOutPocket(newItems, !/pocket/i.test(setCode || ""));
 
-      // dedupe by id
       const byId = new Map();
-      for (const c of [...results, ...filteredNew]) {
-        if (c?.id != null) byId.set(String(c.id), c);
-      }
+      for (const c of [...results, ...filteredNew]) if (c?.id != null) byId.set(String(c.id), c);
       const merged = Array.from(byId.values());
 
       const total = Number(payload?.total ?? totalCount);
@@ -536,64 +382,57 @@ export default function SearchTab() {
     }
   }, [hasMore, loading, called, fetchMore, name, setCode, number, pageSize, offset, results, totalCount]);
 
-  // --- Mutations ---
+  // --- Mutations (with errorPolicy: "all") ---
   const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
   const userId = meData?.me?.id ?? null;
 
   const hydrateCardById = useCallback(
     async (cardId, variation = "normal") => {
       if (!cardId) return false;
-
-      const checkLegacy = async () => {
+      try {
         const { data: cardData } = await apollo.query({
           query: CardByIdDocument,
-          variables: { id: cardId },
+          variables: { id: cardId, variant: variation || undefined },
           fetchPolicy: "network-only",
         });
         const cardRecord = cardData?.card ?? cardData?.cardById ?? cardData?.Card ?? null;
         return Boolean(cardRecord?.id);
-      };
-
-      try {
-        if (await checkLegacy()) {
-          return true;
-        }
-      } catch (legacyErr) {
-        if (__DEV__) {
-          // eslint-disable-next-line no-console
-          console.warn("hydrateCardById initial check failed", { err: legacyErr, cardId });
-        }
-      }
-
-      try {
-        await apollo.query({
-          query: CARDSEARCH_CARD_BY_ID,
-          variables: { cardId, variant: variation || undefined },
-          fetchPolicy: "network-only",
-        });
-      } catch (err) {
-        if (__DEV__) {
-          // eslint-disable-next-line no-console
-          console.warn("cardsearchCardById hydrate failed", { err, cardId, variation });
-        }
-        return false;
-      }
-
-      try {
-        return await checkLegacy();
-      } catch (finalErr) {
-        if (__DEV__) {
-          // eslint-disable-next-line no-console
-          console.warn("hydrateCardById final check failed", { err: finalErr, cardId });
-        }
+      } catch {
         return false;
       }
     },
     [apollo]
   );
 
-  const [addToWishlist] = useMutation(AddToWishlistDocument);
+  // Treat "data + errors" as success when the data field indicates success.
+  const wishlistSuccess = (result) => {
+    const d = result?.data || {};
+    // Support various server shapes: boolean, object, toggle, etc.
+    return Boolean(
+      d.addToWishlist === true ||
+      d.toggleWishlist === true ||
+      d.addToWishlist?.id ||
+      d.addToWishlist?.cardId ||
+      d.wishlistEntry?.id
+    );
+  };
+
+  const collectionSuccess = (result) => {
+    const d = result?.data || {};
+    const entry =
+      d.addToCollection ||
+      d.updateCollectionEntry ||
+      d.collectionEntry ||
+      null;
+    return Boolean(entry && (entry.id || entry.cardId));
+  };
+
+  const [addToWishlist] = useMutation(AddToWishlistDocument, {
+    errorPolicy: "all",
+  });
+
   const [addToCollection] = useMutation(AddToCollectionDocument, {
+    errorPolicy: "all",
     update: (cache, { data }) => {
       upsertMyCollectionEntry(cache, data?.addToCollection);
     },
@@ -608,32 +447,31 @@ export default function SearchTab() {
       return;
     }
     const variation = resolveVariation(card);
-    const variables = {
-      cardId,
-      variation,
-    };
-    try {
-      await addToWishlist({ variables });
+    const variables = { cardId, variation };
+
+    // First attempt (won't throw on data+errors)
+    let res = await addToWishlist({ variables });
+    if (wishlistSuccess(res)) {
       toast.show("Added to wishlist", { type: "success" });
       return;
-    } catch (e) {
-      let finalError = e;
-      if (isForeignKeyConstraintError(e)) {
-        const hydrated = await hydrateCardById(cardId, variation);
-        if (hydrated) {
-          try {
-            await addToWishlist({ variables });
-            toast.show("Added to wishlist", { type: "success" });
-            return;
-          } catch (retryError) {
-            finalError = retryError;
-          }
+    }
+
+    // If it's an FK / hydration issue, hydrate then retry
+    const err = res?.errors?.[0];
+    if (isForeignKeyConstraintError(err)) {
+      const hydrated = await hydrateCardById(cardId, variation);
+      if (hydrated) {
+        res = await addToWishlist({ variables });
+        if (wishlistSuccess(res)) {
+          toast.show("Added to wishlist", { type: "success" });
+          return;
         }
       }
-      console.warn("addToWishlist failed:", { error: finalError, card, cardId, variation });
-      const message = extractErrorMessage(finalError) || "Couldn't add to wishlist";
-      toast.show(message, { type: "error" });
     }
+
+    // Otherwise show the server's message
+    const message = extractErrorMessage(err) || "Couldn't add to wishlist";
+    toast.show(message, { type: "error" });
   };
 
   const onAddToCollection = async (card) => {
@@ -643,33 +481,30 @@ export default function SearchTab() {
       return;
     }
     const variation = resolveVariation(card);
-    const variables = {
-      cardId,
-      variation,
-      quantity: 1,
-    };
-    try {
-      await addToCollection({ variables });
+    const variables = { cardId, variation, quantity: 1 };
+
+    // First attempt
+    let res = await addToCollection({ variables });
+    if (collectionSuccess(res)) {
       toast.show("Added to collection", { type: "success" });
       return;
-    } catch (e) {
-      let finalError = e;
-      if (isForeignKeyConstraintError(e)) {
-        const hydrated = await hydrateCardById(cardId, variation);
-        if (hydrated) {
-          try {
-            await addToCollection({ variables });
-            toast.show("Added to collection", { type: "success" });
-            return;
-          } catch (retryError) {
-            finalError = retryError;
-          }
+    }
+
+    // FK / hydration path
+    const err = res?.errors?.[0];
+    if (isForeignKeyConstraintError(err)) {
+      const hydrated = await hydrateCardById(cardId, variation);
+      if (hydrated) {
+        res = await addToCollection({ variables });
+        if (collectionSuccess(res)) {
+          toast.show("Added to collection", { type: "success" });
+          return;
         }
       }
-      console.warn("addToCollection failed:", { error: finalError, card, cardId, variation });
-      const message = extractErrorMessage(finalError) || "Couldn't add to collection";
-      toast.show(message, { type: "error" });
     }
+
+    const message = extractErrorMessage(err) || "Couldn't add to collection";
+    toast.show(message, { type: "error" });
   };
 
   const showPlaceholders = !loading && results.length === 0;
@@ -698,21 +533,16 @@ export default function SearchTab() {
         <FlatList
           contentContainerStyle={styles.listContent}
           data={results}
-          keyExtractor={(item, idx) =>
-            item?.id ? String(item.id) : `${idx}`
-          }
+          keyExtractor={(item, idx) => (item?.id ? String(item.id) : `${idx}`)}
           numColumns={2}
           columnWrapperStyle={styles.column}
-          renderItem={({ item, index }) => {
-            // CHANGED: compute price summary identical to your web logic
+          renderItem={({ item }) => {
             const best = getBestPrice(item?.prices || []);
             const avg = computeAveragePrice(best);
-
             return (
               <CardTile
                 item={{
                   ...item,
-                  // Provide precomputed helpers to downstream if desired
                   averagePrice: avg,
                   bestPrice: best,
                   averagePriceFormatted: formatGBP(avg),
@@ -740,9 +570,7 @@ export default function SearchTab() {
             hasMore ? (
               <View style={styles.footerLoading}>
                 <ActivityIndicator color={COLORS.accent} />
-                <Text style={styles.footerLoadingText}>
-                  Loading more…
-                </Text>
+                <Text style={styles.footerLoadingText}>Loading more…</Text>
               </View>
             ) : null
           }

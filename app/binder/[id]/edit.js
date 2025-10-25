@@ -23,7 +23,7 @@ import PageHeaderBackSimple from "../../../components/common/PageHeaderBackSimpl
 import { COLORS } from "../../../theme/colors";
 
 // GraphQL
-import { BinderDocument } from "@sixbyfive/tcg-binder/client";
+import { BINDER_SAFE } from "../../../graphql/binders-temp";
 
 // Shared actions
 import useBinderActions from "../../../hooks/useBinderActions";
@@ -44,21 +44,17 @@ function inferTemplateId(rows, cols) {
 }
 
 // server slot -> UI slot
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const looksLikeCode = (v) => typeof v === "string" && v.includes("-") && !UUID_RE.test(v);
+
 function toUiSlot(slot) {
   if (!slot) return null;
-  const c = slot.card ?? slot.item ?? slot;
-  const id = String(c?.id ?? slot?.id ?? "");
-  const name = c?.name ?? slot?.name ?? "";
-  const image =
-    c?.image ??
-    c?.thumbnail ??
-    c?.thumb ??
-    c?.images?.small ??
-    c?.images?.thumb ??
-    slot?.image ??
-    "";
-  if (!id && !image) return null;
-  return { id, image, label: name };
+  const rawCode = slot?.cardId ?? (looksLikeCode(slot?.id) ? slot.id : null);
+  const code = rawCode ? String(rawCode) : null;
+  const id = code || (slot?.id ? String(slot.id) : "");
+  if (!id) return null;
+  const label = slot?.label || slot?.name || (code ? code.toUpperCase() : "");
+  return { id, cardId: code, code, image: "", label };
 }
 
 function mapBinderToPagesUI(binder) {
@@ -86,7 +82,7 @@ export default function BinderEditor() {
   } = useBinderActions();
 
   // Query binder
-  const { data, loading, error } = useQuery(BinderDocument, {
+  const { data, loading, error } = useQuery(BINDER_SAFE, {
     variables: { id: binderId },
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
@@ -113,8 +109,10 @@ export default function BinderEditor() {
   useEffect(() => {
     if (!binder) return;
     const nextName = binder.name || "My Binder";
-    const rows = Number(binder?.layout?.rows ?? binder?.rows ?? 3) || 3;
-    const cols = Number(binder?.layout?.cols ?? binder?.cols ?? 3) || 3;
+    const templateHint = binder?.layoutId ?? binder?.templateId ?? binder?.pages?.[0]?.layout;
+    const tpl = getTemplate(templateHint || DEFAULT_TEMPLATE_ID);
+    const rows = Number(binder?.layout?.rows ?? binder?.rows ?? tpl?.rows ?? 3) || 3;
+    const cols = Number(binder?.layout?.cols ?? binder?.cols ?? tpl?.cols ?? 3) || 3;
 
     setName(nextName);
     setLayout({ rows, cols });
@@ -293,14 +291,11 @@ export default function BinderEditor() {
         slots: (Array.isArray(p?.slots) ? p.slots : [])
           .filter(Boolean)
           .map((s, pos) => {
-            const c = s?.card ?? s;
-            const code =
-              c?.id && typeof c.id === "string" && c.id.includes("-")
-                ? c.id
-                : s?.cardId && String(s.cardId).includes("-")
-                ? String(s.cardId)
-                : s?.card?.code || s?.cardCode || s?.code || "";
-            if (!code) return null;
+            const codeRaw =
+              (typeof s?.cardId === "string" && s.cardId.trim()) ||
+              (looksLikeCode(s?.id) ? String(s.id) : "");
+            if (!codeRaw) return null;
+            const code = String(codeRaw);
             return {
               ...(s?.id ? { id: String(s.id) } : {}),
               cardId: code,

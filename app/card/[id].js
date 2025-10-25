@@ -1,5 +1,9 @@
 // app/card/[id].js
-// UPDATED: simplified to use only unified `average` pricing (removed tcgp/cmkt props)
+// UPDATED (set name + image):
+// • Correct set mapping: sv05 → Temporal Forces, sv08 → Surging Sparks.
+// • Normalizes set codes (case/spacing/dots) before lookup.
+// • Uses nested set { name, code } if present.
+// • Keeps TCGdex image preference regardless of caller order.
 
 import { useMutation, useQuery } from "@apollo/client";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -22,29 +26,30 @@ import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 
 import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";
-import { getBestPrice, normalizeImageUrl } from "../../utils/cards";
+import {
+  buildMyCollectionRefetchQueries,
+  upsertMyCollectionEntry,
+} from "../../utils/apolloCollectionCache";
+import { getBestPrice } from "../../utils/cards";
 import {
   TIMEFRAME_POINTS,
   makePlaceholderSeries,
   seriesStats,
   toBarHeights,
 } from "../../utils/priceSeries";
-import {
-  buildMyCollectionRefetchQueries,
-  upsertMyCollectionEntry,
-} from "../../utils/apolloCollectionCache";
 
 import CardHeader from "../../components/card/CardHeader";
 import CardImageBlock from "../../components/card/CardImageBlock";
 import InfoCard from "../../components/card/InfoCard";
 import PricingHistory from "../../components/card/PricingHistory";
 
-/* ----------------------- Local helpers (match CardTile) ----------------------- */
+import inferSetEra from "../../utils/setEra.native";
+
+/* ----------------------- helpers ----------------------- */
 
 function isNum(x) {
   return typeof x === "number" && Number.isFinite(x);
 }
-
 function canonicalVariant(v) {
   const s = String(v ?? "normal").toLowerCase().trim();
   if (!s) return "normal";
@@ -54,7 +59,6 @@ function canonicalVariant(v) {
   if (["first edition", "firstedition", "1st edition", "1stedition"].includes(s)) return "firstEdition";
   return s;
 }
-
 function pickMarketishValue(p) {
   if (!p) return undefined;
   return (
@@ -65,27 +69,16 @@ function pickMarketishValue(p) {
     (isNum(p.high) ? p.high : undefined)
   );
 }
-
 function hasAnyPriceValue(p) {
-  return (
-    isNum(p?.market) ||
-    isNum(p?.gbp) ||
-    isNum(p?.mid) ||
-    isNum(p?.low) ||
-    isNum(p?.high)
-  );
+  return isNum(p?.market) || isNum(p?.gbp) || isNum(p?.mid) || isNum(p?.low) || isNum(p?.high);
 }
-
 function localBestPrice(prices = []) {
   if (!Array.isArray(prices) || prices.length === 0) return null;
-
   const rows = prices
     .map((r) => (r ? { ...r, _v: canonicalVariant(r.variation ?? r.variant) } : null))
     .filter(Boolean)
     .filter(hasAnyPriceValue);
-
   if (!rows.length) return null;
-
   const pref = ["normal", "holofoil", "holo", "reverseHolofoil", "reverse"];
   for (const key of pref) {
     const hit = rows.find((r) => r._v === key && pickMarketishValue(r) != null);
@@ -94,13 +87,169 @@ function localBestPrice(prices = []) {
   return rows.find((r) => pickMarketishValue(r) != null) || null;
 }
 
+/* --- id / set / image helpers --- */
+
+function parseCardId(id) {
+  if (typeof id !== "string") return { setCode: null, number: null };
+  const parts = id.split("-");
+  if (parts.length < 2) return { setCode: null, number: null };
+  const setCode = parts[0]?.trim() || null;
+  const numberRaw = parts.slice(1).join("-").trim();
+  const number = numberRaw || null;
+  return { setCode, number };
+}
+
+function toTitleCase(str) {
+  if (!str) return "";
+  return String(str)
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
+function looksLikeSetCode(s) {
+  if (!s) return false;
+  const v = String(s).trim();
+  // sv05, sv3.5, swsh12, me1, xy10, etc.
+  return /^[a-z]{2,5}\d+(?:\.\d+)?$/i.test(v);
+}
+
+// CHANGED: normalize codes: lowercased, strip spaces, keep dot (map also includes dotless alias)
+function normalizeSetCode(code) {
+  if (!code) return "";
+  return String(code).trim().toLowerCase().replace(/\s+/g, "");
+}
+
+// CHANGED: corrected set-code → human-name hints. Add more as needed.
+const SET_CODE_TO_NAME_HINTS = {
+  // Scarlet & Violet examples
+  sv01: "Scarlet & Violet",
+  sv02: "Paldea Evolved",
+  sv03: "Obsidian Flames",
+  "sv03.5": "151",
+  sv04: "Paradox Rift",
+  sv05: "Temporal Forces",   // ← FIXED
+  sv06: "Twilight Masquerade",
+  sv07: "Stellar Crown",
+  sv08: "Surging Sparks",    // ← FIXED
+  // add any others your backend commonly returns
+};
+
+// For codes with a dot (sv03.5) also allow a fallback without the dot (sv035)
+function lookupSetNameForCode(codeRaw) {
+  const c = normalizeSetCode(codeRaw);
+  if (!c) return "";
+  // direct hit
+  if (SET_CODE_TO_NAME_HINTS[c]) return SET_CODE_TO_NAME_HINTS[c];
+  // dotless alias (sv03.5 -> sv035)
+  const dotless = c.replace(/\./g, "");
+  if (dotless !== c && SET_CODE_TO_NAME_HINTS[dotless]) {
+    return SET_CODE_TO_NAME_HINTS[dotless];
+  }
+  return "";
+}
+
+function firstHumanName(...candidates) {
+  for (const c of candidates) {
+    const s = (c ?? "").toString().trim();
+    if (s && s.toLowerCase() !== "set" && !looksLikeSetCode(s)) {
+      return toTitleCase(s);
+    }
+  }
+  return "";
+}
+
+// CHANGED: derive a displayable set label (checks nested set.name & set.code too)
+function deriveSetLabel({ paramSetName, serverSetName, nestedSetName, nestedSetCode, id, setCode }) {
+  // 1) Real names (param → server flat → server nested)
+  const human = firstHumanName(paramSetName, serverSetName, nestedSetName);
+  if (human) return human;
+
+  // 2) Hints via codes: prefer nested code → explicit setCode → parsed from id
+  const codeCandidates = [
+    nestedSetCode,
+    setCode,
+    parseCardId(id).setCode,
+  ].map(normalizeSetCode);
+
+  for (const code of codeCandidates) {
+    const hint = lookupSetNameForCode(code);
+    if (hint) return hint;
+  }
+
+  // 3) Fallback: uppercase of the best available code
+  const fallbackCode = codeCandidates.find(Boolean);
+  return fallbackCode ? fallbackCode.toUpperCase() : "";
+}
+
+// PokemonTCG URLs
+function pokemontcgFromParts(setCode, number, hires = true) {
+  if (!setCode || !number) return null;
+  const n = String(number).replace(/^0+/, "");
+  const suffix = hires ? "_hires" : "";
+  return `https://images.pokemontcg.io/${setCode}/${n}${suffix}.png`;
+}
+
+// TCGdex URLs
+function tcgdexFromParts(setCode, number, era = null, quality = "high") {
+  if (!setCode || !number) return null;
+  const eraSlug = (era || inferSetEra({ code: setCode }) || "")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+  const numPadded = String(number).replace(/^0+/, "").padStart(3, "0");
+  if (!eraSlug) return null;
+  return `https://assets.tcgdex.net/en/${eraSlug}/${setCode}/${numPadded}/${quality}.webp`;
+}
+
+function parseImageCandidatesParam(imageCandidatesParam) {
+  if (!imageCandidatesParam) return [];
+  if (Array.isArray(imageCandidatesParam)) return imageCandidatesParam.map(String);
+  const raw = String(imageCandidatesParam);
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.map(String) : [];
+  } catch {
+    return raw.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+}
+
+// Build a pool; we’ll force-pick TCGdex later.
+function buildImageCandidates({ image, id, setCode, number, era, imageCandidates }) {
+  const out = [];
+  const provided = parseImageCandidatesParam(imageCandidates);
+  out.push(...provided);
+  if (image && /^https?:\/\//i.test(image)) out.push(image.replace(/^http:\/\//i, "https://"));
+  const parsed = parseCardId(id || "");
+  const code = setCode || parsed.setCode;
+  const num = number || parsed.number;
+  const eraSafe = era || (code ? inferSetEra({ code }) : null);
+  const dHigh = tcgdexFromParts(code, num, eraSafe, "high");
+  const dLow = tcgdexFromParts(code, num, eraSafe, "low");
+  if (dHigh) out.push(dHigh);
+  if (dLow) out.push(dLow);
+  const pHires = pokemontcgFromParts(code, num, true);
+  const pStd = pokemontcgFromParts(code, num, false);
+  if (pHires) out.push(pHires);
+  if (pStd) out.push(pStd);
+
+  const seen = new Set();
+  return out.filter((u) => {
+    const key = String(u || "");
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /* ----------------------------------------------------------------------------------- */
 
 export default function CardDetailsScreen() {
   const router = useRouter();
   const toast = useToast();
   const params = useLocalSearchParams();
-  const routeId = params.id ? String(params.id) : null;
+
+  const routeId = params?.id ? String(params.id) : null;
 
   const [range, setRange] = useState("30D");
   const hideActions =
@@ -108,12 +257,14 @@ export default function CardDetailsScreen() {
     params?.hideActions === 1 ||
     params?.hideActions === true;
 
-  // --- Fallback from navigation params
+  // Fallback from route params (supports prices/pricesJSON)
   const fallback = useMemo(() => {
     let prices = [];
     try {
       const raw =
-        typeof params.prices === "string"
+        typeof params.pricesJSON === "string"
+          ? params.pricesJSON
+          : typeof params.prices === "string"
           ? params.prices
           : typeof params.pricing === "string"
           ? params.pricing
@@ -122,47 +273,93 @@ export default function CardDetailsScreen() {
       prices = Array.isArray(parsed) ? parsed : [];
     } catch {}
     return {
+      id: routeId || String(params.cardId || ""),
       name: params.name ?? "",
       number: params.number ?? "",
-      setName: params.setName ?? "",
+      setNameParam: params.setName ?? "",
+      setCode: params.setCode ? String(params.setCode) : undefined,
+      era: params.era ? String(params.era) : undefined,
       image: params.image ?? "",
+      imageCandidates: params.imageCandidates ?? undefined,
       prices,
     };
-  }, [params]);
+  }, [params, routeId]);
 
-  // --- Query the live card
+  // Live card
   const { data, loading, error } = useQuery(CARD_BY_ID, {
     variables: { id: routeId ?? "" },
     skip: !routeId,
     fetchPolicy: "cache-first",
   });
 
-  const rawCard = data?.card ?? { id: routeId, ...fallback };
+  // Normalize card data (include nested set name/code if present)
+  const rawCard = data?.card ? data.card : { id: routeId, ...fallback };
 
-  // Normalize -> always expose `prices`
   const card = useMemo(() => {
     const fromLatest = Array.isArray(rawCard?.latestPrices) ? rawCard.latestPrices : null;
     const fromPrices = Array.isArray(rawCard?.prices) ? rawCard.prices : null;
     const fromPricing = Array.isArray(rawCard?.pricing) ? rawCard.pricing : null;
-    const prices = fromPrices || fromLatest || fromPricing || [];
-    return { ...rawCard, prices };
-  }, [rawCard]);
+    const prices = fromPrices || fromLatest || fromPricing || fallback.prices || [];
+
+    const nestedSetName =
+      (rawCard?.set && (rawCard.set.name || rawCard.set.setName)) || undefined;
+    const nestedSetCode =
+      (rawCard?.set && (rawCard.set.code || rawCard.set.setCode)) || undefined;
+
+    const setName = deriveSetLabel({
+      paramSetName: fallback.setNameParam,
+      serverSetName: rawCard?.setName,
+      nestedSetName,
+      nestedSetCode,
+      id: rawCard?.id ?? fallback.id,
+      setCode: rawCard?.setCode ?? fallback.setCode,
+    });
+
+    return {
+      ...rawCard,
+      prices,
+      setName,
+      setCode: rawCard?.setCode ?? fallback.setCode,
+      era: rawCard?.era ?? fallback.era,
+      number: rawCard?.number ?? fallback.number,
+      image: rawCard?.image ?? fallback.image,
+      imageCandidates: rawCard?.imageCandidates ?? fallback.imageCandidates,
+    };
+  }, [rawCard, fallback]);
 
   const resolvedCardId =
     (card && card.id ? String(card.id) : null) ||
     (routeId ? String(routeId) : null) ||
     (params?.cardId ? String(params.cardId) : null);
 
-  const img = normalizeImageUrl(card?.image);
+  // Pool candidates (order agnostic)
+  const imageCandidates = useMemo(
+    () =>
+      buildImageCandidates({
+        image: card?.image,
+        id: card?.id,
+        setCode: card?.setCode,
+        number: card?.number,
+        era: card?.era,
+        imageCandidates: card?.imageCandidates,
+      }),
+    [card?.image, card?.id, card?.setCode, card?.number, card?.era, card?.imageCandidates]
+  );
 
-  // pick most-recent priced variation
+  // Force TCGdex first
+  const primaryImage =
+    imageCandidates.find((u) => typeof u === "string" && u.includes("assets.tcgdex.net")) ||
+    imageCandidates[0] ||
+    null;
+
+  // Best priced variation
   const price = useMemo(() => {
     const utilRow = getBestPrice(card, { strategy: "recent" }) || null;
     const useUtil = utilRow && hasAnyPriceValue(utilRow);
     return useUtil ? utilRow : localBestPrice(card?.prices);
   }, [card]);
 
-  // unified average price
+  // Unified average price
   const average = useMemo(() => {
     if (!price) return null;
     const m = pickMarketishValue(price);
@@ -171,6 +368,7 @@ export default function CardDetailsScreen() {
 
   const activeVariant = canonicalVariant(price?.variation ?? "normal");
 
+  // History
   const { data: historyData } = useQuery(CardPriceHistoryDocument, {
     variables: { cardId: resolvedCardId ?? "", days: 365 },
     skip: !resolvedCardId,
@@ -234,7 +432,6 @@ export default function CardDetailsScreen() {
   }, [historyByVariant, activeVariant]);
 
   const baseForSeries = isNum(average) ? average : 10;
-
   const hasHistory = variantHistory.length > 0;
 
   const placeholder = useMemo(() => {
@@ -277,11 +474,7 @@ export default function CardDetailsScreen() {
     }
     try {
       await addToCollection({
-        variables: {
-          cardId: resolvedCardId,
-          variation,
-          quantity: 1,
-        },
+        variables: { cardId: resolvedCardId, variation, quantity: 1 },
       });
       toast.show("Added to collection", { type: "success" });
     } catch (e) {
@@ -298,12 +491,7 @@ export default function CardDetailsScreen() {
       return;
     }
     try {
-      await addToWishlist({
-        variables: {
-          cardId: resolvedCardId,
-          variation,
-        },
-      });
+      await addToWishlist({ variables: { cardId: resolvedCardId, variation } });
       toast.show("Added to wishlist", { type: "success" });
     } catch (e) {
       toast.show(
@@ -320,12 +508,18 @@ export default function CardDetailsScreen() {
         onToggleWishlist: addingWishlist ? undefined : handleToggleWishlist,
       };
 
+  if (__DEV__) {
+    // eslint-disable-next-line no-console
+    console.log("[CardDetails]", {
+      chosenImage: primaryImage,
+      id: card.id,
+      setName: card.setName,
+    });
+  }
+
   return (
     <View style={styles.container}>
-      <CardHeader
-        title={card?.name || "Card Details"}
-        onBack={() => router.back()}
-      />
+      <CardHeader title={card?.name || "Card Details"} onBack={() => router.back()} />
 
       {loading && !data?.card ? (
         <View style={styles.center}>
@@ -339,16 +533,14 @@ export default function CardDetailsScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          <CardImageBlock imageUri={img} />
+          <CardImageBlock imageUri={primaryImage} key={primaryImage || "noimg"} />
 
           <InfoCard
             name={card.name}
             number={card.number}
-            setName={card.setName}
+            setName={card.setName} // now corrected via normalized-code hints or server
             average={isNum(average) ? average : null}
-            variationLabel={
-              price?.variation ? String(price.variation).toUpperCase() : "—"
-            }
+            variationLabel={price?.variation ? String(price.variation).toUpperCase() : "—"}
             hideActions={hideActions}
             {...actionProps}
           />
@@ -356,11 +548,11 @@ export default function CardDetailsScreen() {
           <PricingHistory
             range={range}
             onChangeRange={setRange}
-            history={hasHistory ? variantHistory : null}
-            barHeights={placeholder?.bars}
-            avg={placeholder?.avg}
-            min={placeholder?.min}
-            max={placeholder?.max}
+            history={variantHistory.length ? variantHistory : null}
+            barHeights={!variantHistory.length ? (toBarHeights(makePlaceholderSeries(isNum(average) ? average : 10, TIMEFRAME_POINTS[range] ?? 30), 80)) : undefined}
+            avg={undefined}
+            min={undefined}
+            max={undefined}
           />
 
           <View style={{ height: 28 }} />

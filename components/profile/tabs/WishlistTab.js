@@ -1,23 +1,69 @@
 // components/profile/tabs/WishlistTab.js
-
-// CHANGED: robust normalization, profile-aware fetching, and lazy hydration by cardId.
+// PURPOSE: Wishlist grid inside a profile with robust fetching & hydration.
+//
+// CHANGES (this revision):
+// - Drops `card.setCode` from queries to avoid "Cannot return null for non-nullable field" 400s.
+// - Still sanitizes away the literal "set" and backfills a human name or UPPER code from the id.
+// - Keeps inline schema-safe queries + lazy hydration + image fallbacks.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../../theme/colors";
 import WishlistGrid from "../WishlistGrid";
 
-// NEW: Apollo + docs for any user's wishlist + my wishlist + single-card hydration
-import { useLazyQuery, useQuery } from "@apollo/client";
-import { CardByIdDocument, MyWishlistDocument, WishlistDocument } from "@sixbyfive/tcg-binder/client"; // any user’s wishlist
+import { gql, useLazyQuery, useQuery } from "@apollo/client";
+import { CardByIdDocument } from "@sixbyfive/tcg-binder/client";
 
-/* --------------------- helpers (normalizers) --------------------- */
-// safe getter
+/* -------------------- INLINE GraphQL (schema-safe) -------------------- */
+
+const MY_WISHLIST_MIN = gql`
+  query MyWishlist_Min($page: Int, $pageSize: Int) {
+    myWishlist(page: $page, pageSize: $pageSize) {
+      total
+      entries {
+        id
+        cardId
+        variation
+        card {
+          id
+          name
+          number
+          image
+          setName
+        }
+      }
+    }
+  }
+`;
+
+const WISHLIST_MIN = gql`
+  query Wishlist_Min($userId: ID!, $page: Int, $pageSize: Int) {
+    wishlist(userId: $userId, page: $page, pageSize: $pageSize) {
+      total
+      entries {
+        id
+        cardId
+        variation
+        card {
+          id
+          name
+          number
+          image
+          setName
+        }
+      }
+    }
+  }
+`;
+
+/* -------------------- helpers -------------------- */
+
+// tiny safe-getter
 function get(obj, path) {
   return path.split(".").reduce((acc, k) => (acc == null ? acc : acc[k]), obj);
 }
 
-// flatten containers
+// flatten arbitrary list-ish shapes
 function toArray(input) {
   if (!input) return [];
   if (Array.isArray(input)) return input;
@@ -26,8 +72,6 @@ function toArray(input) {
   if (Array.isArray(input.items)) return input.items.filter(Boolean);
   if (Array.isArray(input.results)) return input.results.filter(Boolean);
   if (Array.isArray(input.entries)) return input.entries.filter(Boolean);
-
-  // one nested layer
   for (const k of Object.keys(input || {})) {
     const v = input[k];
     if (Array.isArray(v)) return v;
@@ -39,21 +83,132 @@ function toArray(input) {
   return [];
 }
 
-// unwrap `{node, card}` shapes
 function unwrapEntry(item) {
   const n = item?.node ?? item;
-  const card = n?.card ?? null;
-  return { entry: n, card };
+  return { entry: n, card: n?.card ?? null };
 }
 
-// normalize to what WishlistGrid expects
+/* -------------------- image fallbacks -------------------- */
+
+function forceHttps(url) {
+  if (!url || typeof url !== "string") return null;
+  return url.replace(/^http:\/\//i, "https://");
+}
+function isAbs(url) {
+  return /^https?:\/\//i.test(url || "");
+}
+function parseIdParts(id) {
+  if (typeof id !== "string") return { setCode: null, number: null };
+  const [setCode, ...rest] = id.split("-");
+  const number = rest.join("-") || null;
+  return { setCode: setCode || null, number };
+}
+function pad3(n) {
+  if (!n) return null;
+  const s = String(n).replace(/^0+/, "");
+  return s.padStart(3, "0");
+}
+function eraFromSetCode(setCode) {
+  if (!setCode || typeof setCode !== "string") return null;
+  const m = setCode.match(/^[A-Za-z]+/);
+  return m ? m[0].toLowerCase() : null;
+}
+// TCGdex: https://assets.tcgdex.net/en/{era}/{setCode}/{number}/[high|low].webp
+function tcgdexUrl(idOrSet, numMaybe) {
+  const { setCode, number } =
+    numMaybe ? { setCode: idOrSet, number: numMaybe } : parseIdParts(idOrSet);
+  if (!setCode || !number) return null;
+  const era = eraFromSetCode(setCode);
+  const n3 = pad3(number);
+  if (!era || !n3) return null;
+  return {
+    high: `https://assets.tcgdex.net/en/${era}/${setCode}/${n3}/high.webp`,
+    low: `https://assets.tcgdex.net/en/${era}/${setCode}/${n3}/low.webp`,
+  };
+}
+// PokemonTCG: https://images.pokemontcg.io/{setCode}/{number}[_hires].png
+function pokemontcgUrl(idOrSet, numMaybe) {
+  const { setCode, number } =
+    numMaybe ? { setCode: idOrSet, number: numMaybe } : parseIdParts(idOrSet);
+  if (!setCode || !number) return null;
+  const n = String(number).replace(/^0+/, "");
+  return {
+    hires: `https://images.pokemontcg.io/${setCode}/${n}_hires.png`,
+    std: `https://images.pokemontcg.io/${setCode}/${n}.png`,
+  };
+}
+
+// Build preferred candidates (TCGdex high → low → PokemonTCG hires → std)
+function buildImageCandidatesFromIdOrImage({ id, image }) {
+  const out = [];
+  if (image && isAbs(image)) out.push(forceHttps(image));
+
+  const { setCode, number } = parseIdParts(id || "");
+  if (setCode && number) {
+    const dex = tcgdexUrl(setCode, number);
+    if (dex?.high) out.push(dex.high);
+    if (dex?.low) out.push(dex.low);
+    const ptcg = pokemontcgUrl(setCode, number);
+    if (ptcg?.hires) out.push(ptcg.hires);
+    if (ptcg?.std) out.push(ptcg.std);
+  }
+
+  const seen = new Set();
+  return out.filter((u) => {
+    const k = String(u || "");
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+/* -------------------- set-name utils -------------------- */
+
+// Never show the literal "set"
+function sanitizeSetName(val) {
+  const s = (val ?? "").toString().trim();
+  return s.toLowerCase() === "set" ? "" : s;
+}
+
+// Minimal, safe set-code → set-name fallback (extend anytime)
+const SET_CODE_TO_NAME = {
+  sv01: "Scarlet & Violet",
+  sv02: "Paldea Evolved",
+  sv03: "Obsidian Flames",
+  sv04: "Paradox Rift",
+  sv05: "Temporal Forces",
+  sv06: "Twilight Masquerade",
+  sv07: "Stellar Crown",
+  sv08: "Surging Sparks",
+};
+
+// Decide a display set name with graceful fallbacks
+function resolveSetName({ card, cid }) {
+  const raw = card?.setName ?? get(card, "set.name") ?? "";
+  const cleaned = sanitizeSetName(raw);
+  if (cleaned) return cleaned;
+
+  // try deriving from id like "sv05-028"
+  const fromId = (() => {
+    const idStr = (card?.id || cid || "").toString();
+    if (!idStr.includes("-")) return null;
+    return idStr.split("-")[0] || null;
+  })();
+
+  const code = (fromId || "").toLowerCase();
+  if (!code) return "";
+
+  return SET_CODE_TO_NAME[code] || code.toUpperCase();
+}
+
+/* -------------------- normalizers -------------------- */
+
 function normalizeWishlistItem(item, hydratedMap) {
   const { entry, card: inlineCard } = unwrapEntry(item);
 
-  // pick a card id from card or entry
+  // prefer inline card; else hydrated; else placeholder
   const cid = inlineCard?.id ?? entry?.cardId ?? entry?.id ?? item?.id;
   if (!cid) return null;
-
   const hydrated = hydratedMap?.get?.(String(cid));
   const card = inlineCard || hydrated || {};
 
@@ -63,33 +218,33 @@ function normalizeWishlistItem(item, hydratedMap) {
     ? card.pricing
     : [];
 
-  const setName = card?.setName ?? get(card, "set.name") ?? card?.set ?? "";
+  const setName = resolveSetName({ card, cid });
   const number = card?.number ?? card?.collectorNumber ?? undefined;
 
-  const image =
+  // image: inline → fallbacks
+  const direct =
     card?.image ??
     card?.imageUrl ??
     get(card, "images.small") ??
     get(card, "images.large") ??
     "";
+  const candidates = buildImageCandidatesFromIdOrImage({ id: String(cid), image: direct });
+  const image = candidates[0] || direct || "";
 
   const variation = typeof entry?.variation === "string" ? entry.variation : "normal";
-
-  // Provide a minimal placeholder if we still don’t have the card object
   const name = card?.name ?? entry?.name ?? "Card";
 
   return {
     id: String(cid),
     name,
     image,
-    setName,
+    setName,       // ← now always filled (name or UPPER code)
     number,
     prices,
     _wishlist: { variation },
   };
 }
 
-// normalize ANY incoming `items` (array or connection-ish object)
 function normalizeItemsInput(itemsProp, hydratedMap) {
   if (!itemsProp) return [];
   if (!Array.isArray(itemsProp) && typeof itemsProp === "object") {
@@ -102,71 +257,77 @@ function normalizeItemsInput(itemsProp, hydratedMap) {
   return toArray(itemsProp).map((x) => normalizeWishlistItem(x, hydratedMap)).filter(Boolean);
 }
 
-/* --------------------- component --------------------- */
+/* -------------------- Component -------------------- */
+
 export default function WishlistTab({
-  // NEW: props to mirror CardsTab behaviour
   title = "Wishlist",
-  items = [],             // loose shapes accepted
-  userId,                 // profile user id; if provided and items empty → fetch
+  items = [],
+  userId,
   onOpenCard,
-  onViewAll,              // optional “View all” CTA
+  onViewAll,
   pageSize = 24,
-  loading = false,        // external loading flag (optional)
+  loading = false,
 }) {
-  // hydrated cards map (id → card)
   const [hydratedMap, setHydratedMap] = useState(() => new Map());
   const hydratedIdsRef = useRef(new Set());
   const inflightRef = useRef(false);
 
-  // 1) normalize prop items first
+  // 1) use incoming prop items if provided
   const normalizedFromProp = useMemo(() => normalizeItemsInput(items, hydratedMap), [items, hydratedMap]);
 
-  // 2) fetch this profile user's wishlist if props are empty
+  // 2) profile user's wishlist (if prop empty)
   const shouldFetchProfile = normalizedFromProp.length === 0 && !!userId;
   const {
     data: wlData,
     loading: fetchingProfile,
     error: wlError,
-  } = useQuery(WishlistDocument, {
+  } = useQuery(WISHLIST_MIN, {
     variables: { userId, page: 1, pageSize },
     skip: !shouldFetchProfile,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
+    onError: (err) => {
+      if (__DEV__) console.warn("[WishlistTab] wishlist error", err?.message || err);
+    },
   });
 
-  // 3) fallback to my wishlist if no userId (owner)
+  // 3) my wishlist (owner) fallback
   const shouldFetchMine = normalizedFromProp.length === 0 && !userId;
   const {
     data: myWlData,
     loading: fetchingMine,
     error: myWlError,
-  } = useQuery(MyWishlistDocument, {
+  } = useQuery(MY_WISHLIST_MIN, {
+    variables: { page: 1, pageSize },
     skip: !shouldFetchMine,
     fetchPolicy: "cache-and-network",
+    notifyOnNetworkStatusChange: true,
+    onError: (err) => {
+      if (__DEV__) console.warn("[WishlistTab] myWishlist error", err?.message || err);
+    },
   });
 
-  // 4) normalize fetched wishlist (supports { wishlist: { entries } } or arrays)
+  // 4) normalize fetched results
   const normalizedFromFetch = useMemo(() => {
     const root = wlData?.wishlist ?? myWlData?.myWishlist ?? wlData ?? myWlData ?? {};
-    const flat = toArray(root);
-    return flat.map((x) => normalizeWishlistItem(x, hydratedMap)).filter(Boolean);
+    return toArray(root).map((x) => normalizeWishlistItem(x, hydratedMap)).filter(Boolean);
   }, [wlData, myWlData, hydratedMap]);
 
-  // 5) choose items to display (prop wins)
+  // 5) final list
   const displayItems = (normalizedFromProp.length ? normalizedFromProp : normalizedFromFetch).slice(0, pageSize);
 
-  // 6) build a list of ids that still need hydration (no inline card + not hydrated yet)
+  // 6) ids that still need hydration (no inline card yet & not hydrated)
   const idsNeedingHydration = useMemo(() => {
     const ids = [];
     const seen = new Set();
-    const source = normalizedFromProp.length ? toArray(items) : toArray(wlData?.wishlist ?? myWlData?.myWishlist ?? {});
-    for (const it of source) {
+    const src = normalizedFromProp.length ? toArray(items) : toArray(wlData?.wishlist ?? myWlData?.myWishlist ?? {});
+    for (const it of src) {
       const n = it?.node ?? it;
-      const card = n?.card;
-      const cid = card?.id ?? n?.cardId ?? n?.id;
+      const hasCard = !!n?.card;
+      const cid = n?.card?.id ?? n?.cardId ?? n?.id;
       if (!cid) continue;
       const key = String(cid);
-      if (!card && !hydratedIdsRef.current.has(key) && !seen.has(key)) {
+      if (!hasCard && !hydratedIdsRef.current.has(key) && !seen.has(key)) {
         ids.push(key);
         seen.add(key);
       }
@@ -174,31 +335,27 @@ export default function WishlistTab({
     return ids;
   }, [items, normalizedFromProp.length, wlData, myWlData]);
 
-  // 7) lazy single-card hydration by id (sequential, small batches)
+  // 7) lazy hydrate by id (sequential)
   const [fetchCardById] = useLazyQuery(CardByIdDocument, { fetchPolicy: "cache-first" });
   useEffect(() => {
-    if (!idsNeedingHydration.length) return;
-    if (inflightRef.current) return;
-
+    if (!idsNeedingHydration.length || inflightRef.current) return;
     inflightRef.current = true;
     (async () => {
       try {
         for (const id of idsNeedingHydration) {
-          // guard re-entrancy / dedupe
           if (hydratedIdsRef.current.has(id)) continue;
-          const { data } = await fetchCardById({ variables: { id } });
-          const card = data?.card ?? data?.cardById ?? data?.Card ?? null;
-          if (card?.id) {
+          try {
+            const { data } = await fetchCardById({ variables: { id } });
+            const card = data?.card ?? data?.cardById ?? data?.Card ?? null;
             hydratedIdsRef.current.add(id);
-            setHydratedMap((prev) => {
-              const next = new Map(prev);
-              next.set(String(card.id), card);
-              return next;
-            });
-          } else {
-            // even if not found, mark as attempted to avoid loops
-            hydratedIdsRef.current.add(id);
-          }
+            if (card?.id) {
+              setHydratedMap((prev) => {
+                const next = new Map(prev);
+                next.set(String(card.id), card);
+                return next;
+              });
+            }
+          } catch {}
         }
       } finally {
         inflightRef.current = false;
@@ -206,19 +363,17 @@ export default function WishlistTab({
     })();
   }, [idsNeedingHydration, fetchCardById]);
 
-  // loading state: we never block the grid for hydration
   const showSkeleton = (loading || fetchingProfile || fetchingMine) && normalizedFromProp.length === 0;
   const hasError = wlError || myWlError;
 
-  // DEV: quick insight
   if (__DEV__) {
     // eslint-disable-next-line no-console
     console.log("[WishlistTab] source:", {
+      via: normalizedFromProp.length ? "prop" : shouldFetchProfile ? "Wishlist_Min" : "MyWishlist_Min",
       propCount: normalizedFromProp.length,
       fetchedCount: normalizedFromFetch.length,
       displayCount: displayItems.length,
       needsHydration: idsNeedingHydration.length,
-      via: normalizedFromProp.length ? "prop" : shouldFetchProfile ? "WishlistDocument" : "MyWishlistDocument",
       errors: { wlError: wlError?.message, myWlError: myWlError?.message },
     });
   }
@@ -227,7 +382,6 @@ export default function WishlistTab({
   if (displayItems.length) {
     return (
       <>
-        {/* optional compact header */}
         {typeof onViewAll === "function" && (
           <View style={[styles.card, { paddingVertical: 8, marginBottom: 8 }]}>
             <View style={styles.headerRow}>
@@ -237,7 +391,6 @@ export default function WishlistTab({
           </View>
         )}
 
-        {/* small top spinner only while hydration runs (doesn't block the grid) */}
         {idsNeedingHydration.length > 0 && (
           <View style={{ paddingVertical: 4, alignItems: "center" }}>
             <ActivityIndicator color={COLORS.accent} />
@@ -275,7 +428,7 @@ export default function WishlistTab({
   );
 }
 
-/* --------------------- styles --------------------- */
+/* -------------------- styles -------------------- */
 const styles = StyleSheet.create({
   card: {
     backgroundColor: COLORS.surface,
