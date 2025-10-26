@@ -1,8 +1,8 @@
 // app/binder/[id]/view.js
-import { useQuery } from "@apollo/client";
+import { gql, useQuery } from "@apollo/client"; // CHANGED: import gql for fallback
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Dimensions, FlatList, StyleSheet, Text, View } from "react-native";
+import { Dimensions, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
 import BinderGrid from "../../../components/binders/BinderGrid";
 import PagePager from "../../../components/binders/PagePager";
@@ -10,7 +10,45 @@ import PageHeaderBackSimple from "../../../components/common/PageHeaderBackSimpl
 import { COLORS } from "../../../theme/colors";
 
 // GraphQL
-import { BINDER_SAFE } from "../../../graphql/binders-temp";
+import { BinderDocument, MeDocument } from "@sixbyfive/tcg-binder/client";
+
+/* ---------- GraphQL: robust resolver with inline fallback ---------- */
+const FALLBACK_BINDER_SAFE = gql`
+  query Binder_Safe_Fallback($id: ID!) {
+    binder(id: $id) {
+      id
+      name
+      coverColor
+      accentColor
+      pages {
+        id
+        title
+        pageOrder
+        layout
+        slots { id cardId position quantity }
+      }
+    }
+  }
+`;
+
+function resolveBinderQuery() {
+  try {
+    // eslint-disable-next-line import/no-dynamic-require, global-require
+    const mod = require("../../../graphql/binders-temp");
+    const doc = mod?.BINDER_SAFE;
+    if (doc && typeof doc === "object" && doc.kind === "Document") return doc;
+  } catch (err) {
+    if (__DEV__) console.warn("[BinderView] require('../../../graphql/binders-temp') failed:", err?.message || err);
+  }
+  if (BinderDocument && typeof BinderDocument === "object" && BinderDocument.kind === "Document") {
+    return BinderDocument;
+  }
+  if (__DEV__) console.warn("[BinderView] Using FALLBACK_BINDER_SAFE");
+  return FALLBACK_BINDER_SAFE;
+}
+
+const BINDER_QUERY = resolveBinderQuery();
+/* ------------------------------------------------------------------ */
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -34,9 +72,9 @@ function toUiSlot(slot) {
   if (!slot) return null;
   const rawCode = slot?.cardId ?? (looksLikeCode(slot?.id) ? slot.id : null);
   const code = rawCode ? String(rawCode) : null;
+  if (!code) return null;
   const id = code || (slot?.id ? String(slot.id) : "");
-  if (!id) return null;
-  const label = slot?.label || slot?.name || (code ? code.toUpperCase() : "");
+  const label = slot?.label || slot?.name || code.toUpperCase();
   return { id, code, cardId: code, image: "", label };
 }
 
@@ -58,10 +96,14 @@ function mapBinderToPagesUI(binder) {
 export default function BinderViewer() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
-  const binderId = String(id || "");
+  const binderId = String(Array.isArray(id) ? id[0] : id || "");
   const listRef = useRef(null);
 
-  const { data, loading, error } = useQuery(BINDER_SAFE, {
+  // who am I? (for owner check)
+  const { data: meData } = useQuery(MeDocument, { fetchPolicy: "cache-first" });
+  const meId = meData?.me?.id ? String(meData.me.id) : null;
+
+  const { data, loading, error } = useQuery(BINDER_QUERY, {
     variables: { id: binderId },
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
@@ -69,6 +111,12 @@ export default function BinderViewer() {
 
   const binder = data?.binder ?? null;
   const name = binder?.name ?? "Binder";
+
+  // owner detection (supports binder.userId or binder.user.id)
+  const ownerId =
+    (binder?.userId != null ? String(binder.userId) : null) ||
+    (binder?.user?.id ? String(binder.user.id) : null);
+  const isOwner = !!meId && !!ownerId && meId === ownerId;
 
   const pages = useMemo(() => mapBinderToPagesUI(binder), [binder]);
   const [index, setIndex] = useState(0);
@@ -81,8 +129,6 @@ export default function BinderViewer() {
     const i = Math.round(e.nativeEvent.contentOffset.x / e.nativeEvent.layoutMeasurement.width);
     setIndex(i);
   };
-
-  /* -------- render -------- */
 
   if (loading && !binder) {
     return (
@@ -111,6 +157,20 @@ export default function BinderViewer() {
         title={name}
         subtitle={`Page ${index + 1} / ${pages.length || 1}`}
         onBack={() => router.back()}
+        right={
+          isOwner ? (
+            <Pressable
+              onPress={() => router.push(`/binder/${binderId}/edit`)}
+              style={({ pressed }) => [
+                { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: COLORS.surface },
+                pressed && { opacity: 0.9 },
+              ]}
+              accessibilityRole="button"
+            >
+              <Text style={{ color: COLORS.text, fontWeight: "800" }}>Edit</Text>
+            </Pressable>
+          ) : null
+        }
       />
 
       <View style={{ flex: 1 }}>
@@ -129,7 +189,6 @@ export default function BinderViewer() {
                 rows={item.rows}
                 cols={item.cols}
                 slots={item.slots}
-                // read-only → no handlers
                 onSlotPress={undefined}
                 onRemove={undefined}
                 onMove={undefined}
@@ -144,8 +203,8 @@ export default function BinderViewer() {
         pages={pages}
         activeIndex={index}
         onSelectIndex={setIndex}
-        onAddPage={undefined}     // read-only
-        onDeletePage={undefined}  // read-only
+        onAddPage={undefined}
+        onDeletePage={undefined}
       />
     </View>
   );

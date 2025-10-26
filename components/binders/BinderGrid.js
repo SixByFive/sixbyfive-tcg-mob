@@ -122,6 +122,7 @@ function imageCandidatesFrom({ id, image }) {
 function normalizeOneSlot(s) {
   if (!s) return null;
   const code = slotCardCode(s);
+  if (!code) return null;
   const direct =
     s?.image ??
     get(s, "card.image") ??
@@ -195,6 +196,11 @@ export default function BinderGrid({
     const codes = [];
     if (Array.isArray(raw)) {
       for (const row of raw) {
+
+        const qty = Number(row?.quantity ?? 0);
+        const wishlist = !!row?.wishlist;
+        if (!(qty > 0 ) || wishlist ) continue; 
+        
         const code =
           row?.card?.code ??
           row?.code ??
@@ -225,7 +231,7 @@ export default function BinderGrid({
     for (const s of renderSlots) {
       if (s) {
         used++;
-        // Prefer a real set code; else only treat id as a code if it *looks* like one
+        // Prefer a real set code; else only treat id as a code ifF it *looks* like one
         const code =
           (s?.code && looksLikeCode(s.code) ? String(s.code) : undefined) ||
           (looksLikeCode(s?.id) ? String(s.id) : "");

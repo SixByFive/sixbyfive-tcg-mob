@@ -32,11 +32,18 @@ import { filterBinders } from "../../utils/collectionFilters";
 
 import {
   CardByIdDocument,
+  MyBindersDocument,
   RemoveFromCollectionDocument,
   UpdateCollectionEntryDocument,
 } from "@sixbyfive/tcg-binder/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
-import { MY_BINDERS_SAFE } from "../../graphql/binders-temp";
+let MY_BINDERS_QUERY = MyBindersDocument;
+try {
+  const maybeSafe = require("../../graphql/binders-temp");
+  if (maybeSafe?.MY_BINDERS_SAFE) MY_BINDERS_QUERY = maybeSafe.MY_BINDERS_SAFE;
+} catch (err) {
+  if (__DEV__) console.warn("[CollectionTab] Safe myBinders query unavailable", err?.message ?? err);
+}
 
 // Shared set-name resolver (also used by Cards/Wishlist tabs)
 import { resolveSetNameForCardlike } from "../../utils/setNames";
@@ -291,7 +298,7 @@ export default function CollectionTab() {
     error: bindersError,
     refetch: refetchBinders,
     networkStatus: bindersNS,
-  } = useQuery(MY_BINDERS_SAFE, {
+  } = useQuery(MY_BINDERS_QUERY, {
     skip: !userId,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
@@ -973,7 +980,7 @@ export default function CollectionTab() {
             // pass normalized binders so name/color/cards/pages are present
             binders={filteredBinders}
             onCreate={() => router.push("/binder/new")}
-            onOpen={(id) => router.push(`/binder/${id}`)}
+            onOpen={(id) => router.push(`/binder/${id}/edit`)}
           />
           <View style={{ height: 28 }} />
         </ScrollView>

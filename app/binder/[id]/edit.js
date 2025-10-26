@@ -1,4 +1,5 @@
-import { useQuery } from "@apollo/client";
+// app/binder/[id]/edit.js  (BinderEditor)
+import { gql, useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -22,10 +23,48 @@ import PagePager from "../../../components/binders/PagePager";
 import PageHeaderBackSimple from "../../../components/common/PageHeaderBackSimple";
 import { COLORS } from "../../../theme/colors";
 
-// GraphQL
-import { BINDER_SAFE } from "../../../graphql/binders-temp";
+// ---------------- GraphQL: FORCE using graphql/binders-temp.js with a hard fallback ----------------
 
-// Shared actions
+// Minimal, schema-safe fallback (never undefined)
+const FALLBACK_BINDER_SAFE = gql`
+  query Binder_Safe_Fallback($id: ID!) {
+    binder(id: $id) {
+      id
+      name
+      coverColor
+      accentColor
+      pages {
+        id
+        title
+        pageOrder
+        layout
+        slots { id cardId position quantity notes }
+      }
+    }
+  }
+`;
+
+// Resolve the safe document robustly; never return undefined
+function resolveBinderQuery() {
+  try {
+    // Use require() so we bypass any ESM/CJS interop oddities
+    // Path from this file: ../../../graphql/binders-temp
+    // eslint-disable-next-line import/no-dynamic-require, global-require
+    const safe = require("../../../graphql/binders-temp");
+    const doc = safe?.BINDER_SAFE;
+    if (doc && typeof doc === "object" && doc.kind === "Document") {
+      return doc;
+    }
+  } catch (err) {
+    if (__DEV__) console.warn("[BinderEditor] require('../../../graphql/binders-temp') failed:", err?.message || err);
+  }
+  if (__DEV__) console.warn("[BinderEditor] Using FALLBACK_BINDER_SAFE (temp module missing or invalid export)");
+  return FALLBACK_BINDER_SAFE;
+}
+
+const BINDER_QUERY = resolveBinderQuery();
+
+// ---------------- Shared actions ----------------
 import useBinderActions from "../../../hooks/useBinderActions";
 
 const { width: SCREEN_W } = Dimensions.get("window");
@@ -47,29 +86,71 @@ function inferTemplateId(rows, cols) {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const looksLikeCode = (v) => typeof v === "string" && v.includes("-") && !UUID_RE.test(v);
 
-function toUiSlot(slot) {
+// Preserve the raw slot.id as _slotId so server moves can resolve by ID
+function toUiSlot(slot, searchHints) {
   if (!slot) return null;
   const rawCode = slot?.cardId ?? (looksLikeCode(slot?.id) ? slot.id : null);
   const code = rawCode ? String(rawCode) : null;
-  const id = code || (slot?.id ? String(slot.id) : "");
-  if (!id) return null;
-  const label = slot?.label || slot?.name || (code ? code.toUpperCase() : "");
-  return { id, cardId: code, code, image: "", label };
+  if (!code) return null;
+  const label = slot?.label || slot?.name || code.toUpperCase();
+  const fromSearch = Boolean(searchHints?.has(code));
+  return {
+    id: slot?.id ? String(slot.id) : code,       // UI id
+    _slotId: slot?.id ? String(slot.id) : undefined, // <- persist original slot id for server
+    cardId: code,
+    code,
+    image: "",
+    label,
+    ...(fromSearch ? { source: "search", notOwned: true } : {}),
+  };
 }
 
-function mapBinderToPagesUI(binder) {
+function placeSlot(grid, slot, preferredIdx) {
+  if (!Array.isArray(grid) || !grid.length || !slot) return;
+  const total = grid.length;
+  const inBounds =
+    typeof preferredIdx === "number" && preferredIdx >= 0 && preferredIdx < total
+      ? preferredIdx
+      : undefined;
+  if (inBounds != null && grid[inBounds] == null) {
+    grid[inBounds] = slot;
+    return;
+  }
+  const fallback = grid.findIndex((cell) => cell == null);
+  if (fallback !== -1) grid[fallback] = slot;
+}
+
+function mapBinderToPagesUI(binder, totalSlots, searchHints) {
   const pages = Array.isArray(binder?.pages) ? binder.pages : [];
-  return pages.map((p, i) => ({
-    id: String(p?.id ?? i),
-    title: p?.title ?? `Page ${i + 1}`,
-    slots: (Array.isArray(p?.slots) ? p.slots : []).map(toUiSlot),
-  }));
+  const size = Math.max(1, totalSlots || 0);
+
+  return pages.map((p, i) => {
+    const rawSlots = Array.isArray(p?.slots) ? p.slots : [];
+    const grid = Array.from({ length: size }, () => null);
+
+    rawSlots.forEach((raw) => {
+      const normalized = toUiSlot(raw, searchHints);
+      if (!normalized) return;
+      const pos = Number(raw?.position);
+      const preferred =
+        Number.isFinite(pos) && pos > 0 ? Math.min(size - 1, pos - 1) : undefined;
+      placeSlot(grid, normalized, preferred);
+    });
+
+    return {
+      id: String(p?.id ?? i),             // UI id
+      rawId: p?.id ? String(p.id) : undefined, // <- persist original page id for server
+      title: p?.title ?? `Page ${i + 1}`,
+      slots: grid,
+    };
+  });
 }
 
 export default function BinderEditor() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
-  const binderId = String(id || "");
+  // guard against array param
+  const binderId = String(Array.isArray(id) ? id[0] : id || "");
   const listRef = useRef(null);
 
   const {
@@ -81,8 +162,8 @@ export default function BinderEditor() {
     updateBinder: updateBinderServer,
   } = useBinderActions();
 
-  // Query binder
-  const { data, loading, error } = useQuery(BINDER_SAFE, {
+  // Query binder — BINDER_QUERY is guaranteed to be a DocumentNode now
+  const { data, loading, error } = useQuery(BINDER_QUERY, {
     variables: { id: binderId },
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
@@ -94,8 +175,22 @@ export default function BinderEditor() {
   const [name, setName] = useState("My Binder");
   const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
   const [layout, setLayout] = useState({ rows: 3, cols: 3 });
+  const [pendingSlotIndex, setPendingSlotIndex] = useState(null);
+  const [searchAddedCodes, setSearchAddedCodes] = useState(() => new Set());
 
-  const pages = useMemo(() => mapBinderToPagesUI(binder), [binder]);
+  const totalSlots = Math.max(1, Number(layout.rows || 0) * Number(layout.cols || 0));
+
+  const pages = useMemo(() => {
+    const mapped = mapBinderToPagesUI(binder, totalSlots, searchAddedCodes);
+    if (mapped.length) return mapped;
+    return [
+      {
+        id: "temp-0",
+        title: "Page 1",
+        slots: Array.from({ length: totalSlots }, () => null),
+      },
+    ];
+  }, [binder, totalSlots, searchAddedCodes]);
   const [index, setIndex] = useState(0);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -104,6 +199,11 @@ export default function BinderEditor() {
   useEffect(() => {
     listRef.current?.scrollToIndex?.({ index, animated: true });
   }, [index]);
+
+  useEffect(() => {
+    setSearchAddedCodes(new Set());
+    setPendingSlotIndex(null);
+  }, [binderId]);
 
   // hydrate from server
   useEffect(() => {
@@ -122,25 +222,53 @@ export default function BinderEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [binder?.id, binder?.name, binder?.layout, binder?.pages?.length]);
 
-  const currentPage = pages[index] || { slots: [] };
-  const totalSlots = layout.rows * layout.cols;
+  const currentPage = pages[index] || { slots: Array.from({ length: totalSlots }, () => null) };
+  const slotsRemaining = (currentPage?.slots || []).reduce(
+    (acc, slot) => acc + (slot ? 0 : 1),
+    0
+  );
 
   /* ---------------- handlers ---------------- */
 
   const openOptions = () => setOptionsOpen(true);
+  const openDrawer = (slotIdx = null) => {
+    setPendingSlotIndex(typeof slotIdx === "number" && slotIdx >= 0 ? slotIdx : null);
+    setDrawerOpen(true);
+  };
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    setPendingSlotIndex(null);
+  };
 
   // Add cards -> fill first empty slots (local walk). We pass real card codes.
-  const handleConfirmAdd = async (ids /*, meta */) => {
+  const handleConfirmAdd = async (ids, meta = {}) => {
     if (!binderId || !Array.isArray(ids) || !ids.length) return;
+    if (meta?.source === "search") {
+      setSearchAddedCodes((prev) => {
+        const next = new Set(prev);
+        let changed = false;
+        ids.forEach((raw) => {
+          const code = raw ? String(raw) : null;
+          if (code && !next.has(code)) {
+            next.add(code);
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    }
 
-    // local working copy for “find next empty”
-    const working = Array.from(currentPage?.slots || []);
+    // local working copy for "find next empty"
+    const working = Array.from({ length: totalSlots }, (_, i) => currentPage?.slots?.[i] ?? null);
     const findNextEmpty = (startAt = 0) => {
       for (let i = startAt; i < totalSlots; i++) if (!working[i]) return i;
       return -1;
     };
 
-    let nextIdx = findNextEmpty(0);
+    const preferredStart =
+      typeof pendingSlotIndex === "number" && pendingSlotIndex >= 0 ? pendingSlotIndex : 0;
+    let nextIdx = findNextEmpty(preferredStart);
+    if (nextIdx === -1) nextIdx = findNextEmpty(0);
 
     for (const cardId of ids) {
       if (nextIdx === -1) break;
@@ -148,8 +276,8 @@ export default function BinderEditor() {
         await addCardServer({
           binderId,
           pageIndex: index,
-          slotIndex: nextIdx,      // 0-based; actions convert to 1-based for bulk save
-          cardId,                  // must be the card code (e.g. "sv05-052")
+          slotIndex: nextIdx,      // 0-based; actions convert to 1-based
+          cardId,                  // e.g. "sv05-052"
         });
         // mark locally so subsequent picks skip this slot
         working[nextIdx] = { id: `local-${cardId}` };
@@ -159,24 +287,34 @@ export default function BinderEditor() {
       nextIdx = findNextEmpty(nextIdx + 1);
     }
 
-    setDrawerOpen(false);
+    closeDrawer();
   };
 
+  // Move within current page: send indexes + IDs + explicit 1-based position
   const handleMoveWithin = async (fromIdx, toIdx) => {
     if (!binderId || fromIdx === toIdx) return;
     try {
+      const page = pages[index];
+      const fromSlot = page?.slots?.[fromIdx];
       await moveSlotServer({
         binderId,
+        // index-based (legacy)
         fromPage: index,
         fromSlot: fromIdx,
         toPage: index,
-        toSlot: toIdx, // action turns into position = toIdx + 1
+        toSlot: toIdx,
+        // id-based (robust)
+        fromPageId: page?.rawId,
+        toPageId: page?.rawId,
+        fromSlotId: fromSlot?._slotId,
+        position: toIdx + 1, // explicit destination position (1-based)
       });
     } catch (e) {
       console.warn("moveSlot (within) failed", e);
     }
   };
 
+  // Move across pages: send destination pageId + explicit 1-based position
   const handleMoveToPage = async (fromIdx, dir) => {
     if (!binderId) return;
 
@@ -198,17 +336,25 @@ export default function BinderEditor() {
     }
 
     // find first empty slot on destination, using our current snapshot
-    const destUi = pages[targetIndex] || { slots: [] };
-    const empty = (destUi.slots || []).findIndex((s) => !s);
+    const srcPage = pages[index] || { slots: [] };
+    const destPage = pages[targetIndex] || { slots: [] };
+    const empty = (destPage.slots || []).findIndex((s) => !s);
     if (empty === -1) return;
 
     try {
+      const fromSlot = srcPage?.slots?.[fromIdx];
       await moveSlotServer({
         binderId,
+        // index-based
         fromPage: index,
         fromSlot: fromIdx,
         toPage: targetIndex,
-        toSlot: empty, // converts to 1-based inside action
+        toSlot: empty,
+        // id-based (robust)
+        fromPageId: srcPage?.rawId,
+        toPageId: destPage?.rawId,
+        fromSlotId: fromSlot?._slotId,
+        position: empty + 1, // explicit 1-based destination
       });
     } catch (e) {
       console.warn("moveSlot (across pages) failed", e);
@@ -217,8 +363,18 @@ export default function BinderEditor() {
 
   const handleRemove = async (slotIdx) => {
     if (!binderId) return;
+    const slot = pages[index]?.slots?.[slotIdx];
+    const codeToDrop = slot?.cardId || slot?.code;
     try {
       await removeSlotServer({ binderId, pageIndex: index, slotIndex: slotIdx });
+      if (codeToDrop) {
+        setSearchAddedCodes((prev) => {
+          if (!prev.has(codeToDrop)) return prev;
+          const next = new Set(prev);
+          next.delete(codeToDrop);
+          return next;
+        });
+      }
     } catch (e) {
       console.warn("removeSlot failed", e);
     }
@@ -344,7 +500,7 @@ export default function BinderEditor() {
         subtitle={`Page ${index + 1} / ${pages.length || 1}`}
         onBack={() => router.back()}
         right={
-          <Pressable onPress={() => setDrawerOpen(true)} style={({ pressed }) => [styles.hBtn, pressed && { opacity: 0.85 }]}>
+          <Pressable onPress={() => openDrawer(null)} style={({ pressed }) => [styles.hBtn, pressed && { opacity: 0.85 }]}>
             <Text style={styles.hBtnText}>Add cards</Text>
           </Pressable>
         }
@@ -371,7 +527,7 @@ export default function BinderEditor() {
                 rows={layout.rows}
                 cols={layout.cols}
                 slots={item.slots}
-                onSlotPress={() => setDrawerOpen(true)}
+                onSlotPress={(slotIdx) => openDrawer(slotIdx)}
                 onRemove={handleRemove}
                 onMove={handleMoveWithin}
                 onMoveToPage={handleMoveToPage}
@@ -391,8 +547,8 @@ export default function BinderEditor() {
 
       <AddCardsDrawer
         visible={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        destination={{ pageIndex: index, pageLabel: `Page ${index + 1}` }}
+        onClose={closeDrawer}
+        destination={{ pageIndex: index, pageLabel: `Page ${index + 1}`, slotIndex: pendingSlotIndex, slotsLeft: slotsRemaining }}
         onChangeDestination={() => {}}
         onConfirmAdd={handleConfirmAdd}
       />

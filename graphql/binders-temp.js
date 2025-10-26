@@ -1,4 +1,4 @@
-// graphql/binders.temp.js
+// graphql/binders-temp.js
 import { gql } from "@apollo/client";
 
 /** List tiles: enough to render cover, name, and counts without per-binder hydration. */

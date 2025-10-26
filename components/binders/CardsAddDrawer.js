@@ -1,12 +1,13 @@
 // components/binders/CardsAddDrawer.js
 //
-// Self-fetches:
-//  - Your collection (MyCollectionDocument) when `collection` prop is not provided
-//  - Name-only search results (SearchCardsConnectionDocument) when tab === "search"
-// Exposes normalized items where `item.id` is ALWAYS the card code (e.g. "sv05-052").
-// This ensures we pass the correct `cardId` to the binder mutation even when coming from Search.
+// CHANGES
+// - Collection fetch now uses the same inline query as app/(tabs)/collection.js (MY_COLLECTION_APP).
+// - Normalizes collection entries so item.id is ALWAYS the card code (e.g. "sv05-052").
+// - Images now use TCGdex→PokemonTCG fallbacks derived from the code.
+// - Search GQL resolution is robust (temp -> codegen -> inline fallback), so we never pass undefined.
+// - Layout spacing matches collection grid (gap and padding tweaks).
 
-import { useLazyQuery, useQuery } from "@apollo/client";
+import { gql, useLazyQuery, useQuery } from "@apollo/client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -25,13 +26,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../theme/colors";
 
-// GraphQL docs (generated)
-import {
-  MyCollectionDocument,
-  SearchCardsConnectionDocument,
-} from "@sixbyfive/tcg-binder/client";
-
-// UI
 import CardSelectableTile from "../card/CardSelectableTile";
 import SelectBar from "../common/SelectBar";
 
@@ -41,13 +35,12 @@ const SEARCH_DEBOUNCE_MS = 250;
 /* ----------------------- helpers ----------------------- */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CODE_RE = /^[a-z]{2,4}\d{1,4}-[0-9a-z]{2,6}$/i; // e.g. sv05-052, swsh9-123, etc.
+const CODE_RE = /^[a-z]{2,4}\d{1,4}-[0-9a-z]{2,6}$/i; // e.g. sv05-052, swsh9-123
 function looksLikeCardCode(v) {
   if (typeof v !== "string") return false;
   const s = v.trim();
   return CODE_RE.test(s) && !UUID_RE.test(s);
 }
-
 function firstTruthy(arr) {
   for (let i = 0; i < arr.length; i += 1) {
     const v = arr[i];
@@ -55,43 +48,33 @@ function firstTruthy(arr) {
   }
   return undefined;
 }
-
-/** Extract a real card code from varied shapes (collection rows, plain cards, search nodes). */
 function extractCardCode(obj) {
   if (!obj || typeof obj !== "object") return undefined;
-
-  // Prefer explicit code fields; safe fallbacks ONLY if they look like codes (not UUIDs)
   const candidates = [
+    obj.card && obj.card.id,
     obj.card && obj.card.code,
     obj.code,
     obj.cardCode,
     obj.cardId, // some backends return the code here
     obj.variant && obj.variant.code,
     (obj.variant && looksLikeCardCode(obj.variant.id)) ? obj.variant.id : undefined,
-    // sometimes code is (wrongly) stuffed into card.id; allow ONLY if it matches code shape:
     (obj.card && looksLikeCardCode(obj.card.id)) ? obj.card.id : undefined,
-    // 🔥 this is the important fallback for name-only search results:
     looksLikeCardCode(obj.id) ? obj.id : undefined,
   ];
-
   for (let i = 0; i < candidates.length; i += 1) {
     const c = candidates[i];
     if (looksLikeCardCode(c)) return String(c).trim();
   }
   return undefined;
 }
-
 function toArray(input) {
   if (!input) return [];
   if (Array.isArray(input)) return input;
-
   if (Array.isArray(input.edges)) return input.edges.map((e) => (e && (e.node || e))).filter(Boolean);
   if (Array.isArray(input.nodes)) return input.nodes.filter(Boolean);
   if (Array.isArray(input.items)) return input.items.filter(Boolean);
   if (Array.isArray(input.results)) return input.results.filter(Boolean);
   if (Array.isArray(input.entries)) return input.entries.filter(Boolean);
-
-  // try one nested layer
   const keys = Object.keys(input || {});
   for (let i = 0; i < keys.length; i += 1) {
     const v = input[keys[i]];
@@ -105,17 +88,85 @@ function toArray(input) {
   return [];
 }
 
+/* ---------- image helpers (TCGdex → PokemonTCG fallbacks built from code) ---------- */
+function forceHttps(url) {
+  if (!url || typeof url !== "string") return null;
+  return url.replace(/^http:\/\//i, "https://");
+}
+function isAbs(url) {
+  return /^https?:\/\//i.test(url || "");
+}
+function parseCardCodeId(code) {
+  if (typeof code !== "string") return { setCode: null, number: null };
+  const [setCodeRaw, ...rest] = code.split("-");
+  const setCode = (setCodeRaw || "").trim();
+  const number = rest.join("-").trim() || null;
+  return { setCode: setCode || null, number };
+}
+function inferEraFromSetCode(code) {
+  const c = (code || "").toLowerCase().replace(/\s+/g, "");
+  const m = c.match(/^[a-z]+/);
+  return m ? m[0] : null; // "sv" from "sv05"
+}
+function tcgdexFromParts(setCode, number, era = null, quality = "high") {
+  if (!setCode || !number) return null;
+  const eraSlug = (era || inferEraFromSetCode(setCode) || "")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+  const numPadded = String(number).replace(/^0+/, "").padStart(3, "0");
+  if (!eraSlug) return null;
+  return `https://assets.tcgdex.net/en/${eraSlug}/${setCode}/${numPadded}/${quality}.webp`;
+}
+function pokemontcgFromParts(setCode, number, hires = true) {
+  if (!setCode || !number) return null;
+  const n = String(number).replace(/^0+/, "");
+  const suffix = hires ? "_hires" : "";
+  return `https://images.pokemontcg.io/${setCode}/${n}${suffix}.png`;
+}
+function buildImageCandidatesFromCode(code, explicitImage) {
+  const out = [];
+  if (explicitImage && isAbs(explicitImage)) out.push(forceHttps(explicitImage));
+
+  const { setCode, number } = parseCardCodeId(code);
+  if (setCode && number) {
+    const era = inferEraFromSetCode(setCode);
+    const dHigh = tcgdexFromParts(setCode, number, era, "high");
+    const dLow  = tcgdexFromParts(setCode, number, era, "low");
+    if (dHigh) out.push(dHigh);
+    if (dLow)  out.push(dLow);
+
+    const pHires = pokemontcgFromParts(setCode, number, true);
+    const pStd   = pokemontcgFromParts(setCode, number, false);
+    if (pHires) out.push(pHires);
+    if (pStd)   out.push(pStd);
+  }
+
+  const seen = new Set();
+  const list = out
+    .map(forceHttps)
+    .filter(Boolean)
+    .filter((u) => {
+      const k = String(u || "");
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+
+  const tcgdexFirst =
+    list.find((u) => u.includes("assets.tcgdex.net")) || list[0] || "";
+  return [tcgdexFirst, ...list.filter((u) => u !== tcgdexFirst)];
+}
+
+/* Normalize a generic card-ish object into { id: <code>, name, image } */
 function normalizeCard(obj) {
   if (!obj) return null;
-
-  // IMPORTANT: id must be the real card code that exists in `cards(id)`
   const code = extractCardCode(obj);
   if (!code) return null;
 
   const name =
     firstTruthy([obj.name, obj.card && obj.card.name, obj.title, obj.cardTitle]) || "";
 
-  const image =
+  const rawImage =
     firstTruthy([
       obj.image,
       obj.imageUrl,
@@ -127,16 +178,87 @@ function normalizeCard(obj) {
       obj.variant && obj.variant.image,
     ]) || "";
 
+  const candidates = buildImageCandidatesFromCode(code, rawImage);
+  const image = candidates[0] || rawImage || "";
+
   return { ...obj, id: code, name, image };
 }
 
-function normalizeCollection(data) {
-  const root = (data && (data.myCollection || data.collection)) || data || [];
-  return toArray(root).map(normalizeCard).filter(Boolean);
+/* ----------------------- GraphQL: COLLECTION (inline, same as collection.js) ----------------------- */
+
+const MY_COLLECTION_APP = gql`
+  query MyCollectionApp {
+    myCollection {
+      id
+      cardId
+      quantity
+      variation
+      condition
+      wishlist
+      card {
+        id
+        name
+        number
+        image
+        rarity
+        setName
+      }
+    }
+  }
+`;
+
+/* ----------------------- GraphQL: SEARCH robust resolution ----------------------- */
+
+// Inline fallback for search (connection)
+const FALLBACK_SEARCH_CONNECTION = gql`
+  query SearchCardsConnection_Safe($input: SearchCardsInput!) {
+    searchCardsConnection(input: $input) {
+      edges {
+        node {
+          id
+          name
+          image
+        }
+      }
+    }
+  }
+`;
+
+function resolveDoc(preferredKeys, fallbackDoc) {
+  try {
+    const temp = require("../../graphql/binders-temp");
+    for (const k of preferredKeys) {
+      const d = temp?.[k];
+      if (d && typeof d === "object" && d.kind === "Document") return d;
+    }
+  } catch (_) {}
+  try {
+    const client = require("@sixbyfive/tcg-binder/client");
+    for (const k of preferredKeys) {
+      const d = client?.[k];
+      if (d && typeof d === "object" && d.kind === "Document") return d;
+    }
+  } catch (_) {}
+  return fallbackDoc || null;
 }
 
+const SEARCH_CONNECTION_DOC = resolveDoc(
+  [
+    "SEARCH_CARDS_CONNECTION_SAFE",
+    "SearchCardsConnectionDocument",
+    "SearchCardsDocument",
+    "CardsSearchDocument",
+  ],
+  FALLBACK_SEARCH_CONNECTION
+);
+
+const HAS_SEARCH_GQL = !!(SEARCH_CONNECTION_DOC && SEARCH_CONNECTION_DOC.kind === "Document");
+
 function normalizeSearch(data) {
-  const root = (data && (data.searchCardsConnection || data.searchCards)) || data || [];
+  const root =
+    (data && (data.searchCardsConnection || data.searchCards || data.cardsSearch)) ||
+    data ||
+    [];
   return toArray(root).map(normalizeCard).filter(Boolean);
 }
 
@@ -150,13 +272,14 @@ export default function AddCardsDrawer({
   onConfirmAdd,
 
   // Optional overrides (kept for backward-compat)
-  collection = undefined, // If undefined → will self-fetch MyCollection
-  search = undefined, // If undefined → will self-fetch search results
-  ownedSet = undefined, // If undefined → will derive from (self) collection
+  collection = undefined, // If undefined → will self-fetch via MY_COLLECTION_APP
+  search = undefined,     // If undefined → self-search (if SEARCH_CONNECTION_DOC exists)
+  ownedSet = undefined,   // If undefined → derive from fetched collection
 }) {
   const [tab, setTab] = useState("collection");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(new Set());
+  const [manual, setManual] = useState(""); // manual code input if search gql missing
 
   const insets = useSafeAreaInsets();
 
@@ -177,17 +300,13 @@ export default function AddCardsDrawer({
 
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: function (_e, g) {
-        return g.dy > 5 && Math.abs(g.dx) < 20;
-      },
-      onPanResponderMove: function (_e, g) {
-        translateY.setValue(Math.max(0, g.dy));
-      },
-      onPanResponderRelease: function (_e, g) {
+      onMoveShouldSetPanResponder: (_e, g) => g.dy > 5 && Math.abs(g.dx) < 20,
+      onPanResponderMove: (_e, g) => translateY.setValue(Math.max(0, g.dy)),
+      onPanResponderRelease: (_e, g) => {
         const dy = Math.max(0, g.dy);
         if (dy > THRESHOLD) {
           Animated.timing(translateY, { toValue: SHEET_CLOSE_OFFSET, duration: 180, useNativeDriver: false }).start(
-            function () {
+            () => {
               translateY.setValue(0);
               handleCancel();
             }
@@ -196,32 +315,43 @@ export default function AddCardsDrawer({
           Animated.spring(translateY, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start();
         }
       },
-      onPanResponderTerminate: function () {
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start();
-      },
+      onPanResponderTerminate: () =>
+        Animated.spring(translateY, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start(),
     })
   ).current;
 
-  /* ------------------------------ data: collection ------------------------------ */
+  /* ------------------------------ data: collection (inline query same as collection.js) ------------------------------ */
 
   const shouldFetchCollection = typeof collection === "undefined";
   const {
-    data: myCollectionData,
-    loading: myCollectionLoading,
-    error: myCollectionError,
-  } = useQuery(MyCollectionDocument, {
+    data: collData,
+    loading: collLoading,
+    error: collError,
+  } = useQuery(MY_COLLECTION_APP, {
     skip: !visible || !shouldFetchCollection,
-    fetchPolicy: "cache-first",
-    nextFetchPolicy: "cache-first",
+    fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
   });
 
   const myCollection = useMemo(() => {
     if (!shouldFetchCollection) return Array.isArray(collection) ? collection : [];
-    return normalizeCollection(myCollectionData);
-  }, [shouldFetchCollection, collection, myCollectionData]);
+    const root = collData?.myCollection;
+    const rows = Array.isArray(root) ? root : toArray(root);
+    // Normalize: output items with id=card code + robust image derived from code
+    return rows
+      .map((entry) => {
+        const code = extractCardCode({ id: entry?.card?.id ?? entry?.cardId });
+        if (!code) return null;
+        const name = entry?.card?.name ?? "";
+        const rawImage = entry?.card?.image ?? "";
+        const candidates = buildImageCandidatesFromCode(code, rawImage);
+        const image = candidates[0] || rawImage || "";
+        return { id: code, name, image, _collection: entry };
+      })
+      .filter(Boolean);
+  }, [shouldFetchCollection, collection, collData]);
 
-  // Owned set (for “Not owned” badge on Search tab) — uses codes
+  // Owned set for "Not owned" pills on Search tab (uses codes)
   const derivedOwnedSet = useMemo(() => {
     if (ownedSet instanceof Set) return ownedSet;
     return new Set(myCollection.map((c) => String(c.id)));
@@ -229,73 +359,67 @@ export default function AddCardsDrawer({
 
   /* ------------------------------ data: search ------------------------------ */
 
-  const shouldSelfSearch = typeof search === "undefined";
+  const shouldSelfSearch = typeof search === "undefined" && HAS_SEARCH_GQL;
   const [
     runSearch,
     { data: searchData, loading: searchLoading, error: searchError, called, networkStatus },
-  ] = useLazyQuery(SearchCardsConnectionDocument, {
+  ] = useLazyQuery(SEARCH_CONNECTION_DOC, {
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
-    onCompleted: (d) => {
-      const n =
-        (d?.searchCardsConnection?.edges?.length ??
-          d?.searchCardsConnection?.nodes?.length ??
-          d?.searchCards?.length ??
-          0) || 0;
-      console.log("[Search] completed, count:", n);
-    },
-    onError: (e) => {
-      console.warn(
-        "[Search] error:",
-        e?.message,
-        e?.graphQLErrors?.map((x) => x.message),
-        e?.networkError?.message
-      );
-    },
   });
 
-  // Debounce search
   const lastFiredRef = useRef("");
   useEffect(() => {
     if (!visible || !shouldSelfSearch) return;
     if (tab !== "search") return;
-
     const q = (query || "").trim();
     if (q.length < SEARCH_MIN_CHARS) return;
 
-    const t = setTimeout(function () {
-      // Avoid re-firing the same string repeatedly
+    const t = setTimeout(() => {
       if (lastFiredRef.current === q) return;
       lastFiredRef.current = q;
-
-      const vars = { input: { name: q, first: 50, budget: 8, trustUpstream: true } };
-      console.log("[Search] run", vars);
-      runSearch({ variables: vars });
+      const variables = { input: { name: q, first: 50, budget: 8, trustUpstream: true } };
+      runSearch({ variables });
     }, SEARCH_DEBOUNCE_MS);
-
-    return function cleanup() {
-      clearTimeout(t);
-    };
+    return () => clearTimeout(t);
   }, [visible, tab, query, shouldSelfSearch, runSearch]);
 
-  // Derived results + “searching” flag that won’t stick forever
   const searchResults = useMemo(() => {
-    if (!shouldSelfSearch) return Array.isArray(search) ? search : [];
+    if (typeof search !== "undefined") return Array.isArray(search) ? search : [];
+    if (!HAS_SEARCH_GQL) return [];
     if ((query || "").trim().length < SEARCH_MIN_CHARS) return [];
     return normalizeSearch(searchData);
-  }, [shouldSelfSearch, search, searchData, query]);
+  }, [search, searchData, query]);
 
-  // Apollo’s `loading` can be true for several networkStatus values.
-  // Only show the spinner when we actually fired a query for this tab+query.
   const searching =
     tab === "search" &&
+    HAS_SEARCH_GQL &&
     (searchLoading || (called && !searchError && !searchData && (query || "").trim().length >= SEARCH_MIN_CHARS));
 
   /* ------------------------------ selection & list ------------------------------ */
 
+  const manualIds = useMemo(() => {
+    if (!manual) return [];
+    return manual
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(looksLikeCardCode);
+  }, [manual]);
+
+  const manualResultItems = useMemo(
+    () => manualIds.map((id) => {
+      const candidates = buildImageCandidatesFromCode(id, "");
+      const image = candidates[0] || "";
+      return { id, name: id, image };
+    }),
+    [manualIds]
+  );
+
   const list = useMemo(() => {
-    return tab === "collection" ? myCollection : searchResults;
-  }, [tab, myCollection, searchResults]);
+    if (tab === "collection") return myCollection;
+    if (HAS_SEARCH_GQL) return searchResults;
+    return manualResultItems; // manual fallback
+  }, [tab, myCollection, searchResults, manualResultItems]);
 
   const toggle = (id) => {
     const key = String(id);
@@ -313,15 +437,13 @@ export default function AddCardsDrawer({
 
   const confirm = () => {
     if (selected.size && onConfirmAdd) {
-      // IMPORTANT: we pass card codes here — exactly what the binder expects.
       onConfirmAdd(Array.from(selected), { source: tab });
-      console.log("[Drawer] selected ids (should be codes):", Array.from(selected));
     }
     clear();
     if (onClose) onClose();
   };
 
-  const isLoading = tab === "collection" ? myCollectionLoading : searching;
+  const isLoading = tab === "collection" ? collLoading : searching;
   const showEmpty = !isLoading && list.length === 0;
 
   return (
@@ -364,74 +486,98 @@ export default function AddCardsDrawer({
               </View>
 
               {tab === "search" ? (
-                <TextInput
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder={"Search cards… (min " + SEARCH_MIN_CHARS + ")"}
-                  placeholderTextColor={COLORS.textMuted}
-                  style={styles.searchInput}
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                />
+                HAS_SEARCH_GQL ? (
+                  <TextInput
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder={"Search cards… (min " + SEARCH_MIN_CHARS + ")"}
+                    placeholderTextColor={COLORS.textMuted}
+                    style={styles.searchInput}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                  />
+                ) : (
+                  <TextInput
+                    value={manual}
+                    onChangeText={setManual}
+                    placeholder={"Search offline: paste codes (e.g. sv05-052, sv05-100)"}
+                    placeholderTextColor={COLORS.textMuted}
+                    style={styles.searchInput}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                    multiline
+                  />
+                )
               ) : null}
             </View>
 
             {/* Content */}
-            <FlatList
-              data={list}
-              keyExtractor={(c) => String(c.id)}
-              numColumns={2}
-              contentContainerStyle={{
-                paddingHorizontal: 12,
-                paddingBottom: SELECTION_BAR_HEIGHT + insets.bottom + 12,
-              }}
-              columnWrapperStyle={{ justifyContent: "space-between", marginBottom: 10 }}
-              renderItem={({ item }) => {
-                const id = String(item.id); // card code
-                const isSelected = selected.has(id);
-                const notOwned = tab === "search" ? !derivedOwnedSet.has(id) : false;
-                return (
-                  <CardSelectableTile
-                    card={item}
-                    selected={isSelected}
-                    notOwned={notOwned}
-                    onPress={() => toggle(id)}
-                    onLongPress={() => toggle(id)}
-                  />
-                );
-              }}
-              ListEmptyComponent={() => (
-                <View style={styles.empty}>
-                  {tab === "search" ? (
+            {isLoading ? (
+              <View style={styles.empty}>
+                <ActivityIndicator color={COLORS.accent} />
+                <Text style={[styles.emptyText, { marginTop: 8 }]}>Loading…</Text>
+              </View>
+            ) : showEmpty ? (
+              <View style={styles.empty}>
+                {tab === "search" ? (
+                  HAS_SEARCH_GQL ? (
                     (query || "").trim().length < SEARCH_MIN_CHARS ? (
-                      <Text style={styles.emptyText}>{"Type at least " + SEARCH_MIN_CHARS + " characters to search."}</Text>
-                    ) : searching ? (
-                      <>
-                        <ActivityIndicator color={COLORS.accent} />
-                        <Text style={[styles.emptyText, { marginTop: 8 }]}>
-                          Searching… {called ? "(networkStatus " + networkStatus + ")" : ""}
-                        </Text>
-                      </>
-                    ) : searchError ? (
-                      <Text style={styles.emptyText}>Search failed. Please try again.</Text>
+                      <Text style={styles.emptyText}>
+                        {"Type at least " + SEARCH_MIN_CHARS + " characters to search."}
+                      </Text>
                     ) : (
                       <Text style={styles.emptyText}>No results.</Text>
                     )
-                  ) : myCollectionError ? (
-                    <Text style={styles.emptyText}>Failed to load your collection.</Text>
+                  ) : manualIds.length === 0 ? (
+                    <Text style={styles.emptyText}>
+                      Paste one or more codes (e.g. sv05-052) separated by spaces or commas.
+                    </Text>
                   ) : (
-                    <Text style={styles.emptyText}>No cards in your collection.</Text>
-                  )}
-                </View>
-              )}
-              keyboardShouldPersistTaps="handled"
-            />
+                    <Text style={styles.emptyText}>No valid codes detected.</Text>
+                  )
+                ) : collError ? (
+                  <Text style={styles.emptyText}>Failed to load your collection.</Text>
+                ) : (
+                  <Text style={styles.emptyText}>No cards in your collection.</Text>
+                )}
+              </View>
+            ) : (
+              <FlatList
+                data={list}
+                keyExtractor={(c) => String(c.id)}
+                numColumns={2}
+                contentContainerStyle={{
+                  paddingHorizontal: 6, // match collection grid
+                  paddingBottom: SELECTION_BAR_HEIGHT + insets.bottom + 12,
+                }}
+                columnWrapperStyle={styles.column} // match collection grid gap
+                renderItem={({ item }) => {
+                  const id = String(item.id); // card code
+                  const isSelected = selected.has(id);
+                  const notOwned = tab === "search" ? !derivedOwnedSet.has(id) : false;
+                  return (
+                    <CardSelectableTile
+                      card={item}
+                      selected={isSelected}
+                      notOwned={notOwned}
+                      onPress={() => toggle(id)}
+                      onLongPress={() => toggle(id)}
+                    />
+                  );
+                }}
+                keyboardShouldPersistTaps="handled"
+                ListFooterComponent={<View style={{ height: 8 }} />}
+              />
+            )}
 
             {/* Selection bar */}
             <SelectBar
               count={selected.size}
               onAdd={confirm}
-              onClear={clear}
+              onClear={() => {
+                setSelected(new Set());
+                setManual("");
+              }}
               onCancel={handleCancel}
               bottomInset={insets.bottom}
               styleOverride={styles.selectBarOverride}
@@ -510,8 +656,11 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 
-  empty: { alignItems: "center", paddingVertical: 16 },
-  emptyText: { color: COLORS.textMuted },
+  // match collection grid spacing
+  column: { gap: 4 },
+
+  empty: { alignItems: "center", paddingVertical: 16, paddingHorizontal: 12 },
+  emptyText: { color: COLORS.textMuted, textAlign: "center" },
 
   // thin top border to visually anchor the bar to the sheet
   selectBarOverride: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.border },

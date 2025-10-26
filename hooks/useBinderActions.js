@@ -2,18 +2,29 @@
 import { useApolloClient, useMutation } from "@apollo/client";
 import {
   AddCardToBinderDocument,
+  BinderDocument,
   BrowseBindersDocument,
   CreateBinderDocument,
   DeleteBinderDocument,
   MoveBinderSlotDocument,
+  MyBindersDocument,
   MyCollectionDocument,
   RemoveBinderSlotDocument,
   SaveBinderPagesAndSlotsDocument,
   UpdateBinderDocument,
 } from "@sixbyfive/tcg-binder/client";
-import { BINDER_SAFE, MY_BINDERS_SAFE } from "../graphql/binders-temp";
 import { useCallback } from "react";
 import useToast from "./useToast";
+
+let SAFE_DOCS = {};
+try {
+  SAFE_DOCS = require("../graphql/binders-temp");
+} catch (err) {
+  if (__DEV__) console.warn("[useBinderActions] Safe binder queries unavailable", err?.message ?? err);
+}
+
+const BINDER_QUERY = SAFE_DOCS.BINDER_SAFE || BinderDocument;
+const MY_BINDERS_QUERY = SAFE_DOCS.MY_BINDERS_SAFE || MyBindersDocument;
 
 /* ----------------------------- debug helpers ----------------------------- */
 
@@ -289,14 +300,14 @@ export default function useBinderActions() {
   /** keep browse/my lists fresh after meta changes */
   function upsertBinderListCache(binder) {
     try {
-      const mine = apollo.readQuery({ query: MY_BINDERS_SAFE });
+      const mine = apollo.readQuery({ query: MY_BINDERS_QUERY });
       const list = mine?.myBinders;
       if (Array.isArray(list)) {
         const exists = list.some((b) => sid(b.id) === sid(binder.id));
         const myBinders = exists
           ? list.map((b) => (sid(b.id) === sid(binder.id) ? { ...b, ...binder } : b))
           : [binder, ...list];
-        apollo.writeQuery({ query: MY_BINDERS_SAFE, data: { myBinders } });
+        apollo.writeQuery({ query: MY_BINDERS_QUERY, data: { myBinders } });
       }
     } catch {}
     try {
@@ -387,7 +398,7 @@ export default function useBinderActions() {
     if (wantsLayoutChange) {
       const desiredLayout =
         (typeof templateId === "string" && templateId) || layoutFromRowsCols(rows, cols);
-      const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id } });
+      const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id } });
       const binder = cached?.binder;
       if (binder) {
         const pagesPayload = buildPagesPayloadWithNewLayout(binder, desiredLayout);
@@ -406,10 +417,10 @@ export default function useBinderActions() {
       await deleteBinderMut({ variables: vars });
       // prune lists
       try {
-        const mine = apollo.readQuery({ query: MY_BINDERS_SAFE });
+        const mine = apollo.readQuery({ query: MY_BINDERS_QUERY });
         if (mine?.myBinders) {
           apollo.writeQuery({
-            query: MY_BINDERS_SAFE,
+            query: MY_BINDERS_QUERY,
             data: { myBinders: mine.myBinders.filter((b) => sid(b.id) !== id) },
           });
         }
@@ -446,7 +457,7 @@ export default function useBinderActions() {
    */
   async function addPage(binderId) {
     const id = sid(binderId);
-    const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id } });
+    const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id } });
     const binder = cached?.binder;
     const pages = Array.isArray(binder?.pages) ? binder.pages : [];
     const layout = pages[0]?.layout || "pocket-9";
@@ -464,7 +475,7 @@ export default function useBinderActions() {
     try {
       const { data } = await savePagesMut({
         variables: { binderId: id, pages: payload },
-        refetchQueries: [{ query: BINDER_SAFE, variables: { id } }],
+        refetchQueries: [{ query: BINDER_QUERY, variables: { id } }],
       });
       return data?.saveBinderPagesAndSlots ?? data?.binder ?? null;
     } catch (e) {
@@ -478,7 +489,7 @@ export default function useBinderActions() {
    */
   async function removePage(binderId, pageIndexOrId) {
     const id = sid(binderId);
-    const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id } });
+    const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id } });
     const binder = cached?.binder;
     const pages = Array.isArray(binder?.pages) ? binder.pages : [];
     if (pages.length <= 1) {
@@ -529,7 +540,7 @@ export default function useBinderActions() {
     try {
       await savePagesMut({
         variables: { binderId: id, pages: payload },
-        refetchQueries: [{ query: BINDER_SAFE, variables: { id } }],
+        refetchQueries: [{ query: BINDER_QUERY, variables: { id } }],
       });
       return true;
     } catch (e) {
@@ -548,7 +559,7 @@ export default function useBinderActions() {
     try {
       const { data } = await savePagesMut({
         variables: { binderId: id, pages },
-        refetchQueries: [{ query: BINDER_SAFE, variables: { id } }],
+        refetchQueries: [{ query: BINDER_QUERY, variables: { id } }],
       });
       return data?.saveBinderPagesAndSlots ?? data?.binder ?? null;
     } catch (e) {
@@ -583,7 +594,7 @@ export default function useBinderActions() {
 
     if (!pid) {
       if (!bId) throw new Error("addCard requires pageId or binderId");
-      const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id: bId } });
+      const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id: bId } });
       const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
       const p = pages[Number(pageIndex) || 0];
       if (!p?.id) throw new Error("Unable to resolve pageId from binder cache");
@@ -607,7 +618,7 @@ export default function useBinderActions() {
     try {
       const { data } = await addCardMut({
         variables: fastVars,
-        refetchQueries: bId ? [{ query: BINDER_SAFE, variables: { id: bId } }] : undefined,
+        refetchQueries: bId ? [{ query: BINDER_QUERY, variables: { id: bId } }] : undefined,
       });
       const added = data?.addCardToBinder ?? null;
       log("[Binder/addCard fast] ok:", !!added);
@@ -621,11 +632,11 @@ export default function useBinderActions() {
         bId ||
         (() => {
           try {
-            const mine = apollo.readQuery({ query: MY_BINDERS_SAFE })?.myBinders || [];
+            const mine = apollo.readQuery({ query: MY_BINDERS_QUERY })?.myBinders || [];
             for (const b of mine) {
               try {
                 const cached = apollo.readQuery({
-                  query: BINDER_SAFE,
+                  query: BINDER_QUERY,
                   variables: { id: sid(b.id) },
                 });
                 const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
@@ -639,7 +650,7 @@ export default function useBinderActions() {
 
       const cachedBinder =
         apollo.readQuery({
-          query: BINDER_SAFE,
+          query: BINDER_QUERY,
           variables: { id: binderIdToUse },
         })?.binder || null;
       if (!cachedBinder) throw e;
@@ -661,7 +672,7 @@ export default function useBinderActions() {
       try {
         const { data } = await savePagesMut({
           variables: { binderId: binderIdToUse, pages: pagesPayload },
-          refetchQueries: [{ query: BINDER_SAFE, variables: { id: binderIdToUse } }],
+          refetchQueries: [{ query: BINDER_QUERY, variables: { id: binderIdToUse } }],
         });
         const ok = data?.saveBinderPagesAndSlots ?? data?.binder ?? null;
         log("[Binder/addCard fallback] ok:", !!ok);
@@ -682,7 +693,7 @@ export default function useBinderActions() {
    */
   async function moveSlot({ binderId, fromPage, fromSlot, toPage, toSlot }) {
     const bId = sid(binderId);
-    const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id: bId } });
+    const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id: bId } });
     const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
 
     const fromPg = pages[Number(fromPage) || 0];
@@ -699,7 +710,7 @@ export default function useBinderActions() {
     try {
       await moveSlotMut({
         variables: vars,
-        refetchQueries: [{ query: BINDER_SAFE, variables: { id: bId } }],
+        refetchQueries: [{ query: BINDER_QUERY, variables: { id: bId } }],
       });
       return true;
     } catch (e) {
@@ -711,7 +722,7 @@ export default function useBinderActions() {
   /** Remove a slot (resolve id from page/slot index) */
   async function removeSlot({ binderId, pageIndex, slotIndex }) {
     const bId = sid(binderId);
-    const cached = apollo.readQuery({ query: BINDER_SAFE, variables: { id: bId } });
+    const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id: bId } });
     const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
     const page = pages[Number(pageIndex) || 0];
     const slot = Array.isArray(page?.slots) ? page.slots[Number(slotIndex) || 0] : null;
@@ -724,7 +735,7 @@ export default function useBinderActions() {
     try {
       await removeSlotMut({
         variables: vars,
-        refetchQueries: [{ query: BINDER_SAFE, variables: { id: bId } }],
+        refetchQueries: [{ query: BINDER_QUERY, variables: { id: bId } }],
       });
       return true;
     } catch (e) {
@@ -746,3 +757,7 @@ export default function useBinderActions() {
     removeSlot,
   };
 }
+
+
+
+

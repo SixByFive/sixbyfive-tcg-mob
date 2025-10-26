@@ -2,12 +2,21 @@ import { useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useMemo } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { BrowseBindersDocument, MeDocument } from "@sixbyfive/tcg-binder/client";
+import { BrowseBindersDocument, MeDocument, MyBindersDocument } from "@sixbyfive/tcg-binder/client";
 import { COLORS } from "../../../theme/colors";
-import RecentBinders from "../ProfileRecentBinders";
-import { MY_BINDERS_SAFE } from "../../../graphql/binders-temp";
+
+// Same grid used in Collection tab → visual parity
+import BinderGrid from "../../collection/BinderGrid";
+
+let MY_BINDERS_QUERY = MyBindersDocument;
+try {
+  const maybeSafe = require("../../../graphql/binders-temp");
+  if (maybeSafe?.MY_BINDERS_SAFE) MY_BINDERS_QUERY = maybeSafe.MY_BINDERS_SAFE;
+} catch (err) {
+  if (__DEV__) console.warn("[BindersTab] Safe myBinders query unavailable", err?.message ?? err);
+}
 
 /* ---------------- helpers ---------------- */
 
@@ -40,43 +49,32 @@ const countCardsFromPages = (pages) => {
       const hasCard =
         (typeof slot.cardId === "string" && slot.cardId) || slot?.card?.id || slot?.card?.cardId;
       if (!hasCard) continue;
-      const qty = Number(slot?.quantity);
-      total += Number.isFinite(qty) && qty > 0 ? qty : 1;
+      const qty = Number(slot.quantity ?? 1);
+      total += Number.isFinite(qty) ? qty : 1;
     }
   }
   return total;
 };
 
-const unwrap = (item) => (item?.node ?? item)?.binder ?? (item?.node ?? item);
-
-function normalizeBinder(item) {
-  const b = unwrap(item);
-  const id = b?.id ?? item?.id;
-  if (!id) return null;
-
-  const name = (b?.name ?? b?.title ?? "Binder").trim();
-  const updatedAt = b?.updatedAt ?? b?.updated_at ?? b?.modifiedAt ?? b?.modified_at ?? null;
-
-  // schema fields
-  const coverColor = b?.coverColor ?? "#23243c";
-  const accentColor = b?.accentColor ?? "#424a80";
-
-  const pages = Array.isArray(b?.pages) ? b.pages : undefined;
-
+const normalizeBinder = (b) => {
+  if (!b) return null;
   return {
-    id: String(id),
-    userId: b?.userId ? String(b.userId) : undefined, // keep owner per row
-    name,
-    title: name,
-    updatedAt,
-    pagesCount: pages?.length,
-    cardsCount: countCardsFromPages(pages),
-    coverColor,
-    accentColor,
-    cover: { coverColor, accentColor },
     ...b,
+    id: String(b.id ?? ""),
+    userId: b?.userId ? String(b.userId) : undefined,
+    name: b?.name ?? b?.title ?? "Binder",
+    // match Collection tab defaults
+    coverColor: b?.coverColor ?? b?.cover?.coverColor ?? "#23243c",
+    accentColor: b?.accentColor ?? b?.cover?.accentColor ?? "#424a80",
+    updatedAt: b?.updatedAt ?? b?.modifiedAt ?? b?.createdAt ?? null,
+    pages: Array.isArray(b?.pages) ? b.pages : [],
+    cardsCount: b?.cardsCount ?? countCardsFromPages(b?.pages),
+    // aliases some grids expect
+    color: b?.coverColor ?? b?.cover?.coverColor ?? "#23243c",
+    cardCount: b?.cardsCount ?? countCardsFromPages(b?.pages),
+    pageCount: Array.isArray(b?.pages) ? b.pages.length : undefined,
   };
-}
+};
 
 const normalizeBindersInput = (src) => {
   const root = (!src || Array.isArray(src)) ? src : (
@@ -85,6 +83,33 @@ const normalizeBindersInput = (src) => {
   );
   return toArray(root).map(normalizeBinder).filter(Boolean);
 };
+
+/* ---------------- Create Binder banner (parity with Collection tab) ---------------- */
+
+function CreateBinderBanner({ onPress }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      android_ripple={{ color: "#00000018" }}
+      style={({ pressed }) => [
+        styles.createBanner,
+        pressed && { transform: [{ scale: 0.99 }], opacity: 0.96 },
+      ]}
+      accessibilityRole="button"
+    >
+      <View style={styles.createBannerIcon}>
+        {/* was a raw "＋" string inside <Text>; use an icon instead */}
+        <Ionicons name="add" size={16} color={COLORS.text} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.createBannerTitle}>Create a new binder</Text>
+        <Text style={styles.createBannerSub}>Start organising your cards</Text>
+      </View>
+      {/* chevron as icon (no bare strings) */}
+      <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+    </Pressable>
+  );
+}
 
 /* ---------------- component ---------------- */
 
@@ -95,10 +120,10 @@ export default function BindersTab({
   isOwner,             // optional override
   onOpenBinder,        // optional (id, ownerId) => void
   onViewAll,
+  onCreateBinder,      // optional override for "new binder" CTA
   pageSize = 12,
   loading = false,
 }) {
-  // who am I?
   const { data: meData } = useQuery(MeDocument, { fetchPolicy: "cache-first" });
   const meId = meData?.me?.id ? String(meData.me.id) : null;
 
@@ -107,77 +132,50 @@ export default function BindersTab({
 
   // 2) browse (public for this profile)
   const shouldFetchBrowse = fromProp.length === 0 && !!userId;
-  const { data: browseData, loading: loadingBrowse, error: browseError } = useQuery(
+  const { data: browseData, loading: browseLoading } = useQuery(
     BrowseBindersDocument,
-    { variables: { userId, page: 1, pageSize }, skip: !shouldFetchBrowse, fetchPolicy: "cache-and-network", notifyOnNetworkStatusChange: true }
+    { variables: { userId: userId || "" }, skip: !shouldFetchBrowse }
   );
-  const fromBrowse = useMemo(() => normalizeBindersInput(browseData?.browseBinders ?? browseData ?? []), [browseData]);
+  const fromBrowse = useMemo(() => normalizeBindersInput(browseData?.browseBinders), [browseData]);
 
-  // 3) mine (fallback)
-  const shouldFetchMine = fromProp.length === 0 && (!userId || (userId && fromBrowse.length === 0));
-  const { data: myData, loading: loadingMine, error: myError } = useQuery(
-    MY_BINDERS_SAFE,
-    { skip: !shouldFetchMine, fetchPolicy: "cache-and-network", notifyOnNetworkStatusChange: true }
+  // 3) my binders fallback
+  const shouldFetchMine = fromProp.length === 0 && !userId;
+  const { data: mineData, loading: mineLoading } = useQuery(MY_BINDERS_QUERY, { skip: !shouldFetchMine });
+  const fromMine = useMemo(() => normalizeBindersInput(mineData?.myBinders), [mineData]);
+
+  const display = (fromProp.length ? fromProp : (fromBrowse.length ? fromBrowse : fromMine)).slice(0, pageSize);
+  const showSkeleton = loading || browseLoading || mineLoading;
+
+  const openCreate = useCallback(() => {
+    if (typeof onCreateBinder === "function") return onCreateBinder();
+    router.push("/binder/new");
+  }, [onCreateBinder]);
+
+  const openBinderDefault = useCallback(
+    (id, ownerId) => {
+      const binderId = id ? String(id) : "";
+      if (!binderId) return;
+
+      const iOwnThis =
+        (typeof isOwner === "boolean" && isOwner) ||
+        (!!meId && !!ownerId && meId === ownerId) ||
+        (!userId);
+
+      // use direct string paths to avoid param binding issues
+      router.push(iOwnThis ? `/binder/${binderId}/edit` : `/binder/${binderId}`);
+    },
+    [isOwner, meId, userId]
   );
-  const fromMine = useMemo(() => normalizeBindersInput(myData?.myBinders ?? myData ?? []), [myData]);
 
-  // 4) pick a list
-  const display = (fromProp.length ? fromProp : fromBrowse.length ? fromBrowse : fromMine).slice(0, pageSize);
-
-  // UX states
-  const isLoading = loading || loadingBrowse || loadingMine;
-  const showSkeleton = isLoading && fromProp.length === 0 && display.length === 0;
-  const error = browseError || myError;
-
-  /* -------- routing -------- */
-
-  const openCreate = useCallback(() => router.push("/binder/new"), []);
-
-  // New explicit contract: handler gets (id, ownerId)
-  const openBinderDefault = useCallback((id, ownerId) => {
-    if (!id) return;
-
-    const iOwnThis =
-      (typeof isOwner === "boolean" && isOwner) ||          // parent told us explicitly
-      (!!meId && !!ownerId && meId === ownerId) ||          // row owner matches me
-      (!userId);                                            // no profile id => my hub
-
-    router.push(iOwnThis ? `/binder/${id}/edit` : `/binder/${id}`);
-  }, [isOwner, meId, userId]);
-
-  const handleOpenBinder = useCallback((id, ownerId) => {
-    if (typeof onOpenBinder === "function") onOpenBinder(id, ownerId);
-    else openBinderDefault(id, ownerId);
-  }, [onOpenBinder, openBinderDefault]);
+  const handleOpenBinder = useCallback(
+    (id, ownerId) => {
+      if (typeof onOpenBinder === "function") onOpenBinder(id, ownerId);
+      else openBinderDefault(id, ownerId);
+    },
+    [onOpenBinder, openBinderDefault]
+  );
 
   /* -------- render -------- */
-
-  if (display.length) {
-    return (
-      <>
-        {!userId && (
-          <View style={{ marginTop: 8 }}>
-            <Pressable
-              onPress={openCreate}
-              style={({ pressed }) => [
-                styles.createTile,
-                pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
-              ]}
-            >
-              <View style={styles.createIconBubble}>
-                <Ionicons name="add" size={18} color="#fff" />
-              </View>
-              <Text style={styles.createTitle}>New Binder</Text>
-              <Text style={styles.createSub}>Start organizing your cards</Text>
-            </Pressable>
-          </View>
-        )}
-
-        {/* RecentBinders will call onOpenBinder(id, ownerId) */}
-        <RecentBinders binders={display} onOpenBinder={handleOpenBinder} />
-      </>
-    );
-  }
 
   if (showSkeleton) {
     return (
@@ -190,21 +188,15 @@ export default function BindersTab({
     );
   }
 
-  if (error) {
+  if (!display.length) {
+    // Empty-state card kept the same (all text wrapped in <Text>)
     return (
       <View style={styles.card}>
         <Text style={styles.cardTitle}>{title}</Text>
-        <Text style={styles.bodyText}>Failed to load binders.</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>{title}</Text>
-      {!userId ? (
-        <>
-          <Text style={[styles.bodyText, { marginBottom: 10 }]}>You don’t have any binders yet.</Text>
+        <Text style={{ color: COLORS.textMuted, marginTop: 8 }}>
+          No binders yet. Create one to start organizing your collection.
+        </Text>
+        <View style={{ marginTop: 10 }}>
           <Pressable
             onPress={openCreate}
             style={({ pressed }) => [
@@ -218,36 +210,45 @@ export default function BindersTab({
             <Text style={styles.createTitle}>New Binder</Text>
             <Text style={styles.createSub}>Start organizing your cards</Text>
           </Pressable>
-        </>
-      ) : (
-        <Text style={styles.bodyText}>No public binders yet.</Text>
-      )}
-    </View>
+        </View>
+      </View>
+    );
+  }
+
+  // Match the "binders" segment layout from Collection tab
+  return (
+    <ScrollView contentContainerStyle={styles.scrollContent}>
+      {/* Banner only on your own profile */}
+      {!userId && <CreateBinderBanner onPress={openCreate} />}
+
+      {/* Same grid for visuals/behaviour */}
+      <BinderGrid
+        binders={display}
+        onCreate={openCreate}
+        onOpen={(id) => handleOpenBinder(id)}
+      />
+
+      <View style={{ height: 28 }} />
+    </ScrollView>
   );
 }
 
-/* ---------------- styles ---------------- */
-
 const styles = StyleSheet.create({
+  // loading/empty states
   card: {
-    backgroundColor: COLORS.surface,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
-    borderWidth: 1,
+    backgroundColor: COLORS.surface,
+  },
+  cardTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+
+  createTile: {
     borderRadius: 12,
     padding: 12,
-    marginTop: 12,
-  },
-  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  cardTitle: { color: COLORS.text, fontWeight: "900", marginBottom: 8 },
-  viewAll: { color: COLORS.accent, fontWeight: "800" },
-  bodyText: { color: COLORS.text },
-  createTile: {
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderStyle: "dashed",
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
     backgroundColor: COLORS.surface,
   },
@@ -262,4 +263,35 @@ const styles = StyleSheet.create({
   },
   createTitle: { color: COLORS.text, fontWeight: "900" },
   createSub: { color: COLORS.textMuted, marginTop: 2, fontSize: 12 },
+
+  // layout parity with Collection tab
+  scrollContent: { paddingHorizontal: 12, paddingBottom: 24 },
+
+  /* Create binder banner */
+  createBanner: {
+    marginTop: 10,
+    marginHorizontal: 12,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    // `gap` is supported on newer RN; if you're on older RN and this warns, replace with explicit margins
+    gap: 10,
+  },
+  createBannerIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: COLORS.alt,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  createBannerTitle: { color: COLORS.text, fontWeight: "800" },
+  createBannerSub: { color: COLORS.textMuted, fontSize: 12 },
 });

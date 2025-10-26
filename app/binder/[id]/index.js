@@ -1,14 +1,52 @@
 // app/binder/[id]/index.js
-import { useQuery } from "@apollo/client";
+import { gql, useQuery } from "@apollo/client"; // CHANGED: import gql for fallback
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Dimensions, FlatList, StyleSheet, Text, View } from "react-native";
 
-import { BINDER_SAFE } from "../../../graphql/binders-temp";
+import { BinderDocument } from "@sixbyfive/tcg-binder/client";
 import BinderGrid from "../../../components/binders/BinderGrid";
 import PagePager from "../../../components/binders/PagePager";
 import PageHeaderBackSimple from "../../../components/common/PageHeaderBackSimple";
 import { COLORS } from "../../../theme/colors";
+
+/* ---------- GraphQL: robust resolver with inline fallback ---------- */
+const FALLBACK_BINDER_SAFE = gql`
+  query Binder_Safe_Fallback($id: ID!) {
+    binder(id: $id) {
+      id
+      name
+      coverColor
+      accentColor
+      pages {
+        id
+        title
+        pageOrder
+        layout
+        slots { id cardId position quantity }
+      }
+    }
+  }
+`;
+
+function resolveBinderQuery() {
+  try {
+    // eslint-disable-next-line import/no-dynamic-require, global-require
+    const mod = require("../../../graphql/binders-temp");
+    const doc = mod?.BINDER_SAFE;
+    if (doc && typeof doc === "object" && doc.kind === "Document") return doc;
+  } catch (err) {
+    if (__DEV__) console.warn("[BinderReadOnly] require('../../../graphql/binders-temp') failed:", err?.message || err);
+  }
+  if (BinderDocument && typeof BinderDocument === "object" && BinderDocument.kind === "Document") {
+    return BinderDocument;
+  }
+  if (__DEV__) console.warn("[BinderReadOnly] Using FALLBACK_BINDER_SAFE");
+  return FALLBACK_BINDER_SAFE;
+}
+
+const BINDER_QUERY = resolveBinderQuery();
+/* ------------------------------------------------------------------ */
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -22,17 +60,15 @@ const LAYOUT_SIZES = {
 const sizeFor = (layout) => LAYOUT_SIZES[String(layout || "").toLowerCase()] || { rows: 3, cols: 3 };
 
 /* ---------- slot mapping ---------- */
-/* ---------- slot mapping (robust, no bare `card`) ---------- */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const looksLikeCode = (v) => typeof v === "string" && v.includes("-") && !UUID_RE.test(v);
 
-/** Server slot → UI slot */
 function toUiSlot(slot) {
   if (!slot) return null;
   const rawCode = slot?.cardId ?? (looksLikeCode(slot?.id) ? slot.id : null);
   const code = rawCode ? String(rawCode) : null;
+  if (!code) return null;
   const id = code || (slot?.id ? String(slot.id) : "");
-  if (!id) return null;
   const label = slot?.label || slot?.name || (code ? code.toUpperCase() : "");
   return { id, code, cardId: code, image: "", label };
 }
@@ -40,10 +76,10 @@ function toUiSlot(slot) {
 export default function BinderReadOnly() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
-  const binderId = String(id || "");
+  const binderId = String(Array.isArray(id) ? id[0] : id || ""); // CHANGED: guard array
   const listRef = useRef(null);
 
-  const { data, loading, error } = useQuery(BINDER_SAFE, {
+  const { data, loading, error } = useQuery(BINDER_QUERY, {
     variables: { id: binderId },
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
@@ -52,7 +88,6 @@ export default function BinderReadOnly() {
   const binder = data?.binder ?? null;
   const pages = Array.isArray(binder?.pages) ? binder.pages : [];
 
-  // Build a readonly UI model per page
   const uiPages = useMemo(
     () =>
       pages.map((p, i) => {
@@ -95,7 +130,6 @@ export default function BinderReadOnly() {
         title={name}
         subtitle={`Page ${index + 1} / ${uiPages.length || 1}`}
         onBack={() => router.back()}
-        // little cover swatch on the right
         right={
           <View style={styles.coverSwatch}>
             <View style={[styles.coverAccent, { backgroundColor: accentColor }]} />
@@ -119,12 +153,7 @@ export default function BinderReadOnly() {
           }}
           renderItem={({ item }) => (
             <View style={{ width: SCREEN_W, height: "100%", paddingHorizontal: 12 }}>
-              <BinderGrid
-                rows={item.rows}
-                cols={item.cols}
-                slots={item.slots}
-                // read-only: do NOT pass any edit handlers
-              />
+              <BinderGrid rows={item.rows} cols={item.cols} slots={item.slots} />
             </View>
           )}
         />
