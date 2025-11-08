@@ -1,11 +1,6 @@
 // app/sets/[code].js
-// Set detail:
-// - Uses SetPageHeader (back, logo, name, abbr/code, progress bar)
-// - Filter card collapses when scrolling down; reappears on scroll up/top (flicker-free)
-// - Same chips + modal pattern as sets index
-// - GraphQL documents built via parse()
 
-import { useQuery } from "@apollo/client";
+import { useApolloClient, useQuery } from "@apollo/client"; // CHANGED: import client
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import { parse } from "graphql";
@@ -45,6 +40,8 @@ const CARDSEARCH_SET_CARDS = parse(`
   query CardsearchSetCardsMobile($input: CardSearchInput!) {
     cardsearchSearchCards(input: $input) {
       total
+      offset
+      limit
       items {
         cardId
         number
@@ -71,6 +68,12 @@ const CARDSEARCH_SETS_MIN = parse(`
 function parseIntSafe(v) {
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : 0;
+}
+
+function safeIdFromItem(it, setCode) {
+  if (it?.cardId) return String(it.cardId).toLowerCase();
+  if (it?.number) return `${String(setCode).toLowerCase()}-${String(it.number)}`.toLowerCase();
+  return `tmp-${Math.random().toString(36).slice(2)}`.toLowerCase();
 }
 
 /* ---------------- Card Tile ---------------- */
@@ -111,21 +114,39 @@ function CardTile({ card, owned }) {
 /* ---------------- Screen ---------------- */
 
 export default function SetScreen() {
+  const apollo = useApolloClient(); // NEW
   const { code } = useLocalSearchParams();
   const setCode = String(code || "").trim();
 
+  // Base set metadata
   const { data: setData, loading: loadingSet, error: setError } = useQuery(CARDSEARCH_SET, {
     variables: { code: setCode },
     skip: !setCode,
   });
 
+  // PAGINATION STATE
+  const PAGE_SIZE = 96;
+  const [cards, setCards] = useState([]); // unified list across pages (for grid)
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // **ALL IDS** state (for accurate completion)
+  const [allIds, setAllIds] = useState(() => new Set()); // NEW
+  const idsPreloadingRef = useRef(false); // NEW
+  const unmountedRef = useRef(false); // NEW
+
+  // First page
   const {
     data: cardsData,
-    loading: loadingCards,
+  // loading: loadingCards,   // we’ll derive loading state by data presence
     error: cardsError,
+    refetch: refetchCards,
+    networkStatus,
   } = useQuery(CARDSEARCH_SET_CARDS, {
-    variables: { input: { set: setCode, limit: 500, offset: 0 } },
+    variables: { input: { set: setCode, limit: PAGE_SIZE, offset: 0 } },
     skip: !setCode,
+    notifyOnNetworkStatusChange: true,
   });
 
   // Fallback source for abbr if the single-set query doesn't provide it
@@ -135,18 +156,131 @@ export default function SetScreen() {
     fetchPolicy: "cache-first",
   });
 
-  const set = useMemo(() => {
-    const s = setData?.cardsearchSetByCode;
-    const items = Array.isArray(cardsData?.cardsearchSearchCards?.items)
-      ? cardsData.cardsearchSearchCards.items
-      : [];
-    const cards = items.map((it) => ({
-      id: it.cardId || (it.number && `${setCode}-${it.number}`) || `${Math.random()}`,
+  // Seed from first page response
+  useEffect(() => {
+    const page = cardsData?.cardsearchSearchCards;
+    if (!page) return;
+    const items = Array.isArray(page.items) ? page.items : [];
+    const mapped = items.map((it) => ({
+      id: safeIdFromItem(it, setCode),
       number: it.number || "",
       name: it.name || "",
       rarity: it.rarity || null,
       imageUrl: it.images?.large || it.images?.small || null,
     }));
+    setCards(mapped);
+    setOffset(page.offset ?? 0);
+    // CHANGED: prefer set metadata total if present; otherwise fall back to page total
+    const metaTotal = parseIntSafe(setData?.cardsearchSetByCode?.total);
+    setTotal(metaTotal > 0 ? metaTotal : page.total ?? mapped.length);
+
+    // Seed allIds with first page ids
+    setAllIds((prev) => {
+      const next = new Set(prev);
+      for (const it of items) next.add(safeIdFromItem(it, setCode));
+      return next;
+    });
+  }, [cardsData, setCode, setData?.cardsearchSetByCode?.total]);
+
+  // Load more (pagination for grid only)
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return;
+    if (cards.length >= total) return;
+    setLoadingMore(true);
+    try {
+      const nextOffset = offset + PAGE_SIZE;
+      const { data } = await refetchCards({ input: { set: setCode, limit: PAGE_SIZE, offset: nextOffset } });
+      const page = data?.cardsearchSearchCards;
+      const items = Array.isArray(page?.items) ? page.items : [];
+      const mapped = items.map((it) => ({
+        id: safeIdFromItem(it, setCode),
+        number: it.number || "",
+        name: it.name || "",
+        rarity: it.rarity || null,
+        imageUrl: it.images?.large || it.images?.small || null,
+      }));
+      // dedupe by id
+      const seen = new Set(cards.map((c) => c.id));
+      const merged = [...cards];
+      for (const c of mapped) {
+        if (!seen.has(c.id)) {
+          merged.push(c);
+          seen.add(c.id);
+        }
+      }
+      setCards(merged);
+      setOffset(page?.offset ?? nextOffset);
+      setTotal((t) => {
+        const metaTotal = parseIntSafe(setData?.cardsearchSetByCode?.total);
+        return metaTotal > 0 ? metaTotal : (page?.total ?? merged.length);
+      });
+
+      // also add to allIds
+      setAllIds((prev) => {
+        const nxt = new Set(prev);
+        for (const it of items) nxt.add(safeIdFromItem(it, setCode));
+        return nxt;
+      });
+    } catch {
+      // ignore
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [cards, total, loadingMore, offset, refetchCards, setCode, setData?.cardsearchSetByCode?.total]);
+
+  // NEW: Preload *ids only* for the rest of the pages to compute completion accurately.
+  useEffect(() => {
+    if (!setCode) return;
+    const metaTotal = parseIntSafe(setData?.cardsearchSetByCode?.total);
+    const expectedTotal = metaTotal > 0 ? metaTotal : total;
+    if (!expectedTotal) return;
+
+    // already have all ids
+    if (allIds.size >= expectedTotal) return;
+    if (idsPreloadingRef.current) return;
+    idsPreloadingRef.current = true;
+
+    (async () => {
+      try {
+        // Page through remaining offsets, but only record ids; use network-only to avoid mixing
+        const startOffset = PAGE_SIZE; // first page (0) already in state
+        for (let off = startOffset; off < expectedTotal; off += PAGE_SIZE) {
+          if (unmountedRef.current) return;
+          const { data } = await apollo.query({
+            query: CARDSEARCH_SET_CARDS,
+            variables: { input: { set: setCode, limit: PAGE_SIZE, offset: off } },
+            fetchPolicy: "network-only",
+          });
+          const page = data?.cardsearchSearchCards;
+          const items = Array.isArray(page?.items) ? page.items : [];
+          if (!items.length) break;
+
+          setAllIds((prev) => {
+            const next = new Set(prev);
+            for (const it of items) next.add(safeIdFromItem(it, setCode));
+            return next;
+          });
+
+          // Update total in case backend supplies it later
+          if (page?.total && !total) setTotal(page.total);
+          if (allIds.size + items.length >= expectedTotal) break;
+        }
+      } catch {
+        // ignore; completion will still work with partial preloads
+      } finally {
+        idsPreloadingRef.current = false;
+      }
+    })();
+  }, [apollo, setCode, setData?.cardsearchSetByCode?.total, total, allIds.size]);
+
+  useEffect(() => {
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+
+  const set = useMemo(() => {
+    const s = setData?.cardsearchSetByCode;
     if (!s) return null;
 
     // Prefer abbr from the detail query, fallback to list lookup
@@ -158,16 +292,20 @@ export default function SetScreen() {
       if (hit?.abbr) abbr = hit.abbr;
     }
 
+    // CHANGED: totalCards comes from metadata total (best) then page total (fallback)
+    const metaTotal = parseIntSafe(s.total);
+    const pageTotal = total || cards.length;
+
     return {
       code: String(setCode).toLowerCase(),
       name: s.name || String(setCode).toUpperCase(),
       abbr,
       series: s.series ?? null,
       era: inferSetEra(s),
-      totalCards: Number.isFinite(s.total) ? s.total : cards.length || null,
-      cards,
+      totalCards: metaTotal > 0 ? metaTotal : pageTotal,
+      cards, // grid uses paginated state
     };
-  }, [setData, cardsData, setsMinData, setCode]);
+  }, [setData, setsMinData, setCode, cards, total]);
 
   // Search / sort / rarity filters
   const [query, setQuery] = useState("");
@@ -180,9 +318,9 @@ export default function SetScreen() {
   const lastY = useRef(0);
   const lastDecisionY = useRef(0); // where we last toggled state
   const rafRef = useRef(null);
-  const HIDE_AFTER = 72;           // don't hide until user is at least this far down
-  const SHOW_DELTA = 24;           // need to travel this much upward before showing
-  const HIDE_DELTA = 48;           // need to travel this much downward before hiding
+  const HIDE_AFTER = 72;
+  const SHOW_DELTA = 24;
+  const HIDE_DELTA = 48;
 
   const handleScroll = useCallback(
     (e) => {
@@ -229,7 +367,22 @@ export default function SetScreen() {
     []
   );
 
-  const { ownedSet, completedCount } = useSetOwned(set || undefined);
+  // ---------- Completion (ACCURATE) ----------
+  // Build a lightweight, ids-only "virtual set" just for useSetOwned so it can
+  // compute completedCount across the *full set*, even before the grid has paged in.
+  const setForCompletion = useMemo(() => {
+    if (!set) return undefined;
+    const idsArray = allIds.size
+      ? Array.from(allIds).map((id) => ({ id: String(id).toLowerCase() }))
+      : set.cards.map((c) => ({ id: String(c.id).toLowerCase() }));
+    return {
+      ...set,
+      cards: idsArray,
+      totalCards: set.totalCards, // ensure useSetOwned has the right denominator
+    };
+  }, [set, allIds]);
+
+  const { ownedSet, completedCount } = useSetOwned(setForCompletion);
 
   const rarityOptions = useMemo(() => {
     if (!set?.cards?.length) return [];
@@ -306,8 +459,11 @@ export default function SetScreen() {
     return list;
   }, [set?.cards, query, selectedRarities, sort, ownedSet]);
 
+  const isInitialLoading =
+    loadingSet || (!cards.length && (networkStatus === 1 || networkStatus === 2)); // 1=loading, 2=setVariables
+
   /* ---------- Loading / Error ---------- */
-  if (loadingSet || loadingCards) {
+  if (isInitialLoading) {
     return (
       <View style={[styles.screen, { alignItems: "center", justifyContent: "center" }]}>
         <ActivityIndicator />
@@ -349,8 +505,8 @@ export default function SetScreen() {
       name={set.name}
       code={set.code}
       abbr={set.abbr}
-      completed={completedCount}
-      total={set.totalCards ?? set.cards.length}
+      completed={completedCount}                         // CHANGED: completed across ALL ids
+      total={set.totalCards ?? (allIds.size || set.cards.length)} // CHANGED: true set total
     />
   );
 
@@ -423,8 +579,9 @@ export default function SetScreen() {
           </View>
 
           <Text style={styles.count}>
+            {/* CHANGED: always show full set total on the right */}
             Showing <Text style={styles.countStrong}>{filtered.length}</Text> of{" "}
-            <Text style={styles.countStrong}>{set.cards.length}</Text> cards
+            <Text style={styles.countStrong}>{set.totalCards ?? (allIds.size || set.cards.length)}</Text> cards
           </Text>
         </View>
       )}
@@ -432,17 +589,26 @@ export default function SetScreen() {
       {/* Grid */}
       <FlatList
         data={filtered}
-        keyExtractor={(c) => c.id}
+        keyExtractor={(c) => String(c.id).toLowerCase()} // CHANGED: stable key
         numColumns={2}
         columnWrapperStyle={{ gap: 10 }}
         contentContainerStyle={{ gap: 10, paddingBottom: 28 }}
         renderItem={({ item }) => {
-          const owned = ownedSet.has(item.id);
+          const owned = ownedSet.has(String(item.id).toLowerCase());
           return <CardTile card={item} owned={owned} />;
         }}
         onScroll={handleScroll}
         scrollEventThrottle={16}
         onMomentumScrollEnd={handleScroll}
+        onEndReachedThreshold={0.2}
+        onEndReached={loadMore} // keeps loading visual tiles
+        ListFooterComponent={
+          loadingMore ? (
+            <View style={{ paddingVertical: 16, alignItems: "center" }}>
+              <ActivityIndicator />
+            </View>
+          ) : null
+        }
       />
 
       {/* Filters modal (multi-select rarities + sort) */}

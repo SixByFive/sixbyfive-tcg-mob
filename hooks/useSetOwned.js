@@ -1,28 +1,25 @@
 // hooks/useSetOwned.js
 // Purpose: given a set (with .code and .cards[]), return which cardIds are owned and a completion count.
-// Tries CardSetCompletion first (cheaper & precise). Falls back to MyCollection (broader).
 //
-// HARDENED:
-// - If codegen docs are undefined (Metro/Hermes/gql mismatch), we build safe DocumentNodes via `parse` from "graphql".
-// - Never passes <undefined> to useQuery.
-// - Keeps your original return shape.
+// Key points
+// - ALWAYS query MyCollection on this screen (no skip), with `network-only` first hit → `cache-first` thereafter.
+// - Build a set "universe" from set.cards ids (already compiled by the screen incl. id-only preloads).
+// - Intersect the user's collection ids with the universe (fallback to `${set.code}-` prefix).
+// - Prefer cardSetCompletion only if it returns usable ids; otherwise use the intersection.
+// - Robust totalCards fallback chain.
 
 import { useQuery } from "@apollo/client";
 import { parse } from "graphql";
 import { useMemo } from "react";
-
-// Try to import codegen outputs; they may be undefined at runtime depending on bundling.
 import * as Gen from "../graphql/tcg-queries";
 
-/* ---------------- Safe DocumentNode helpers ---------------- */
+/* ---------------- Documents ---------------- */
 
 const LocalCardSetCompletionDocument = parse(`
   query CardSetCompletion($setCode: String!) {
     cardSetCompletion(setCode: $setCode) {
-      # Support multiple possible shapes your API might return; we normalize later.
       ownedCardIds
       total
-      # optional alternates
       cardIds
       items { cardId }
     }
@@ -30,42 +27,118 @@ const LocalCardSetCompletionDocument = parse(`
 `);
 
 const LocalMyCollectionDocument = parse(`
-  query MyCollection {
+  query MyCollectionMin {
     myCollection {
-      # support common shapes
-      cardId
       id
-      card { cardId }
+      cardId
+      quantity
+      variation
+      card { cardId id }
+      # if your server returns a wrapper, we won't assume it here,
+      # but the parser below also checks entries/items/nodes/edges.
     }
   }
 `);
 
 function pickDoc(maybeDoc, fallbackDoc) {
-  // Some codegen libs export a function (older apollo-codegen), others a DocumentNode.
-  // We only accept an object with kind === "Document".
-  if (maybeDoc && typeof maybeDoc === "object" && maybeDoc.kind === "Document") {
-    return maybeDoc;
-  }
+  if (maybeDoc && typeof maybeDoc === "object" && maybeDoc.kind === "Document") return maybeDoc;
   return fallbackDoc;
 }
 
-// Prefer generated, else local parsed DocumentNode
-const CardSetCompletionDocument = pickDoc(
-  Gen.CardSetCompletionDocument,
-  LocalCardSetCompletionDocument
-);
-const MyCollectionDocument = pickDoc(
-  Gen.MyCollectionDocument,
-  LocalMyCollectionDocument
-);
+const CardSetCompletionDocument = pickDoc(Gen.CardSetCompletionDocument, LocalCardSetCompletionDocument);
+const MyCollectionDocument       = pickDoc(Gen.MyCollectionDocument, LocalMyCollectionDocument);
+
+/* ---------------- Utils ---------------- */
+
+const toLower = (v) => String(v ?? "").toLowerCase();
+const isNonEmptyString = (v) => typeof v === "string" && v.trim().length > 0;
+
+function pluckIdsLoose(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const it of arr) {
+    if (!it) continue;
+    const id =
+      it.id ??
+      it.cardId ??
+      it?.node?.id ??
+      it?.node?.cardId ??
+      it?.card?.id ??
+      it?.card?.cardId ??
+      null;
+    if (isNonEmptyString(id)) out.push(String(id));
+  }
+  return out;
+}
+
+function buildSetUniverseIds(set) {
+  const src = Array.isArray(set?.cards) ? set.cards : [];
+  const ids = pluckIdsLoose(src).map((x) => toLower(x));
+  return ids.length > 0 ? new Set(ids) : null;
+}
+
+function normalizeCompletion(raw, set) {
+  if (!raw) return { ids: [], total: undefined };
+  let ids = Array.isArray(raw.ownedCardIds) ? raw.ownedCardIds : null;
+  if (!ids && Array.isArray(raw.cardIds)) ids = raw.cardIds;
+  if (!ids && Array.isArray(raw.items)) ids = raw.items.map((x) => x?.cardId).filter(Boolean);
+  if (!Array.isArray(ids)) ids = [];
+  const total =
+    typeof raw.total === "number"
+      ? raw.total
+      : typeof set?.totalCards === "number"
+      ? set.totalCards
+      : (Array.isArray(set?.cards) ? set.cards.length : undefined);
+  return { ids: ids.map(String), total };
+}
+
+function collectUserCollectionIds(collectionData) {
+  // Accept many possible shapes
+  const root =
+    collectionData?.myCollection ??
+    collectionData?.collection ??
+    collectionData ??
+    [];
+
+  const arr =
+    Array.isArray(root) ? root :
+    Array.isArray(root.entries) ? root.entries :
+    Array.isArray(root.items) ? root.items :
+    Array.isArray(root.nodes) ? root.nodes :
+    Array.isArray(root.edges) ? root.edges.map((e) => e?.node).filter(Boolean) :
+    [];
+
+  const ownedIds = [];
+  for (const e of arr) {
+    if (e?.wishlist === true && !e?.quantity && !e?.owned) continue; // ignore wishlist-only rows
+    const id =
+      e?.cardId ||
+      e?.card?.cardId ||
+      e?.id ||
+      null;
+    if (isNonEmptyString(id)) ownedIds.push(toLower(id));
+  }
+  return ownedIds;
+}
+
+function intersectWithSet(ownedIds, setUniverse, setCode) {
+  if (setUniverse && setUniverse.size > 0) {
+    const result = [];
+    for (const id of ownedIds) if (setUniverse.has(id)) result.push(id);
+    return result;
+  }
+  // Prefix fallback (e.g., sv08-)
+  const pref = `${toLower(setCode)}-`;
+  return ownedIds.filter((id) => id.startsWith(pref));
+}
 
 /* ---------------- Hook ---------------- */
 
 export default function useSetOwned(set) {
-  const setCode = String(set?.code || "").toLowerCase();
+  const setCode = toLower(set?.code);
   const hasSet = !!setCode;
 
-  // 1) Try dedicated completion query (expected to return ids & counts for the set)
+  // 1) Try dedicated completion (ok to skip if no set yet)
   const {
     data: completionData,
     loading: completionLoading,
@@ -77,73 +150,51 @@ export default function useSetOwned(set) {
     notifyOnNetworkStatusChange: true,
   });
 
-  // 2) Fallback: fetch my collection and filter by set prefix in cardId (e.g., "sv01-123")
+  // 2) ALWAYS fetch myCollection here to avoid cache partition / cold cache issues on this screen.
+  //    First hit: force network; next hits: read from cache.
   const {
     data: collectionData,
     loading: collectionLoading,
     error: collectionError,
   } = useQuery(MyCollectionDocument, {
-    skip: !hasSet || !!completionData, // only if completion isn't usable
-    fetchPolicy: "cache-first",
+    // DO NOT skip this based on set; your collection exists independently of the current set.
+    fetchPolicy: "network-only",
+    nextFetchPolicy: "cache-first",
+    returnPartialData: true,
     notifyOnNetworkStatusChange: true,
+    errorPolicy: "all",
   });
 
   const { ownedSet, completedCount } = useMemo(() => {
-    // Path A: use completion API shape if present
-    const c = completionData?.cardSetCompletion;
-    if (c) {
-      // normalize possible shapes
-      let ids = Array.isArray(c.ownedCardIds) ? c.ownedCardIds : null;
-      if (!ids && Array.isArray(c.cardIds)) ids = c.cardIds;
-      if (
-        !ids &&
-        c.items &&
-        Array.isArray(c.items)
-      ) {
-        ids = c.items.map((x) => x?.cardId).filter(Boolean);
-      }
-      ids = Array.isArray(ids) ? ids : [];
+    const setUniverse = buildSetUniverseIds(set);
 
-      const total =
-        (typeof c.total === "number" ? c.total : null) ??
-        (typeof set?.totalCards === "number" ? set.totalCards : null) ??
-        (Array.isArray(set?.cards) ? set.cards.length : 0);
+    const normalized = normalizeCompletion(completionData?.cardSetCompletion, set);
+    const completionIds = (normalized.ids ?? []).map(toLower);
 
-      return {
-        ownedSet: new Set(ids),
-        completedCount: ids.length,
-        totalCards: total,
-      };
-    }
+    const collectionIds = collectUserCollectionIds(collectionData);
+    const ownedFromCollectionInThisSet = intersectWithSet(collectionIds, setUniverse, setCode);
 
-    // Path B: fallback — derive from full collection
-    const entries =
-      collectionData?.myCollection ??
-      collectionData?.collection ??
-      [];
+    const finalOwnedIds = completionIds.length > 0 ? completionIds : ownedFromCollectionInThisSet;
 
-    const ownedIds = [];
-    const prefix = `${setCode}-`;
+    const totalCards =
+      (typeof normalized.total === "number" ? normalized.total : null) ??
+      (typeof set?.totalCards === "number" ? set.totalCards : null) ??
+      (Array.isArray(set?.cards) ? set.cards.length : null) ??
+      (setUniverse ? setUniverse.size : null) ??
+      finalOwnedIds.length;
 
-    for (const e of entries) {
-      const id =
-        e?.cardId ||
-        e?.card?.cardId ||
-        e?.id ||
-        null;
-      if (!id) continue;
-      const idStr = String(id).toLowerCase();
-      if (idStr.startsWith(prefix)) {
-        ownedIds.push(String(id));
-      }
+    if (__DEV__) {
+      console.log("[useSetOwned] setCode", setCode);
+      console.log("[useSetOwned] universe.size", setUniverse?.size);
+      console.log("[useSetOwned] collectionIds.len", collectionIds.length);
+      console.log("[useSetOwned] completionIds.len", completionIds.length);
+      console.log("[useSetOwned] finalOwnedIds.len", finalOwnedIds.length);
     }
 
     return {
-      ownedSet: new Set(ownedIds),
-      completedCount: ownedIds.length,
-      totalCards:
-        (typeof set?.totalCards === "number" ? set.totalCards : null) ??
-        (Array.isArray(set?.cards) ? set.cards.length : 0),
+      ownedSet: new Set(finalOwnedIds),
+      completedCount: finalOwnedIds.length,
+      totalCards,
     };
   }, [completionData, collectionData, set, setCode]);
 

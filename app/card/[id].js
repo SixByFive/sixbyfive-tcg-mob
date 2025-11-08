@@ -1,13 +1,13 @@
 // app/card/[id].js
-// UPDATED (set name + image):
-// • Correct set mapping: sv05 → Temporal Forces, sv08 → Surging Sparks.
-// • Normalizes set codes (case/spacing/dots) before lookup.
-// • Uses nested set { name, code } if present.
-// • Keeps TCGdex image preference regardless of caller order.
+// UPDATED (set name + image + provider-agnostic pricing + new history hook + shared actions):
+// - Imports usePriceHistory from components/card/usePriceHistory.
+// - Uses shared useCollectionWishlistActions for add-to-collection / wishlist parity with Collection tab.
+// - Removes local range state; uses the hook's range to avoid mismatches.
+// - [FIX] Add AddToCollectionDocument fallback so actions work even if the shared hook isn't loaded.
 
 import { useMutation, useQuery } from "@apollo/client";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import {
   ActivityIndicator,
   ScrollView,
@@ -18,45 +18,32 @@ import {
 
 import { CardByIdDocument as CARD_BY_ID } from "@sixbyfive/tcg-binder";
 import {
-  AddToCollectionDocument,
-  AddToWishlistDocument,
-  CardPriceHistoryDocument,
+  AddToCollectionDocument, // ← added fallback
+  AddToWishlistDocument, // fallback if hook doesn't expose addToWishlist
 } from "@sixbyfive/tcg-binder/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 
 import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";
-import {
-  buildMyCollectionRefetchQueries,
-  upsertMyCollectionEntry,
-} from "../../utils/apolloCollectionCache";
 import { getBestPrice } from "../../utils/cards";
-import {
-  TIMEFRAME_POINTS,
-  makePlaceholderSeries,
-  seriesStats,
-  toBarHeights,
-} from "../../utils/priceSeries";
 
 import CardHeader from "../../components/card/CardHeader";
 import CardImageBlock from "../../components/card/CardImageBlock";
 import InfoCard from "../../components/card/InfoCard";
 import PricingHistory from "../../components/card/PricingHistory";
+import usePriceHistory from "../../components/card/usePriceHistory";
+import { useCollectionWishlistActions } from "../../hooks/useCollectionWishlistActions";
 
 import inferSetEra from "../../utils/setEra.native";
 
 /* ----------------------- helpers ----------------------- */
-
-function isNum(x) {
-  return typeof x === "number" && Number.isFinite(x);
-}
+function isNum(x) { return typeof x === "number" && Number.isFinite(x); }
 function canonicalVariant(v) {
   const s = String(v ?? "normal").toLowerCase().trim();
   if (!s) return "normal";
-  if (["reverse", "reverse holo", "reverse-holo", "reverseholo", "reverseholofoil"].includes(s))
-    return "reverseHolofoil";
-  if (["holo", "holofoil", "holo foil"].includes(s)) return "holofoil";
-  if (["first edition", "firstedition", "1st edition", "1stedition"].includes(s)) return "firstEdition";
+  if (["reverse","reverse holo","reverse-holo","reverseholo","reverseholofoil"].includes(s)) return "reverseHolofoil";
+  if (["holo","holofoil","holo foil"].includes(s)) return "holofoil";
+  if (["first edition","firstedition","1st edition","1stedition"].includes(s)) return "firstEdition";
   return s;
 }
 function pickMarketishValue(p) {
@@ -88,7 +75,6 @@ function localBestPrice(prices = []) {
 }
 
 /* --- id / set / image helpers --- */
-
 function parseCardId(id) {
   if (typeof id !== "string") return { setCode: null, number: null };
   const parts = id.split("-");
@@ -98,123 +84,72 @@ function parseCardId(id) {
   const number = numberRaw || null;
   return { setCode, number };
 }
-
 function toTitleCase(str) {
   if (!str) return "";
-  return String(str)
-    .toLowerCase()
-    .split(/\s+/)
-    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
-    .join(" ");
+  return String(str).toLowerCase().split(/\s+/).map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
 }
+function looksLikeSetCode(s) { if (!s) return false; const v = String(s).trim(); return /^[a-z]{2,5}\d+(?:\.\d+)?$/i.test(v); }
+function normalizeSetCode(code) { if (!code) return ""; return String(code).trim().toLowerCase().replace(/\s+/g, ""); }
 
-function looksLikeSetCode(s) {
-  if (!s) return false;
-  const v = String(s).trim();
-  // sv05, sv3.5, swsh12, me1, xy10, etc.
-  return /^[a-z]{2,5}\d+(?:\.\d+)?$/i.test(v);
-}
-
-// CHANGED: normalize codes: lowercased, strip spaces, keep dot (map also includes dotless alias)
-function normalizeSetCode(code) {
-  if (!code) return "";
-  return String(code).trim().toLowerCase().replace(/\s+/g, "");
-}
-
-// CHANGED: corrected set-code → human-name hints. Add more as needed.
 const SET_CODE_TO_NAME_HINTS = {
-  // Scarlet & Violet examples
   sv01: "Scarlet & Violet",
   sv02: "Paldea Evolved",
   sv03: "Obsidian Flames",
   "sv03.5": "151",
   sv04: "Paradox Rift",
-  sv05: "Temporal Forces",   // ← FIXED
+  sv05: "Temporal Forces",
   sv06: "Twilight Masquerade",
   sv07: "Stellar Crown",
-  sv08: "Surging Sparks",    // ← FIXED
-  // add any others your backend commonly returns
+  sv08: "Surging Sparks",
 };
 
-// For codes with a dot (sv03.5) also allow a fallback without the dot (sv035)
 function lookupSetNameForCode(codeRaw) {
   const c = normalizeSetCode(codeRaw);
   if (!c) return "";
-  // direct hit
   if (SET_CODE_TO_NAME_HINTS[c]) return SET_CODE_TO_NAME_HINTS[c];
-  // dotless alias (sv03.5 -> sv035)
   const dotless = c.replace(/\./g, "");
-  if (dotless !== c && SET_CODE_TO_NAME_HINTS[dotless]) {
-    return SET_CODE_TO_NAME_HINTS[dotless];
-  }
+  if (dotless !== c && SET_CODE_TO_NAME_HINTS[dotless]) return SET_CODE_TO_NAME_HINTS[dotless];
   return "";
 }
-
 function firstHumanName(...candidates) {
   for (const c of candidates) {
     const s = (c ?? "").toString().trim();
-    if (s && s.toLowerCase() !== "set" && !looksLikeSetCode(s)) {
-      return toTitleCase(s);
-    }
+    if (s && s.toLowerCase() !== "set" && !looksLikeSetCode(s)) return toTitleCase(s);
   }
   return "";
 }
-
-// CHANGED: derive a displayable set label (checks nested set.name & set.code too)
 function deriveSetLabel({ paramSetName, serverSetName, nestedSetName, nestedSetCode, id, setCode }) {
-  // 1) Real names (param → server flat → server nested)
   const human = firstHumanName(paramSetName, serverSetName, nestedSetName);
   if (human) return human;
-
-  // 2) Hints via codes: prefer nested code → explicit setCode → parsed from id
-  const codeCandidates = [
-    nestedSetCode,
-    setCode,
-    parseCardId(id).setCode,
-  ].map(normalizeSetCode);
-
+  const codeCandidates = [nestedSetCode, setCode, parseCardId(id).setCode].map(normalizeSetCode);
   for (const code of codeCandidates) {
     const hint = lookupSetNameForCode(code);
     if (hint) return hint;
   }
-
-  // 3) Fallback: uppercase of the best available code
   const fallbackCode = codeCandidates.find(Boolean);
   return fallbackCode ? fallbackCode.toUpperCase() : "";
 }
 
-// PokemonTCG URLs
 function pokemontcgFromParts(setCode, number, hires = true) {
   if (!setCode || !number) return null;
   const n = String(number).replace(/^0+/, "");
   const suffix = hires ? "_hires" : "";
   return `https://images.pokemontcg.io/${setCode}/${n}${suffix}.png`;
 }
-
-// TCGdex URLs
 function tcgdexFromParts(setCode, number, era = null, quality = "high") {
   if (!setCode || !number) return null;
-  const eraSlug = (era || inferSetEra({ code: setCode }) || "")
-    .toLowerCase()
-    .replace(/[^a-z]/g, "");
+  const eraSlug = (era || inferSetEra({ code: setCode }) || "").toLowerCase().replace(/[^a-z]/g, "");
   const numPadded = String(number).replace(/^0+/, "").padStart(3, "0");
   if (!eraSlug) return null;
   return `https://assets.tcgdex.net/en/${eraSlug}/${setCode}/${numPadded}/${quality}.webp`;
 }
-
 function parseImageCandidatesParam(imageCandidatesParam) {
   if (!imageCandidatesParam) return [];
   if (Array.isArray(imageCandidatesParam)) return imageCandidatesParam.map(String);
   const raw = String(imageCandidatesParam);
-  try {
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.map(String) : [];
-  } catch {
-    return raw.split(",").map((s) => s.trim()).filter(Boolean);
-  }
+  try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr.map(String) : []; }
+  catch { return raw.split(",").map((s) => s.trim()).filter(Boolean); }
 }
-
-// Build a pool; we’ll force-pick TCGdex later.
 function buildImageCandidates({ image, id, setCode, number, era, imageCandidates }) {
   const out = [];
   const provided = parseImageCandidatesParam(imageCandidates);
@@ -232,30 +167,17 @@ function buildImageCandidates({ image, id, setCode, number, era, imageCandidates
   const pStd = pokemontcgFromParts(code, num, false);
   if (pHires) out.push(pHires);
   if (pStd) out.push(pStd);
-
   const seen = new Set();
-  return out.filter((u) => {
-    const key = String(u || "");
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return out.filter((u) => { const key = String(u || ""); if (!key || seen.has(key)) return false; seen.add(key); return true; });
 }
 
 /* ----------------------------------------------------------------------------------- */
-
 export default function CardDetailsScreen() {
   const router = useRouter();
   const toast = useToast();
   const params = useLocalSearchParams();
 
   const routeId = params?.id ? String(params.id) : null;
-
-  const [range, setRange] = useState("30D");
-  const hideActions =
-    params?.hideActions === "1" ||
-    params?.hideActions === 1 ||
-    params?.hideActions === true;
 
   // Fallback from route params (supports prices/pricesJSON)
   const fallback = useMemo(() => {
@@ -332,21 +254,18 @@ export default function CardDetailsScreen() {
     (routeId ? String(routeId) : null) ||
     (params?.cardId ? String(params.cardId) : null);
 
-  // Pool candidates (order agnostic)
+  // Pool candidates & prefer TCGdex
   const imageCandidates = useMemo(
-    () =>
-      buildImageCandidates({
-        image: card?.image,
-        id: card?.id,
-        setCode: card?.setCode,
-        number: card?.number,
-        era: card?.era,
-        imageCandidates: card?.imageCandidates,
-      }),
+    () => buildImageCandidates({
+      image: card?.image,
+      id: card?.id,
+      setCode: card?.setCode,
+      number: card?.number,
+      era: card?.era,
+      imageCandidates: card?.imageCandidates,
+    }),
     [card?.image, card?.id, card?.setCode, card?.number, card?.era, card?.imageCandidates]
   );
-
-  // Force TCGdex first
   const primaryImage =
     imageCandidates.find((u) => typeof u === "string" && u.includes("assets.tcgdex.net")) ||
     imageCandidates[0] ||
@@ -368,153 +287,63 @@ export default function CardDetailsScreen() {
 
   const activeVariant = canonicalVariant(price?.variation ?? "normal");
 
-  // History
-  const { data: historyData } = useQuery(CardPriceHistoryDocument, {
-    variables: { cardId: resolvedCardId ?? "", days: 365 },
-    skip: !resolvedCardId,
-    fetchPolicy: "cache-and-network",
-    nextFetchPolicy: "cache-first",
-  });
+  /* ------------------ History via hook ------------------ */
+  const { history, range, setRange } = usePriceHistory(resolvedCardId, activeVariant);
 
-  const historyByVariant = useMemo(() => {
-    const points = Array.isArray(historyData?.cardPriceHistory)
-      ? historyData.cardPriceHistory
-      : [];
-    if (!points.length) return new Map();
+  /* ------------------ Shared actions (parity with Collection tab) ------------------ */
+  const { addToCollection: addSharedToCollection, addToWishlist: addSharedToWishlist } =
+    useCollectionWishlistActions?.() || {};
 
-    const toFinite = (value) => {
-      if (typeof value === "number" && Number.isFinite(value)) return value;
-      if (typeof value === "string") {
-        const n = Number(value);
-        return Number.isFinite(n) ? n : null;
-      }
-      return null;
-    };
-
-    const grouped = new Map();
-    for (const point of points) {
-      if (!point) continue;
-      const key = canonicalVariant(point.variation ?? "normal");
-      const normalized = {
-        ...point,
-        variation: key,
-        market: toFinite(point.market),
-        mid: toFinite(point.mid),
-        low: toFinite(point.low),
-        high: toFinite(point.high),
-        gbp: toFinite(point.gbp),
-        tcgplayer: toFinite(point.tcgplayer),
-        cardmarket: toFinite(point.cardmarket),
-        updatedAt: point.updatedAt ?? point.date ?? null,
-      };
-
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key).push(normalized);
-    }
-
-    for (const arr of grouped.values()) {
-      arr.sort((a, b) => {
-        const ta = new Date(a.updatedAt || a.date || 0).getTime();
-        const tb = new Date(b.updatedAt || b.date || 0).getTime();
-        return ta - tb;
-      });
-    }
-
-    return grouped;
-  }, [historyData]);
-
-  const variantHistory = useMemo(() => {
-    if (!historyByVariant.size) return [];
-    if (historyByVariant.has(activeVariant)) return historyByVariant.get(activeVariant) ?? [];
-    if (historyByVariant.has("normal")) return historyByVariant.get("normal") ?? [];
-    const first = historyByVariant.values().next().value;
-    return Array.isArray(first) ? first : [];
-  }, [historyByVariant, activeVariant]);
-
-  const baseForSeries = isNum(average) ? average : 10;
-  const hasHistory = variantHistory.length > 0;
-
-  const placeholder = useMemo(() => {
-    if (hasHistory) return null;
-    const points = TIMEFRAME_POINTS[range] ?? 30;
-    const series = makePlaceholderSeries(baseForSeries, points);
-    const stats = seriesStats(series);
-    return {
-      bars: toBarHeights(series, 80),
-      avg: stats.avg,
-      min: stats.min,
-      max: stats.max,
-    };
-  }, [hasHistory, range, baseForSeries]);
-
-  /* ------------------ Mutations ------------------ */
   const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
   const userId = meData?.me?.id ?? null;
 
-  const [addToCollection, { loading: addingCollection }] = useMutation(
-    AddToCollectionDocument,
-    {
-      update: (cache, { data }) => {
-        upsertMyCollectionEntry(cache, data?.addToCollection);
-      },
-      refetchQueries: () => buildMyCollectionRefetchQueries(userId),
-      awaitRefetchQueries: false,
-    }
-  );
-  const [addToWishlist, { loading: addingWishlist }] = useMutation(
-    AddToWishlistDocument
-  );
-
-  const variation = price?.variation ? String(price.variation) : "normal";
+  // Fallback mutations if shared actions are not wired in this screen
+  const [addToCollectionMut] = useMutation(AddToCollectionDocument);
+  const [addToWishlistMut]  = useMutation(AddToWishlistDocument);
 
   const handleAddToCollection = async () => {
-    if (!resolvedCardId) {
-      toast.show("Missing card id", { type: "error" });
-      return;
-    }
+    if (!resolvedCardId) return toast.show("Missing card id", { type: "error" });
     try {
-      await addToCollection({
-        variables: { cardId: resolvedCardId, variation, quantity: 1 },
-      });
+      if (typeof addSharedToCollection === "function") {
+        await addSharedToCollection({ cardId: String(resolvedCardId), variation: String(activeVariant), quantity: 1 });
+      } else {
+        await addToCollectionMut({ variables: { cardId: String(resolvedCardId), variation: String(activeVariant), quantity: 1 } });
+      }
       toast.show("Added to collection", { type: "success" });
     } catch (e) {
-      toast.show(
-        e?.graphQLErrors?.[0]?.message || e?.message || "Failed to add to collection",
-        { type: "error" }
-      );
+      toast.show(e?.graphQLErrors?.[0]?.message || e?.message || "Failed to add to collection", { type: "error" });
     }
   };
 
   const handleToggleWishlist = async () => {
-    if (!resolvedCardId) {
-      toast.show("Missing card id", { type: "error" });
-      return;
-    }
+    if (!resolvedCardId) return toast.show("Missing card id", { type: "error" });
     try {
-      await addToWishlist({ variables: { cardId: resolvedCardId, variation } });
-      toast.show("Added to wishlist", { type: "success" });
+      if (typeof addSharedToWishlist === "function") {
+        await addSharedToWishlist({ cardId: String(resolvedCardId), variation: String(activeVariant) });
+      } else {
+        await addToWishlistMut({ variables: { cardId: String(resolvedCardId), variation: String(activeVariant) } });
+      }
+      toast.show("Updated wishlist", { type: "success" });
     } catch (e) {
-      toast.show(
-        e?.graphQLErrors?.[0]?.message || e?.message || "Failed to update wishlist",
-        { type: "error" }
-      );
+      toast.show(e?.graphQLErrors?.[0]?.message || e?.message || "Failed to update wishlist", { type: "error" });
     }
   };
+
+  const hideActions =
+    params?.hideActions === "1" ||
+    params?.hideActions === 1 ||
+    params?.hideActions === true;
 
   const actionProps = hideActions
     ? {}
     : {
-        onAddToCollection: addingCollection ? undefined : handleAddToCollection,
-        onToggleWishlist: addingWishlist ? undefined : handleToggleWishlist,
+        onAddToCollection: handleAddToCollection,
+        onToggleWishlist: handleToggleWishlist,
       };
 
   if (__DEV__) {
     // eslint-disable-next-line no-console
-    console.log("[CardDetails]", {
-      chosenImage: primaryImage,
-      id: card.id,
-      setName: card.setName,
-    });
+    console.log("[CardDetails]", { chosenImage: primaryImage, id: card.id, setName: card.setName });
   }
 
   return (
@@ -538,7 +367,7 @@ export default function CardDetailsScreen() {
           <InfoCard
             name={card.name}
             number={card.number}
-            setName={card.setName} // now corrected via normalized-code hints or server
+            setName={card.setName}
             average={isNum(average) ? average : null}
             variationLabel={price?.variation ? String(price.variation).toUpperCase() : "—"}
             hideActions={hideActions}
@@ -546,13 +375,11 @@ export default function CardDetailsScreen() {
           />
 
           <PricingHistory
+            history={history}
             range={range}
             onChangeRange={setRange}
-            history={variantHistory.length ? variantHistory : null}
-            barHeights={!variantHistory.length ? (toBarHeights(makePlaceholderSeries(isNum(average) ? average : 10, TIMEFRAME_POINTS[range] ?? 30), 80)) : undefined}
-            avg={undefined}
-            min={undefined}
-            max={undefined}
+            loading={loading}   // ← from the hook
+            error={error}       // ← from the hook
           />
 
           <View style={{ height: 28 }} />

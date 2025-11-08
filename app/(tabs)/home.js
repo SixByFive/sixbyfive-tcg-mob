@@ -24,6 +24,7 @@ import VerificationBanner from "../../components/home/VerificationBanner";
 
 // ADDED: lightweight replacement cards
 import GettingStartedCard from "../../components/home/GettingStartedCard";
+import EvolvedSpotlightBanner from "../../components/partners/EvolvedSpotlightBanner";
 
 const DISCORD_INVITE = "https://discord.gg/PRMbMbRE2H";
 
@@ -126,8 +127,15 @@ export default function Home() {
       </ActionRow>
       <ActionRow>
         <ActionCard label="Browse sets" onPress={() => router.push("/sets")} />
-        <ActionCard label="App settings" onPress={() => router.push("/settings")} />
+        <ActionCard label="Settings" onPress={() => router.push("/settings")} />
       </ActionRow>
+
+      <EvolvedSpotlightBanner
+        tagline={<Text><Text style={{fontStyle:"italic"}}>Evolve</Text> the way you protect your cards</Text>}
+        bullets={["Sleeves that actually fit", "Toploaders you can trust"]}
+        ctaLabel="Shop Evolved"
+        ctaHref="https://evolvedcardprotection.co.uk?sca_ref=9820478.MfkcaLj4ToIM"
+      />
 
       {/* Removed: Recent activity block (not in app yet) */}
     </ScrollView>

@@ -55,14 +55,14 @@ export default function InfoCard({
               onPress={onAddToCollection}
               style={[styles.cta, styles.ctaPrimary]}
             >
-              <Text style={styles.ctaPrimaryText}>Add to Collection</Text>
+              <Text style={styles.ctaPrimaryText}>+ Collection</Text>
             </Pressable>
 
             <Pressable
               onPress={onToggleWishlist}
               style={[styles.cta, styles.ctaOutline]}
             >
-              <Text style={styles.ctaOutlineText}>Wishlist</Text>
+              <Text style={styles.ctaOutlineText}>+ Wishlist</Text>
             </Pressable>
           </>
         )}
