@@ -1,4 +1,12 @@
-import { useMeQuery, useUserProfileQuery } from "@sixbyfive/tcg-binder/react";
+// app/(profile)/[username].js
+// Public profile screen (viewing someone else's profile)
+//
+// - Uses USER_PROFILE_PUBLIC with only schema-safe fields
+// - Passes userId + stats into OverviewTab so it can show real counts
+// - WishlistTab now correctly shows the visited user's wishlist (via userId)
+
+import { gql, useQuery } from "@apollo/client";
+import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -7,7 +15,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  View
+  View,
 } from "react-native";
 
 import PageHeaderBackSimple from "../../components/common/PageHeaderBackSimple";
@@ -22,18 +30,62 @@ import WishlistTab from "../../components/profile/tabs/WishlistTab";
 import { COLORS } from "../../theme/colors";
 
 const avatarPlaceholder = (name) =>
-  `https://ui-avatars.com/api/?name=${encodeURIComponent(name || "User")}&background=2963FF&color=fff`;
+  `https://ui-avatars.com/api/?name=${encodeURIComponent(
+    name || "User"
+  )}&background=2963FF&color=fff`;
 
 const fmtDate = (d) => {
   if (!d) return "—";
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return "—";
   try {
-    return dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    return dt.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
   } catch {
     return dt.toISOString().slice(0, 10);
   }
 };
+
+/**
+ * Schema-safe public userProfile query.
+ */
+const USER_PROFILE_PUBLIC = gql`
+  query UserProfile_Public($username: String!) {
+    userProfile(username: $username) {
+      id
+      userId
+
+      bio
+      avatar
+      favouritePokemon
+      status
+      createdAt
+      updatedAt
+
+      user {
+        id
+        username
+        avatar
+        createdAt
+        lastLogin
+        updatedAt
+      }
+
+      # achievements {
+      #   id
+      #   code
+      #   name
+      #   description
+      #   points
+      #   iconUrl
+      #   createdAt
+      # }
+    }
+  }
+`;
 
 export default function PublicProfile() {
   const router = useRouter();
@@ -42,11 +94,19 @@ export default function PublicProfile() {
 
   // stable hook order
   const [tab, setTab] = useState("overview");
+
   const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
   const meUsername = meData?.me?.username || "";
   const isOwner = meUsername.toLowerCase() === username.toLowerCase();
 
-  const { data, loading, error, refetch, networkStatus } = useUserProfileQuery({
+  // Use our schema-safe query instead of the generated hook that we can't edit
+  const {
+    data,
+    loading,
+    error,
+    refetch,
+    networkStatus,
+  } = useQuery(USER_PROFILE_PUBLIC, {
     variables: { username },
     notifyOnNetworkStatusChange: true,
     fetchPolicy: "cache-and-network",
@@ -55,33 +115,31 @@ export default function PublicProfile() {
   const vm = useMemo(() => {
     const p = data?.userProfile;
     if (!p) return null;
+
     const uname = p.user?.username || username;
 
-    // Read nested profile fields first, then fall back
-    const prof = p.profile ?? {};
-    const bio = prof.bio ?? p.bio ?? "";
-    const favouritePokemon =
-      prof.favouritePokemon ??
-      prof.favoritePokemon ??
-      p.favouritePokemon ??
-      p.favoritePokemon ??
-      "";
+    // These fields live directly on Profile in your schema
+    const bio = p.bio ?? "";
+    const favouritePokemon = p.favouritePokemon ?? "";
+
     const avatarResolved =
-      prof.avatar ??
-      p.user?.avatar ??
       p.avatar ??
+      p.user?.avatar ??
       avatarPlaceholder(uname);
 
+    // Stats for public profiles:
+    // counts themselves are now loaded inside OverviewTab via userId
+    // using collection(userId), browseBinders(userId), wishlist(userId)
     const stats = {
-      binders: p?.stats?.binders ?? p?.bindersCount ?? 0,
-      cards: p?.stats?.cards ?? p?.cardsCount ?? 0,
-      wishlist: p?.stats?.wishlist ?? p?.wishlistCount ?? 0,
-      trades: p?.stats?.trades ?? p?.tradesCount ?? 0,
-      sales: p?.stats?.sales ?? p?.salesCount ?? 0,
+      binders: 0,
+      cards: 0,
+      wishlist: 0,
+      trades: 0,
+      sales: 0,
     };
 
-    return {
-      id: p.userId || p.id,
+    const vmObj = {
+      id: p.userId || p.id, // this is the userId used by collection/wishlist/browseBinders
       username: uname,
       avatar: avatarResolved,
       profile: {
@@ -95,16 +153,23 @@ export default function PublicProfile() {
       },
       isFollowing: !!p.user?.isFollowing,
       stats,
-      recentBinders: Array.isArray(p.recentBinders) ? p.recentBinders : [],
-      wishlistPreview: Array.isArray(p.wishlistPreview) ? p.wishlistPreview : [],
-      cardsPreview: Array.isArray(p.cardsPreview) ? p.cardsPreview : [],
-      forSalePreview: Array.isArray(p.forSalePreview) ? p.forSalePreview : [],
-      forTradePreview: Array.isArray(p.forTradePreview) ? p.forTradePreview : [],
+      recentBinders: [],
+      wishlistPreview: [],
+      cardsPreview: [],
+      forSalePreview: [],
+      forTradePreview: [],
       achievements: Array.isArray(p.achievements) ? p.achievements : [],
     };
+
+    if (__DEV__) {
+      // eslint-disable-next-line no-console
+      console.log("[PublicProfile vm]", vmObj);
+    }
+
+    return vmObj;
   }, [data, username]);
 
-  // follow state synced from vm
+  // follow state synced from vm (even though we don't render follow buttons yet)
   const [following, setFollowing] = useState(false);
   useEffect(() => {
     setFollowing(!!vm?.isFollowing);
@@ -118,22 +183,39 @@ export default function PublicProfile() {
       </View>
     );
   }
+
   if (error) {
     return (
-      <View style={[styles.container, styles.center, { paddingHorizontal: 24 }]}>
-        <Text style={{ color: COLORS.error, textAlign: "center", marginBottom: 12 }}>
+      <View
+        style={[styles.container, styles.center, { paddingHorizontal: 24 }]}
+      >
+        <Text
+          style={{
+            color: COLORS.error,
+            textAlign: "center",
+            marginBottom: 12,
+          }}
+        >
           {error.message}
         </Text>
-        <Text onPress={() => refetch()} style={{ color: COLORS.accent, fontWeight: "800" }}>
+        <Text
+          onPress={() => refetch()}
+          style={{ color: COLORS.accent, fontWeight: "800" }}
+        >
           Try again
         </Text>
       </View>
     );
   }
+
   if (!vm) {
     return (
       <View style={styles.container}>
-        <PageHeaderBackSimple title="User not found" subtitle={`@${username}`} onBack={() => router.back()} />
+        <PageHeaderBackSimple
+          title="User not found"
+          subtitle={`@${username}`}
+          onBack={() => router.back()}
+        />
         <View style={[styles.center, { paddingHorizontal: 24 }]}>
           <Text style={{ color: COLORS.textMuted, textAlign: "center" }}>
             We couldn’t find “@{username}”.
@@ -155,7 +237,11 @@ export default function PublicProfile() {
 
   return (
     <View style={styles.container}>
-      <PageHeaderBackSimple title={vm.username} subtitle={`@${vm.username}`} onBack={() => router.back()} />
+      <PageHeaderBackSimple
+        title={vm.username}
+        subtitle={`@${vm.username}`}
+        onBack={() => router.back()}
+      />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -175,7 +261,9 @@ export default function PublicProfile() {
         {tab === "overview" && (
           <OverviewTab
             stats={vm.stats}
-            meta={vm.meta}
+            isOwner={isOwner}
+            userId={vm.id}   // <- IMPORTANT: lets OverviewTab run PROFILE_* queries
+            // NOTE: no cardsCount / bindersCount / wishlistCount overrides here
             onViewCards={() => setTab("cards")}
             showAccountActions={false}
           />
@@ -206,16 +294,16 @@ export default function PublicProfile() {
         {tab === "binders" && (
           <BindersTab
             title="Binders"
-            isOwner={isOwner}           // let BindersTab decide view vs edit
+            isOwner={isOwner}
             binders={vm.recentBinders}
             userId={vm.id}
-            // NOTE: intentionally NOT passing onOpenBinder to avoid forcing view route
           />
         )}
 
         {tab === "wishlist" && (
           <WishlistTab
             items={vm.wishlistPreview}
+            userId={vm.id}
             onOpenCard={(card) =>
               router.push({
                 pathname: "/card/[id]",
@@ -236,7 +324,12 @@ export default function PublicProfile() {
           <SaleTradeTab
             title="For Sale"
             items={vm.forSalePreview}
-            onOpenCard={(c) => router.push({ pathname: "/card/[id]", params: { id: String(c.id) } })}
+            onOpenCard={(c) =>
+              router.push({
+                pathname: "/card/[id]",
+                params: { id: String(c.id) },
+              })
+            }
           />
         )}
 
@@ -244,11 +337,18 @@ export default function PublicProfile() {
           <SaleTradeTab
             title="For Trade"
             items={vm.forTradePreview}
-            onOpenCard={(c) => router.push({ pathname: "/card/[id]", params: { id: String(c.id) } })}
+            onOpenCard={(c) =>
+              router.push({
+                pathname: "/card/[id]",
+                params: { id: String(c.id) },
+              })
+            }
           />
         )}
 
-        {tab === "achievements" && <AchievementsTab items={vm.achievements} />}
+        {tab === "achievements" && (
+          <AchievementsTab items={vm.achievements} />
+        )}
 
         <View style={{ height: 28 }} />
       </ScrollView>
@@ -261,7 +361,7 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: 12, paddingBottom: 24 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
 
-  // visitor actions (kept)
+  // visitor actions (kept for future follow/message buttons etc.)
   actionBar: { flexDirection: "row", gap: 10, marginTop: 10, marginBottom: 4 },
 
   button: {
@@ -281,8 +381,14 @@ const styles = StyleSheet.create({
   },
   buttonPressed: { transform: [{ scale: 0.98 }], opacity: 0.95 },
   buttonPrimary: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
-  buttonSecondary: { backgroundColor: COLORS.surface, borderColor: COLORS.border },
-  buttonFollowing: { backgroundColor: "rgba(41,99,255,0.12)", borderColor: COLORS.accent },
+  buttonSecondary: {
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+  },
+  buttonFollowing: {
+    backgroundColor: "rgba(41,99,255,0.12)",
+    borderColor: COLORS.accent,
+  },
 
   buttonText: { fontWeight: "900", letterSpacing: 0.2 },
   buttonTextPrimary: { color: "#fff" },
@@ -298,7 +404,16 @@ const styles = StyleSheet.create({
     marginRight: 8,
     borderWidth: 1,
   },
-  iconPillPrimary: { backgroundColor: "rgba(255,255,255,0.18)", borderColor: "rgba(255,255,255,0.22)" },
-  iconPillSecondary: { backgroundColor: COLORS.background, borderColor: COLORS.border },
-  iconPillFollowing: { backgroundColor: "rgba(41,99,255,0.12)", borderColor: COLORS.accent },
+  iconPillPrimary: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderColor: "rgba(255,255,255,0.22)",
+  },
+  iconPillSecondary: {
+    backgroundColor: COLORS.background,
+    borderColor: COLORS.border,
+  },
+  iconPillFollowing: {
+    backgroundColor: "rgba(41,99,255,0.12)",
+    borderColor: COLORS.accent,
+  },
 });

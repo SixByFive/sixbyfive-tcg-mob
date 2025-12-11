@@ -1,5 +1,12 @@
 // components/profile/tabs/OverviewTab.js
 // Accurate counts with minimal, schema-safe queries + safe readers + prop overrides.
+//
+// OWNER VIEW:
+//   - uses myCollection, myBinders, myWishlist
+// PUBLIC VIEW (visiting someone else):
+//   - uses collection(userId), browseBinders(userId), wishlist(userId)
+//
+// The component decides which set to use based on `isOwner` and `userId`.
 
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
@@ -8,18 +15,23 @@ import { COLORS } from "../../../theme/colors";
 
 import { gql, useQuery } from "@apollo/client";
 
-/* ---------------- Minimal inline queries (avoid 400s) ---------------- */
+/* ---------------- Minimal inline queries (owner) ---------------- */
 
-// Only select what's needed to count; some servers 400 on rich selections.
+// Only select ids / totals – avoid rich selections to prevent 400s.
+
 const MY_COLLECTION_MIN_IDS = gql`
   query MyCollection_MinIds {
-    myCollection { id }
+    myCollection {
+      id
+    }
   }
 `;
 
 const MY_BINDERS_MIN_IDS = gql`
   query MyBinders_MinIds {
-    myBinders { id }
+    myBinders {
+      id
+    }
   }
 `;
 
@@ -27,7 +39,40 @@ const MY_WISHLIST_MIN = gql`
   query MyWishlist_Min {
     myWishlist {
       total
-      entries { id }
+      entries {
+        id
+      }
+    }
+  }
+`;
+
+/* ---------------- Minimal inline queries (profile / other user) ---------------- */
+
+// These mirror the owner queries but take userId.
+
+const PROFILE_COLLECTION_MIN_IDS = gql`
+  query ProfileCollection_MinIds($userId: ID!) {
+    collection(userId: $userId) {
+      id
+    }
+  }
+`;
+
+const PROFILE_BINDERS_MIN_IDS = gql`
+  query ProfileBinders_MinIds($userId: ID!) {
+    browseBinders(userId: $userId) {
+      id
+    }
+  }
+`;
+
+const PROFILE_WISHLIST_MIN = gql`
+  query ProfileWishlist_Min($userId: ID!) {
+    wishlist(userId: $userId, page: 1, pageSize: 1) {
+      total
+      entries {
+        id
+      }
     }
   }
 `;
@@ -37,7 +82,7 @@ const MY_WISHLIST_MIN = gql`
 function toArray(input) {
   if (!input) return [];
   if (Array.isArray(input)) return input;
-  if (Array.isArray(input.edges)) return input.edges.map(e => e?.node ?? e).filter(Boolean);
+  if (Array.isArray(input.edges)) return input.edges.map((e) => e?.node ?? e).filter(Boolean);
   if (Array.isArray(input.nodes)) return input.nodes.filter(Boolean);
   if (Array.isArray(input.items)) return input.items.filter(Boolean);
   if (Array.isArray(input.results)) return input.results.filter(Boolean);
@@ -46,7 +91,7 @@ function toArray(input) {
     const v = input[k];
     if (Array.isArray(v)) return v;
     if (v && typeof v === "object") {
-      if (Array.isArray(v.edges)) return v.edges.map(e => e?.node ?? e).filter(Boolean);
+      if (Array.isArray(v.edges)) return v.edges.map((e) => e?.node ?? e).filter(Boolean);
       if (Array.isArray(v.nodes)) return v.nodes.filter(Boolean);
     }
   }
@@ -65,15 +110,19 @@ function wlTotal(root, listLen = 0) {
 }
 
 function formatNumber(n) {
-  try { return new Intl.NumberFormat().format(n ?? 0); }
-  catch { return String(n ?? 0); }
+  try {
+    return new Intl.NumberFormat().format(n ?? 0);
+  } catch {
+    return String(n ?? 0);
+  }
 }
 
 /* ---------------- Component ---------------- */
 /**
  * Props
- * - stats?: { binders, cards, wishlist, trades, sales }
+ * - stats?: { binders, cards, wishlist, trades, sales } // fallback values (e.g. from profile VM)
  * - isOwner?: boolean  // when true, run "my*" live queries
+ * - userId?: string    // when viewing someone else, use this for profile queries
  * - cardsCount?, bindersCount?, wishlistCount?  // explicit overrides win
  * - onEditStats, onOpenSettings, onLogout
  * - showAccountActions?: boolean
@@ -81,6 +130,7 @@ function formatNumber(n) {
 export default function OverviewTab({
   stats,
   isOwner = false,
+  userId,
   onEditStats,
   onOpenSettings,
   onLogout,
@@ -90,44 +140,121 @@ export default function OverviewTab({
   bindersCount,
   wishlistCount,
 }) {
-  // Live queries only for the profile owner
-  const { data: colData } = useQuery(MY_COLLECTION_MIN_IDS, {
+  const isProfileView = !isOwner && !!userId;
+
+  if (__DEV__) {
+    // High-level mode info
+    // eslint-disable-next-line no-console
+    console.log("[OverviewTab] props", {
+      isOwner,
+      isProfileView,
+      userId,
+      stats,
+      cardsCount,
+      bindersCount,
+      wishlistCount,
+    });
+  }
+
+  // --- OWNER QUERIES (my*) ---
+  const { data: myColData } = useQuery(MY_COLLECTION_MIN_IDS, {
     skip: !isOwner,
     fetchPolicy: "cache-and-network",
     nextFetchPolicy: "cache-first",
     notifyOnNetworkStatusChange: true,
   });
 
-  const { data: bindersData } = useQuery(MY_BINDERS_MIN_IDS, {
+  const { data: myBindersData } = useQuery(MY_BINDERS_MIN_IDS, {
     skip: !isOwner,
     fetchPolicy: "cache-and-network",
     nextFetchPolicy: "cache-first",
     notifyOnNetworkStatusChange: true,
   });
 
-  const { data: wlData } = useQuery(MY_WISHLIST_MIN, {
+  const { data: myWlData } = useQuery(MY_WISHLIST_MIN, {
     skip: !isOwner,
     fetchPolicy: "cache-and-network",
     nextFetchPolicy: "cache-first",
     notifyOnNetworkStatusChange: true,
   });
+
+  // --- PROFILE QUERIES (other user, by userId) ---
+  const { data: profileColData } = useQuery(PROFILE_COLLECTION_MIN_IDS, {
+    skip: !isProfileView,
+    variables: isProfileView ? { userId } : undefined,
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
+
+  const { data: profileBindersData } = useQuery(PROFILE_BINDERS_MIN_IDS, {
+    skip: !isProfileView,
+    variables: isProfileView ? { userId } : undefined,
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
+
+  const { data: profileWlData } = useQuery(PROFILE_WISHLIST_MIN, {
+    skip: !isProfileView,
+    variables: isProfileView ? { userId } : undefined,
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
+
+  if (__DEV__) {
+    // Raw query payloads so we can see if anything actually comes back
+    // eslint-disable-next-line no-console
+    console.log("[OverviewTab] raw query data", {
+      isOwner,
+      isProfileView,
+      userId,
+      myColData,
+      myBindersData,
+      myWlData,
+      profileColData,
+      profileBindersData,
+      profileWlData,
+    });
+  }
 
   // Derive counts (override props → live query → fallback stats)
   const s = useMemo(() => {
     const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
-    const collectionList =
-      Array.isArray(colData?.myCollection) ? colData.myCollection : toArray(colData?.myCollection);
-    const cardsFromQ = Array.isArray(collectionList) ? collectionList.length : undefined;
+    // Decide which datasets to use
+    const colData = isOwner ? myColData : profileColData;
+    const bindersData = isOwner ? myBindersData : profileBindersData;
+    const wlData = isOwner ? myWlData : profileWlData;
 
-    const bindersList =
-      Array.isArray(bindersData?.myBinders) ? bindersData.myBinders : toArray(bindersData?.myBinders);
-    const bindersFromQ = Array.isArray(bindersList) ? bindersList.length : undefined;
+    // collection
+    const collectionListRaw =
+      Array.isArray(colData?.myCollection) || Array.isArray(colData?.collection)
+        ? (colData?.myCollection || colData?.collection)
+        : toArray(colData?.myCollection || colData?.collection);
 
+    const cardsFromQ = Array.isArray(collectionListRaw)
+      ? collectionListRaw.length
+      : undefined;
+
+    // binders
+    const bindersListRaw =
+      Array.isArray(bindersData?.myBinders) ||
+      Array.isArray(bindersData?.browseBinders)
+        ? (bindersData?.myBinders || bindersData?.browseBinders)
+        : toArray(bindersData?.myBinders || bindersData?.browseBinders);
+
+    const bindersFromQ = Array.isArray(bindersListRaw)
+      ? bindersListRaw.length
+      : undefined;
+
+    // wishlist (use total if available, else entries length)
     const root = wlRoot(wlData);
-    const wlFromQ = wlTotal(root, wlList(root).length);
+    const list = wlList(root);
+    const wlFromQ = wlTotal(root, list.length);
 
-    return {
+    const derived = {
       binders:
         (isNum(bindersCount) ? bindersCount : undefined) ??
         (isNum(bindersFromQ) ? bindersFromQ : undefined) ??
@@ -146,7 +273,37 @@ export default function OverviewTab({
       trades: stats?.trades ?? 0,
       sales: stats?.sales ?? 0,
     };
-  }, [cardsCount, bindersCount, wishlistCount, stats, colData, bindersData, wlData]);
+
+    if (__DEV__) {
+      // eslint-disable-next-line no-console
+      console.log("[OverviewTab] derived counts", {
+        isOwner,
+        isProfileView,
+        userId,
+        cardsFromQ,
+        bindersFromQ,
+        wlFromQ,
+        root,
+        listLen: list.length,
+        final: derived,
+      });
+    }
+
+    return derived;
+  }, [
+    isOwner,
+    userId,
+    cardsCount,
+    bindersCount,
+    wishlistCount,
+    stats,
+    myColData,
+    myBindersData,
+    myWlData,
+    profileColData,
+    profileBindersData,
+    profileWlData,
+  ]);
 
   return (
     <View>
@@ -198,8 +355,8 @@ function Section({ title, subtitle, children, showEdit, onEdit, compact = false 
             accessibilityLabel={`Edit ${title}`}
             hitSlop={6}
           >
-            <Ionicons name="create-outline" size={14} color={COLORS.accent} />
-            <Text style={styles.editText}>Edit</Text>
+          <Ionicons name="create-outline" size={14} color={COLORS.accent} />
+          <Text style={styles.editText}>Edit</Text>
           </Pressable>
         )}
       </View>

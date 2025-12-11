@@ -2,9 +2,8 @@
 
 import { useApolloClient, useLazyQuery, useMutation } from "@apollo/client";
 import { useRouter } from "expo-router";
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   StyleSheet,
   Text,
@@ -25,7 +24,6 @@ import EmptyState from "../../components/common/EmptyState";
 import CardTile from "../../components/search/CardTile";
 import SearchForm from "../../components/search/SearchForm";
 import SearchHeader from "../../components/search/SearchHeader";
-import { PER_PAGE } from "../../constants/pagination";
 import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";
 import {
@@ -33,71 +31,123 @@ import {
   upsertMyCollectionEntry,
 } from "../../utils/apolloCollectionCache";
 
-const CARDSEARCH_PAGE_SIZE = 48;
-const CARDSEARCH_EXACT_LIMIT = 12;
+// We now load everything in a single query (no paging)
+const CARDSEARCH_LIMIT = 1200;
 const GBP_SYMBOL = "\u00A3";
 
 /* -------------------------------------------------------------------------- */
-/*  RARITY CONFIG (shared semantics with web AdvancedFilters)                 */
+/*  RARITY CONFIG                                                             */
 /* -------------------------------------------------------------------------- */
 
 const RARITY_CONFIG = [
   {
     id: "common",
     label: "Common",
-    raws: ["Common", "Common "],
   },
   {
     id: "uncommon",
     label: "Uncommon",
-    raws: ["Uncommon"],
   },
   {
     id: "rare",
     label: "Rare",
-    raws: ["Rare"],
   },
   {
     id: "double-rare",
     label: "Double Rare",
-    raws: ["Double Rare", "Double rare"],
   },
   {
     id: "art-rare",
     label: "Art Rare",
-    raws: ["Art Rare", "Illustration rare"],
+  },
+  {
+    id: "ace-spec",
+    label: "ACE SPEC Rare",
   },
   {
     id: "sir",
     label: "Special Illustration Rare",
-    raws: ["Special Illustration Rare", "Secial Illustration Rare"],
   },
   {
     id: "ur",
     label: "Ultra Rare",
-    raws: ["Ultra Rare", "Ultra rare"],
   },
   {
     id: "hr",
     label: "Hyper Rare",
-    raws: ["Hyper Rare", "Hyper rare"],
   },
 ];
 
 const normaliseRarity = (value) =>
   (value || "").toString().trim().toLowerCase();
 
-const NORMALISED_TO_GROUP = RARITY_CONFIG.reduce((acc, cfg) => {
-  cfg.raws.forEach((raw) => {
-    acc[normaliseRarity(raw)] = cfg.id;
-  });
-  return acc;
-}, {});
+/**
+ * Central, explicit map of normalised rarity string -> canonical group id.
+ */
+const RAW_RARITY_GROUP_MAP = {
+  // Base tiers
+  common: "common",
+  uncommon: "uncommon",
+  rare: "rare",
+  
+  // Double / art / illustration
+  "double rare": "double-rare",
+  "double-rare": "double-rare",
+  "art rare": "art-rare",
+  "illustration rare": "art-rare",
 
-const KNOWN_NORMALISED_RARITIES = new Set(
-  RARITY_CONFIG.flatMap((cfg) => cfg.raws.map(normaliseRarity))
-);
+  // Special / ultra / hyper
+  "Special illustration rare": "sir",
+  "hyper rare": "hr",
+  "ultra rare": "ur",
 
+  // ACE SPEC — a few variants
+  "ace spec": "ace-spec",
+  "ace-spec": "ace-spec",
+  "ace spec rare": "ace-spec",
+};
+
+/**
+ * Map raw rarity → canonical id ONCE and re-use.
+ * - exact matches via RAW_RARITY_GROUP_MAP
+ * - tolerant substring fallbacks for noisy strings like:
+ *   "Hyper Rare ★", "Special Illustration Rare ex", etc.
+ */
+function getRarityGroupId(raw) {
+  const norm = normaliseRarity(raw);
+  if (!norm) return null;
+
+  // 1) Exact mapping first
+  if (RAW_RARITY_GROUP_MAP[norm]) {
+    return RAW_RARITY_GROUP_MAP[norm];
+  }
+
+  // 2) Tolerant fallbacks for noisy labels
+  if (norm.includes("ace spec")) return "ace-spec";
+
+  if (norm.includes("special") && norm.includes("illustration")) return "sir";
+
+  if (norm.includes("hyper") && norm.includes("rare")) return "hr";
+
+  if (norm.includes("ultra") && norm.includes("rare")) return "ur";
+
+  if (norm.includes("double") && norm.includes("rare")) return "double-rare";
+
+  if (norm.includes("art") && norm.includes("rare")) return "art-rare";
+
+  if (norm.includes("illustration") && norm.includes("rare")) return "art-rare";
+
+  // base tiers, tolerant
+  if (norm === "common" || norm.endsWith(" common")) return "common";
+  if (norm === "uncommon" || norm.endsWith(" uncommon")) return "uncommon";
+
+  // plain rare fallback
+  if (norm === "rare" || norm.endsWith(" rare")) return "rare";
+
+  return null;
+}
+
+// group id → rarity rank (for sorting)
 const RARITY_RANK = RARITY_CONFIG.reduce((acc, cfg, index) => {
   acc[cfg.id] = index + 1;
   return acc;
@@ -122,9 +172,16 @@ function isForeignKeyConstraintError(error) {
   return typeof message === "string" && /foreign key/i.test(message);
 }
 
+/**
+ * Variant keys → display labels for the app:
+ *   "normal"   → "Normal"
+ *   "holo"     → "Holo"
+ *   "reverse*" → "Reverse Holo"
+ *   "1st ed"   → "1st Ed"
+ */
 function canonicalVariantKey(raw) {
   const value = String(raw ?? "normal").trim().toLowerCase();
-  if (!value) return "normal";
+  if (!value || value === "normal") return "Normal";
   if (
     [
       "reverse",
@@ -134,36 +191,100 @@ function canonicalVariantKey(raw) {
       "reverseholofoil",
     ].includes(value)
   )
-    return "reverseHolofoil";
-  if (["holo", "holofoil", "holo foil"].includes(value)) return "holofoil";
+    return "Reverse Holo";
+  if (["holo", "holofoil", "holo foil"].includes(value)) return "Holo";
   if (
     ["firstedition", "first edition", "1stedition", "1st edition"].includes(
       value
     )
   )
-    return "firstEdition";
-  return value;
+    return "1st Ed";
+  // Any unknown values, we just treat as "Normal" for search UI purposes
+  return "Normal";
 }
+
 function firstNumber(...values) {
   for (const v of values)
     if (typeof v === "number" && Number.isFinite(v)) return v;
   return null;
 }
-function hasPrice(entry) {
-  if (!entry) return false;
-  return [
-    entry.market,
-    entry.tcgplayer,
-    entry.cardmarket,
-    entry.gbp,
-    entry.mid,
-    entry.low,
-    entry.high,
-  ].some((val) => typeof val === "number" && Number.isFinite(val));
+
+/* ---------------- PRICE HANDLING (simplified for GBP-only) ----------------- */
+
+/**
+ * We only care about GBP market price.
+ * Backend is already giving us `currency: "GBP"` and fields:
+ *   gbp, market, mid, low, high
+ */
+function normalizePriceEntry(price) {
+  if (!price || typeof price !== "object") return null;
+
+  const variation = canonicalVariantKey(
+    price.variation ?? price.variant ?? "normal"
+  );
+
+  const market =
+    firstNumber(price.gbp, price.market, price.mid, price.low, price.high) ??
+    null;
+
+  return {
+    variation, // "Normal", "Holo", etc.
+    market, // single numeric value in GBP
+  };
 }
+
+function normalizePriceList(list) {
+  if (!Array.isArray(list)) return [];
+  const byVariant = new Map();
+
+  for (const price of list) {
+    const entry = normalizePriceEntry(price);
+    if (!entry) continue;
+    const key = entry.variation || "Normal";
+    const existing = byVariant.get(key);
+    if (!existing) {
+      byVariant.set(key, { ...entry });
+      continue;
+    }
+    // If we ever see multiple rows per variant, prefer the one with a value
+    if (entry.market != null && existing.market == null) {
+      existing.market = entry.market;
+    }
+  }
+
+  return Array.from(byVariant.values());
+}
+
+function hasPrice(entry) {
+  return !!(
+    entry &&
+    typeof entry.market === "number" &&
+    Number.isFinite(entry.market)
+  );
+}
+
+/**
+ * With the simplified shape, “average price” is just the single GBP market
+ * value for that best variant.
+ */
+function computeAveragePrice(entry) {
+  if (!entry || !hasPrice(entry)) return null;
+  return entry.market;
+}
+
+function formatGBP(value) {
+  if (value == null || Number.isNaN(value)) return `${GBP_SYMBOL}--`;
+  return `${GBP_SYMBOL}${Number(value).toFixed(2)}`;
+}
+
+/**
+ * Best price: pick preferred variant in order, otherwise any with a value.
+ */
 function getBestPrice(prices) {
   if (!Array.isArray(prices) || prices.length === 0) return null;
-  const pref = ["normal", "holofoil", "holo", "reverseHolofoil", "reverse"];
+
+  const pref = ["Normal", "Holo", "Reverse Holo", "1st Ed"];
+
   for (const key of pref) {
     const hit = prices.find(
       (p) => (p?.variation ?? p?.variant) === key && hasPrice(p)
@@ -172,156 +293,42 @@ function getBestPrice(prices) {
   }
   return prices.find((p) => hasPrice(p)) || null;
 }
-function computeAveragePrice(entry) {
-  if (!entry || !hasPrice(entry)) return null;
-  if (typeof entry.market === "number" && Number.isFinite(entry.market))
-    return entry.market;
 
-  const primary = [];
-  if (
-    typeof entry.tcgplayer === "number" &&
-    Number.isFinite(entry.tcgplayer)
-  )
-    primary.push(entry.tcgplayer);
-  if (
-    typeof entry.cardmarket === "number" &&
-    Number.isFinite(entry.cardmarket)
-  )
-    primary.push(entry.cardmarket);
+/* ---------------- CARD NORMALISATION ---------------- */
 
-  if (primary.length === 2) return (primary[0] + primary[1]) / 2;
-  if (primary.length === 1) return primary[0];
-
-  const fallback = firstNumber(entry.gbp, entry.mid, entry.low, entry.high);
-  if (fallback != null) return fallback;
-  return primary.length ? primary[0] : null;
-}
-function formatGBP(value) {
-  if (value == null || Number.isNaN(value)) return `${GBP_SYMBOL}--`;
-  return `${GBP_SYMBOL}${Number(value).toFixed(2)}`;
-}
-
-function normalizePriceEntry(price) {
-  if (!price || typeof price !== "object") return null;
-  const variation = canonicalVariantKey(
-    price.variation ?? price.variant ?? "normal"
-  );
-  const providerRaw = price.provider ?? price.source ?? null;
-  const providerKey = providerRaw ? String(providerRaw).toLowerCase() : "";
-  const currency = String(price.currency ?? price.curr ?? "GBP").toUpperCase();
-
-  const market = firstNumber(price.market, price.mid, price.price, price.value);
-  const mid = firstNumber(price.mid);
-  const low = firstNumber(price.low);
-  const high = firstNumber(price.high);
-  const updatedAt = price.updatedAt || price.updated_at || null;
-
-  const entry = {
-    variation,
-    provider: providerRaw || null,
-    currency,
-    market,
-    mid,
-    low,
-    high,
-    updatedAt,
-  };
-
-  if (currency === "GBP" && market != null) entry.gbp = market;
-  if (currency === "USD" && market != null) entry.usd = market;
-  if (currency === "EUR" && market != null) entry.eur = market;
-
-  const tcgValue = firstNumber(
-    price.tcgplayer,
-    providerKey.includes("tcg") ? market : null
-  );
-  if (tcgValue != null) entry.tcgplayer = tcgValue;
-
-  const cmktValue = firstNumber(
-    price.cardmarket,
-    providerKey.includes("cardmarket") ? market : null
-  );
-  if (cmktValue != null) entry.cardmarket = cmktValue;
-
-  if (entry.market == null) {
-    entry.market = firstNumber(
-      entry.tcgplayer,
-      entry.cardmarket,
-      entry.mid,
-      entry.low,
-      entry.high
-    );
-  }
-
-  if (price.sampleSize != null) entry.sampleSize = price.sampleSize;
-
-  return entry;
-}
-function normalizePriceList(list) {
-  if (!Array.isArray(list)) return [];
-  const byVariant = new Map();
-  for (const price of list) {
-    const entry = normalizePriceEntry(price);
-    if (!entry) continue;
-    const key = entry.variation || "normal";
-    const existing = byVariant.get(key);
-    if (!existing) {
-      byVariant.set(key, { ...entry });
-      continue;
-    }
-    if (entry.tcgplayer != null) existing.tcgplayer = entry.tcgplayer;
-    if (entry.cardmarket != null) existing.cardmarket = entry.cardmarket;
-    if (entry.market != null && existing.market == null)
-      existing.market = entry.market;
-    if (entry.mid != null && existing.mid == null) existing.mid = entry.mid;
-    if (entry.low != null && existing.low == null) existing.low = entry.low;
-    if (entry.high != null && existing.high == null) existing.high = entry.high;
-    if (entry.gbp != null && existing.gbp == null) existing.gbp = entry.gbp;
-    if (entry.usd != null && existing.usd == null) existing.usd = entry.usd;
-    if (entry.eur != null && existing.eur == null) existing.eur = entry.eur;
-
-    const existingUpdated = existing.updatedAt
-      ? Date.parse(existing.updatedAt)
-      : null;
-    const entryUpdated = entry.updatedAt ? Date.parse(entry.updatedAt) : null;
-    if (
-      entryUpdated != null &&
-      (existingUpdated == null || entryUpdated > existingUpdated)
-    ) {
-      existing.updatedAt = entry.updatedAt;
-    }
-  }
-  return Array.from(byVariant.values());
-}
 function collectVariantList(item) {
   const variants = new Set();
   const push = (v) => {
-    const key = canonicalVariantKey(v);
+    const key =
+      typeof v === "string"
+        ? canonicalVariantKey(v)
+        : canonicalVariantKey(
+            v?.key || v?.variant || v?.label || v?.displayName
+          );
     if (key) variants.add(key);
   };
 
-  if (Array.isArray(item?.variants))
-    for (const v of item.variants)
-      typeof v === "string"
-        ? push(v)
-        : push(v?.variant || v?.displayName);
-  if (Array.isArray(item?.variations))
-    for (const v of item.variations)
-      typeof v === "string"
-        ? push(v)
-        : push(v?.variant || v?.displayName || v?.variation);
+  if (Array.isArray(item?.variants)) {
+    for (const v of item.variants) push(v);
+  }
+  if (Array.isArray(item?.variations)) {
+    for (const v of item.variations) push(v);
+  }
 
   const source = Array.isArray(item?.latestPrices)
     ? item.latestPrices
     : Array.isArray(item?.prices)
     ? item.prices
     : [];
-  for (const p of source)
-    typeof p === "string" ? push(p) : push(p?.variant || p?.variation);
+  for (const p of source) {
+    if (typeof p === "string") push(p);
+    else if (p?.variation || p?.variant) push(p.variation || p.variant);
+  }
 
   const out = Array.from(variants).filter(Boolean);
-  return out.length ? out : ["normal"];
+  return out.length ? out : ["Normal"];
 }
+
 function resolveCardIdentifier(card) {
   const normalize = (value) => {
     if (value == null) return null;
@@ -348,25 +355,41 @@ function resolveCardIdentifier(card) {
       card?.setCode && card?.number ? `${card.setCode}-${card.number}` : null
     ),
   ].filter(Boolean);
-  for (const candidate of candidates) if (looksLikeCode(candidate)) return candidate;
+  for (const candidate of candidates)
+    if (looksLikeCode(candidate)) return candidate;
   return candidates[0] ?? null;
 }
+
 function resolveVariation(card) {
-  if (!card) return "normal";
+  if (!card) return "Normal";
+
   if (Array.isArray(card?.variations) && card.variations.length > 0) {
     for (const entry of card.variations) {
       if (!entry) continue;
       if (typeof entry === "string") return canonicalVariantKey(entry);
       if (typeof entry === "object")
         return canonicalVariantKey(
-          entry.variant || entry.variation || entry.displayName
+          entry.variant || entry.variation || entry.displayName || entry.key
         );
     }
   }
+
+  if (Array.isArray(card?.variants) && card.variants.length > 0) {
+    for (const entry of card.variants) {
+      if (entry?.default) {
+        return canonicalVariantKey(entry.key || entry.label || "normal");
+      }
+    }
+  }
+
   if (card?.variation) return canonicalVariantKey(card.variation);
-  return "normal";
+  return "Normal";
 }
 
+/**
+ * Compute a canonical rarityGroupId ONCE per card
+ * and store it on the object. All filtering/sorting uses this field.
+ */
 function normalizeCardsearchItem(item, index = 0) {
   if (!item) return null;
   const setRecord = item.set || {};
@@ -376,6 +399,10 @@ function normalizeCardsearchItem(item, index = 0) {
   const image = item.images?.large || item.images?.small || item.image || null;
   const variations = collectVariantList(item);
   const prices = normalizePriceList(item.latestPrices ?? item.prices ?? []);
+
+  const rawRarity = item.rarity || null;
+  const rarityGroupId = getRarityGroupId(rawRarity);
+
   const preferredId =
     item.cardId || item.id || (setCode && number ? `${setCode}-${number}` : null);
   const id = preferredId || `card-${index}`;
@@ -389,11 +416,13 @@ function normalizeCardsearchItem(item, index = 0) {
     number: number || "",
     image,
     tcgImageUrl: image,
-    rarity: item.rarity || null,
-    variations,
-    prices,
+    rarity: rawRarity, // raw string from API
+    rarityGroupId, // canonical group id ("sir", "ur", "hr", etc.)
+    variations, // ["Normal", "Holo", ...]
+    prices, // normalised price entries
   };
 }
+
 function mapCardsearchItems(items) {
   if (!Array.isArray(items) || !items.length) return [];
   return items
@@ -416,7 +445,7 @@ function filterOutPocket(cards, exclude = true) {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Filters + sorting (parity with web)                                       */
+/*  Filters + sorting                                                         */
 /* -------------------------------------------------------------------------- */
 
 const SORT_OPTIONS = [
@@ -431,6 +460,10 @@ const SORT_OPTIONS = [
   { value: "name-desc", label: "Name Z → A" },
 ];
 
+/**
+ * Rarity filtering is now purely on card.rarityGroupId
+ * (canonical group id), not re-computed from raw strings.
+ */
 function applyFiltersAndSort(cards, filters) {
   if (!Array.isArray(cards) || cards.length === 0 || !filters) return cards;
 
@@ -447,7 +480,8 @@ function applyFiltersAndSort(cards, filters) {
   const min = minPrice !== "" ? parseFloat(minPrice) : null;
   const max = maxPrice !== "" ? parseFloat(maxPrice) : null;
 
-  const raritySet = new Set(rarities || []);
+  // rarities: list of canonical group IDs ("sir", "ur", "hr", "ace-spec", etc.
+  const raritySet = new Set((rarities || []).map((r) => String(r)));
   const variationSet = new Set(variations || []);
 
   const hasRarityFilter = raritySet.size > 0;
@@ -465,8 +499,9 @@ function applyFiltersAndSort(cards, filters) {
     if (max != null && price != null && price > max) return false;
 
     if (hasRarityFilter) {
-      const r = card.rarity || "";
-      if (!raritySet.has(r)) return false;
+      const groupId =
+        card.rarityGroupId || getRarityGroupId(card.rarity || "");
+      if (!groupId || !raritySet.has(groupId)) return false;
     }
 
     if (onlyHasReverse) {
@@ -500,8 +535,10 @@ function applyFiltersAndSort(cards, filters) {
 
     const aNorm = normaliseRarity(a.rarity);
     const bNorm = normaliseRarity(b.rarity);
-    const aGroup = NORMALISED_TO_GROUP[aNorm];
-    const bGroup = NORMALISED_TO_GROUP[bNorm];
+    const aGroup =
+      a.rarityGroupId || getRarityGroupId(a.rarity || "");
+    const bGroup =
+      b.rarityGroupId || getRarityGroupId(b.rarity || "");
     const aRank = aGroup ? RARITY_RANK[aGroup] ?? 999 : 999;
     const bRank = bGroup ? RARITY_RANK[bGroup] ?? 999 : 999;
 
@@ -554,7 +591,7 @@ function applyFiltersAndSort(cards, filters) {
 function AdvancedFiltersMobile({
   filters,
   onChange,
-  availableRarities,
+  availableRarities, // array of canonical group IDs present in results
   availableVariations,
 }) {
   const {
@@ -581,24 +618,12 @@ function AdvancedFiltersMobile({
   const groupPresence = useMemo(() => {
     const presence = new Map();
     RARITY_CONFIG.forEach((g) => presence.set(g.id, false));
-    (availableRarities || []).forEach((raw) => {
-      const gid = NORMALISED_TO_GROUP[normaliseRarity(raw)];
-      if (gid) presence.set(gid, true);
-    });
-    return presence;
-  }, [availableRarities]);
-
-  const extraRarities = useMemo(() => {
-    const seen = new Set();
-    const extras = [];
-    (availableRarities || []).forEach((raw) => {
-      const norm = normaliseRarity(raw);
-      if (!KNOWN_NORMALISED_RARITIES.has(norm) && !seen.has(norm)) {
-        seen.add(norm);
-        extras.push(raw);
+    (availableRarities || []).forEach((groupId) => {
+      if (presence.has(groupId)) {
+        presence.set(groupId, true);
       }
     });
-    return extras;
+    return presence;
   }, [availableRarities]);
 
   const updateField = (key, value) => {
@@ -614,17 +639,15 @@ function AdvancedFiltersMobile({
 
   const toggleRarityGroup = (group) => {
     const next = new Set(currentRarities);
-    const anyIncluded = group.raws.some((r) => next.has(r));
-    if (anyIncluded) {
-      group.raws.forEach((r) => next.delete(r));
+    if (next.has(group.id)) {
+      next.delete(group.id);
     } else {
-      group.raws.forEach((r) => next.add(r));
+      next.add(group.id);
     }
     onChange({ ...filters, rarities: Array.from(next) });
   };
 
-  const isGroupActive = (group) =>
-    group.raws.some((r) => currentRarities.has(r));
+  const isGroupActive = (group) => currentRarities.has(group.id);
 
   const handleClear = () => {
     onChange({
@@ -792,31 +815,6 @@ function AdvancedFiltersMobile({
                     </TouchableOpacity>
                   );
                 })}
-
-                {extraRarities.map((rarity) => {
-                  const isActive = currentRarities.has(rarity);
-                  return (
-                    <TouchableOpacity
-                      key={rarity}
-                      onPress={() =>
-                        toggleArrayFilter("rarities", rarity)
-                      }
-                      style={[
-                        styles.chip,
-                        isActive && styles.chipActive,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.chipText,
-                          isActive && styles.chipTextActive,
-                        ]}
-                      >
-                        {rarity}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
               </View>
             ) : (
               <Text style={styles.filtersHint}>
@@ -879,22 +877,18 @@ export default function SearchTab() {
   const [number, setNumber] = useState("");
 
   const [results, setResults] = useState([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [offset, setOffset] = useState(0);
-  const [pageSize, setPageSize] = useState(PER_PAGE);
-  const [totalCount, setTotalCount] = useState(0);
 
   const [filters, setFilters] = useState({
     minPrice: "",
     maxPrice: "",
-    rarities: [],
-    variations: [],
+    rarities: [], // canonical group IDs only ("sir", "ur", "hr", "ace-spec", etc.)
+    variations: [], // ["Normal", "Holo", ...]
     sortBy: "relevance",
     onlyHasPrices: false,
     onlyHasReverse: false,
   });
 
-  const [runSearch, { loading, error, fetchMore, called }] = useLazyQuery(
+  const [runSearch, { loading, error, called }] = useLazyQuery(
     SearchCardsDocument,
     {
       fetchPolicy: "network-only",
@@ -904,10 +898,6 @@ export default function SearchTab() {
     }
   );
 
-  const isExactCardSearch = useMemo(
-    () => Boolean((setCode ?? "").trim() && (number ?? "").trim()),
-    [setCode, number]
-  );
   const canSearch = useMemo(
     () =>
       (name ?? "").trim().length > 0 ||
@@ -920,13 +910,8 @@ export default function SearchTab() {
     if (!canSearch) return;
 
     setResults([]);
-    setOffset(0);
-    setHasMore(false);
-    setTotalCount(0);
 
-    const limit = isExactCardSearch
-      ? Math.min(CARDSEARCH_PAGE_SIZE, CARDSEARCH_EXACT_LIMIT)
-      : CARDSEARCH_PAGE_SIZE;
+    const limit = CARDSEARCH_LIMIT;
 
     runSearch({
       variables: {
@@ -938,93 +923,43 @@ export default function SearchTab() {
           offset: 0,
         },
       },
+      // FIX: single onCompleted callback with debug inside
       onCompleted: (res) => {
         const payload = res?.searchCards;
         const items = mapCardsearchItems(payload?.items || []);
         const filtered = filterOutPocket(items, !/pocket/i.test(setCode || ""));
 
-        const total = Number(payload?.total ?? filtered.length);
-        const lim = Number(payload?.limit ?? limit);
-        const off = Number(payload?.offset ?? 0);
+        // DEBUG: log raw rarities, normalised form and mapped group ids
+        const rarityDebug = {};
+        filtered.forEach((c) => {
+          const raw = String(c.rarity || "").trim();
+          const norm = normaliseRarity(raw);
+          const gid = c.rarityGroupId || getRarityGroupId(raw);
+          if (!rarityDebug[raw]) {
+            rarityDebug[raw] = { norm, groups: new Set() };
+          }
+          rarityDebug[raw].groups.add(gid);
+        });
+
+        const rarityDebugArray = Object.entries(rarityDebug).map(
+          ([raw, info]) => ({
+            raw,
+            norm: info.norm,
+            groups: Array.from(info.groups),
+          })
+        );
+
+        console.log("RARITY DEBUG", rarityDebugArray);
 
         setResults(filtered);
-        setTotalCount(total);
-        setPageSize(lim);
-        const nextOffset = Math.min(
-          off + (payload?.items?.length || filtered.length),
-          total
-        );
-        setOffset(nextOffset);
-        setHasMore(nextOffset < total);
       },
     });
-  }, [canSearch, isExactCardSearch, name, setCode, number, runSearch]);
-
-  const loadingMoreRef = useRef(false);
-  const loadMore = useCallback(async () => {
-    if (!hasMore || loading || loadingMoreRef.current || !called) return;
-    loadingMoreRef.current = true;
-
-    try {
-      const res = await fetchMore({
-        variables: {
-          input: {
-            name: name || undefined,
-            set: setCode || undefined,
-            number: number || undefined,
-            limit: pageSize,
-            offset,
-          },
-        },
-        updateQuery: (prev, { fetchMoreResult }) =>
-          fetchMoreResult || prev,
-      });
-
-      const payload = res?.data?.searchCards;
-      const newItems = mapCardsearchItems(payload?.items || []);
-      const filteredNew = filterOutPocket(
-        newItems,
-        !/pocket/i.test(setCode || "")
-      );
-
-      const byId = new Map();
-      for (const c of [...results, ...filteredNew])
-        if (c?.id != null) byId.set(String(c.id), c);
-      const merged = Array.from(byId.values());
-
-      const total = Number(payload?.total ?? totalCount);
-      const lim = Number(payload?.limit ?? pageSize);
-      const off = Number(payload?.offset ?? offset);
-      const nextOffset = Math.min(
-        off + (payload?.items?.length || filteredNew.length),
-        total
-      );
-      setResults(merged);
-      setTotalCount(total);
-      setPageSize(lim);
-      setOffset(nextOffset);
-      setHasMore(nextOffset < total);
-    } finally {
-      loadingMoreRef.current = false;
-    }
-  }, [
-    hasMore,
-    loading,
-    called,
-    fetchMore,
-    name,
-    setCode,
-    number,
-    pageSize,
-    offset,
-    results,
-    totalCount,
-  ]);
+  }, [canSearch, name, setCode, number, runSearch]);
 
   const availableRarities = useMemo(() => {
     const set = new Set();
     results.forEach((card) => {
-      if (card.rarity) set.add(card.rarity);
+      if (card.rarityGroupId) set.add(card.rarityGroupId);
     });
     return Array.from(set);
   }, [results]);
@@ -1050,7 +985,7 @@ export default function SearchTab() {
   const userId = meData?.me?.id ?? null;
 
   const hydrateCardById = useCallback(
-    async (cardId, variation = "normal") => {
+    async (cardId, variation = "Normal") => {
       if (!cardId) return false;
       try {
         const { data: cardData } = await apollo.query({
@@ -1233,18 +1168,6 @@ export default function SearchTab() {
               />
             );
           }}
-          ListFooterComponent={
-            hasMore ? (
-              <View style={styles.footerLoading}>
-                <ActivityIndicator color={COLORS.accent} />
-                <Text style={styles.footerLoadingText}>
-                  Loading more…
-                </Text>
-              </View>
-            ) : null
-          }
-          onEndReachedThreshold={0.4}
-          onEndReached={loadMore}
         />
       ) : showPlaceholders ? (
         <PlaceholderGrid shimmer={!called && !loading} rows={6} />
@@ -1303,13 +1226,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   listContent: { paddingHorizontal: 6, paddingBottom: 20 },
   column: { gap: 4 },
-  footerLoading: {
-    paddingVertical: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  footerLoadingText: { color: COLORS.textMuted, fontSize: 12 },
   placeholderWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1348,7 +1264,7 @@ const styles = StyleSheet.create({
   },
   pulse: { opacity: 0.8 },
 
-  /* ---- Advanced filters styling (SINGLE card) ---- */
+  /* ---- Advanced filters styling (single card) ---- */
   filtersWrapper: {
     marginHorizontal: 10,
     marginBottom: 8,
