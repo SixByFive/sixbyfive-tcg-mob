@@ -58,13 +58,18 @@ const PROFILE_COLLECTION_MIN_IDS = gql`
   }
 `;
 
+// FIXED: browseBinders returns BinderPageResult, not [Binder]
 const PROFILE_BINDERS_MIN_IDS = gql`
   query ProfileBinders_MinIds($userId: ID!) {
-    browseBinders(userId: $userId) {
-      id
+    browseBinders(userId: $userId, page: 1, pageSize: 1) {
+      total
+      binders {
+        id
+      }
     }
   }
 `;
+
 
 const PROFILE_WISHLIST_MIN = gql`
   query ProfileWishlist_Min($userId: ID!) {
@@ -164,7 +169,7 @@ export default function OverviewTab({
     notifyOnNetworkStatusChange: true,
   });
 
-  const { data: myBindersData } = useQuery(MY_BINDERS_MIN_IDS, {
+  const { data: myBindersData, error: myBindersError } = useQuery(MY_BINDERS_MIN_IDS, {
     skip: !isOwner,
     fetchPolicy: "cache-and-network",
     nextFetchPolicy: "cache-first",
@@ -187,7 +192,7 @@ export default function OverviewTab({
     notifyOnNetworkStatusChange: true,
   });
 
-  const { data: profileBindersData } = useQuery(PROFILE_BINDERS_MIN_IDS, {
+  const { data: profileBindersData, error: profileBindersError } = useQuery(PROFILE_BINDERS_MIN_IDS, {
     skip: !isProfileView,
     variables: isProfileView ? { userId } : undefined,
     fetchPolicy: "cache-and-network",
@@ -216,6 +221,8 @@ export default function OverviewTab({
       profileColData,
       profileBindersData,
       profileWlData,
+      myBindersError: myBindersError?.message,
+      profileBindersError: profileBindersError?.message,
     });
   }
 

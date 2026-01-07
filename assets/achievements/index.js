@@ -4,6 +4,7 @@
 export const ACHIEVEMENT_ICONS = {
   // Backend code is "pre_signup"
   pre_signup: require("./day_1.png"),
+  "100_cards": require("./100_cards.png"),
 };
 
 // Optional fallback (generic badge if unmapped code comes through)

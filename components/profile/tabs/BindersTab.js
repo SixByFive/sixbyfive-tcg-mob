@@ -1,10 +1,20 @@
-import { useQuery } from "@apollo/client";
+import { gql, useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useMemo } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
-import { BrowseBindersDocument, MeDocument, MyBindersDocument } from "@sixbyfive/tcg-binder/client";
+import {
+  MeDocument,
+  MyBindersDocument
+} from "@sixbyfive/tcg-binder/client";
 import { COLORS } from "../../../theme/colors";
 
 // Same grid used in Collection tab → visual parity
@@ -15,15 +25,55 @@ try {
   const maybeSafe = require("../../../graphql/binders-temp");
   if (maybeSafe?.MY_BINDERS_SAFE) MY_BINDERS_QUERY = maybeSafe.MY_BINDERS_SAFE;
 } catch (err) {
-  if (__DEV__) console.warn("[BindersTab] Safe myBinders query unavailable", err?.message ?? err);
+  if (__DEV__)
+    console.warn(
+      "[BindersTab] Safe myBinders query unavailable",
+      err?.message ?? err
+    );
 }
+
+/**
+ * ADDED: schema-correct safe browse query
+ * - because browseBinders returns BinderPageResult { binders, total, page, pageSize }
+ * - generated BrowseBindersDocument might not match that shape in your client
+ */
+const BROWSE_BINDERS_SAFE = gql`
+  query BrowseBinders_Safe($userId: ID!, $page: Int, $pageSize: Int) {
+    browseBinders(userId: $userId, page: $page, pageSize: $pageSize) {
+      total
+      page
+      pageSize
+      binders {
+        id
+        userId
+        name
+        description
+        coverColor
+        accentColor
+        visibility
+        slug
+        createdAt
+        updatedAt
+        pages {
+          id
+          slots {
+            id
+            cardId
+            quantity
+          }
+        }
+      }
+    }
+  }
+`;
 
 /* ---------------- helpers ---------------- */
 
 function toArray(input) {
   if (!input) return [];
   if (Array.isArray(input)) return input;
-  if (Array.isArray(input.edges)) return input.edges.map((e) => e?.node ?? e).filter(Boolean);
+  if (Array.isArray(input.edges))
+    return input.edges.map((e) => e?.node ?? e).filter(Boolean);
   if (Array.isArray(input.nodes)) return input.nodes.filter(Boolean);
   if (Array.isArray(input.items)) return input.items.filter(Boolean);
   if (Array.isArray(input.results)) return input.results.filter(Boolean);
@@ -32,7 +82,8 @@ function toArray(input) {
     const v = input[k];
     if (Array.isArray(v)) return v;
     if (v && typeof v === "object") {
-      if (Array.isArray(v.edges)) return v.edges.map((e) => e?.node ?? e).filter(Boolean);
+      if (Array.isArray(v.edges))
+        return v.edges.map((e) => e?.node ?? e).filter(Boolean);
       if (Array.isArray(v.nodes)) return v.nodes.filter(Boolean);
     }
   }
@@ -47,7 +98,9 @@ const countCardsFromPages = (pages) => {
     for (const slot of slots) {
       if (!slot) continue;
       const hasCard =
-        (typeof slot.cardId === "string" && slot.cardId) || slot?.card?.id || slot?.card?.cardId;
+        (typeof slot.cardId === "string" && slot.cardId) ||
+        slot?.card?.id ||
+        slot?.card?.cardId;
       if (!hasCard) continue;
       const qty = Number(slot.quantity ?? 1);
       total += Number.isFinite(qty) ? qty : 1;
@@ -58,6 +111,9 @@ const countCardsFromPages = (pages) => {
 
 const normalizeBinder = (b) => {
   if (!b) return null;
+  const pages = Array.isArray(b?.pages) ? b.pages : [];
+  const cardCount = b?.cardsCount ?? countCardsFromPages(pages);
+
   return {
     ...b,
     id: String(b.id ?? ""),
@@ -67,20 +123,36 @@ const normalizeBinder = (b) => {
     coverColor: b?.coverColor ?? b?.cover?.coverColor ?? "#23243c",
     accentColor: b?.accentColor ?? b?.cover?.accentColor ?? "#424a80",
     updatedAt: b?.updatedAt ?? b?.modifiedAt ?? b?.createdAt ?? null,
-    pages: Array.isArray(b?.pages) ? b.pages : [],
-    cardsCount: b?.cardsCount ?? countCardsFromPages(b?.pages),
+    pages,
+    cardsCount: cardCount,
     // aliases some grids expect
     color: b?.coverColor ?? b?.cover?.coverColor ?? "#23243c",
-    cardCount: b?.cardsCount ?? countCardsFromPages(b?.pages),
-    pageCount: Array.isArray(b?.pages) ? b.pages.length : undefined,
+    cardCount: cardCount,
+    pageCount: pages.length,
   };
 };
 
+/**
+ * CHANGED: explicitly handle BinderPageResult by preferring `.binders`
+ */
 const normalizeBindersInput = (src) => {
-  const root = (!src || Array.isArray(src)) ? src : (
-    src.binders ?? src.myBinders ?? src.items ?? src.results ?? src.entries ??
-    src.edges ?? src.nodes ?? src.data ?? src.list ?? src
-  );
+  if (!src) return [];
+
+  // browseBinders -> { binders, total, page, pageSize }
+  const root =
+    (!src || Array.isArray(src))
+      ? src
+      : (src.binders ?? // <-- ADDED: crucial
+          src.myBinders ??
+          src.items ??
+          src.results ??
+          src.entries ??
+          src.edges ??
+          src.nodes ??
+          src.data ??
+          src.list ??
+          src);
+
   return toArray(root).map(normalizeBinder).filter(Boolean);
 };
 
@@ -98,14 +170,12 @@ function CreateBinderBanner({ onPress }) {
       accessibilityRole="button"
     >
       <View style={styles.createBannerIcon}>
-        {/* was a raw "＋" string inside <Text>; use an icon instead */}
         <Ionicons name="add" size={16} color={COLORS.text} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.createBannerTitle}>Create a new binder</Text>
         <Text style={styles.createBannerSub}>Start organising your cards</Text>
       </View>
-      {/* chevron as icon (no bare strings) */}
       <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
     </Pressable>
   );
@@ -116,34 +186,79 @@ function CreateBinderBanner({ onPress }) {
 export default function BindersTab({
   title = "Binders",
   binders = [],
-  userId,              // profile owner id if viewing someone else
-  isOwner,             // optional override
-  onOpenBinder,        // optional (id, ownerId) => void
+  userId, // profile owner id if viewing someone else (NOTE: could be your own id!)
+  isOwner, // optional override
+  onOpenBinder, // optional (id, ownerId) => void
   onViewAll,
-  onCreateBinder,      // optional override for "new binder" CTA
+  onCreateBinder, // optional override for "new binder" CTA
   pageSize = 12,
   loading = false,
 }) {
   const { data: meData } = useQuery(MeDocument, { fetchPolicy: "cache-first" });
   const meId = meData?.me?.id ? String(meData.me.id) : null;
 
+  // ADDED: decide ownership robustly (fixes "own profile broke when userId exists")
+  const effectiveIsOwner = useMemo(() => {
+    if (typeof isOwner === "boolean") return isOwner;
+    if (!meId) return false;
+    if (!userId) return true; // "My binders" context (no userId passed)
+    return String(userId) === meId; // viewing my profile by userId
+  }, [isOwner, meId, userId]);
+
+  const viewingOtherUser = !!userId && !effectiveIsOwner;
+
   // 1) from props
   const fromProp = useMemo(() => normalizeBindersInput(binders), [binders]);
 
-  // 2) browse (public for this profile)
-  const shouldFetchBrowse = fromProp.length === 0 && !!userId;
-  const { data: browseData, loading: browseLoading } = useQuery(
-    BrowseBindersDocument,
-    { variables: { userId: userId || "" }, skip: !shouldFetchBrowse }
+  // 2) browse (ONLY when viewing someone else)
+  // CHANGED: use safe browse query & proper paging vars
+  const shouldFetchBrowse = fromProp.length === 0 && viewingOtherUser;
+  const {
+    data: browseData,
+    loading: browseLoading,
+    error: browseError,
+  } = useQuery(BROWSE_BINDERS_SAFE, {
+    variables: { userId: String(userId || ""), page: 1, pageSize },
+    skip: !shouldFetchBrowse,
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
+
+  const fromBrowse = useMemo(
+    () => normalizeBindersInput(browseData?.browseBinders),
+    [browseData]
   );
-  const fromBrowse = useMemo(() => normalizeBindersInput(browseData?.browseBinders), [browseData]);
 
-  // 3) my binders fallback
-  const shouldFetchMine = fromProp.length === 0 && !userId;
-  const { data: mineData, loading: mineLoading } = useQuery(MY_BINDERS_QUERY, { skip: !shouldFetchMine });
-  const fromMine = useMemo(() => normalizeBindersInput(mineData?.myBinders), [mineData]);
+  // 3) my binders fallback (ONLY when owner)
+  // CHANGED: fetch mine even if userId exists, as long as it's my profile
+  const shouldFetchMine = fromProp.length === 0 && effectiveIsOwner;
+  const {
+    data: mineData,
+    loading: mineLoading,
+    error: mineError,
+  } = useQuery(MY_BINDERS_QUERY, {
+    skip: !shouldFetchMine,
+    fetchPolicy: "cache-and-network",
+    nextFetchPolicy: "cache-first",
+    notifyOnNetworkStatusChange: true,
+  });
 
-  const display = (fromProp.length ? fromProp : (fromBrowse.length ? fromBrowse : fromMine)).slice(0, pageSize);
+  const fromMine = useMemo(
+    () => normalizeBindersInput(mineData?.myBinders),
+    [mineData]
+  );
+
+  // CHANGED: choose source correctly by mode
+  const merged =
+    fromProp.length
+      ? fromProp
+      : viewingOtherUser
+      ? fromBrowse
+      : fromMine;
+
+  const display = merged.slice(0, pageSize);
+
   const showSkeleton = loading || browseLoading || mineLoading;
 
   const openCreate = useCallback(() => {
@@ -156,15 +271,15 @@ export default function BindersTab({
       const binderId = id ? String(id) : "";
       if (!binderId) return;
 
+      // CHANGED: use effectiveIsOwner first; fallback to ownerId match if available
       const iOwnThis =
-        (typeof isOwner === "boolean" && isOwner) ||
-        (!!meId && !!ownerId && meId === ownerId) ||
+        effectiveIsOwner ||
+        (!!meId && !!ownerId && String(ownerId) === meId) ||
         (!userId);
 
-      // use direct string paths to avoid param binding issues
       router.push(iOwnThis ? `/binder/${binderId}/edit` : `/binder/${binderId}`);
     },
-    [isOwner, meId, userId]
+    [effectiveIsOwner, meId, userId]
   );
 
   const handleOpenBinder = useCallback(
@@ -174,6 +289,21 @@ export default function BindersTab({
     },
     [onOpenBinder, openBinderDefault]
   );
+
+  if (__DEV__) {
+    // eslint-disable-next-line no-console
+    console.log("[BindersTab debug]", {
+      meId,
+      userId,
+      effectiveIsOwner,
+      viewingOtherUser,
+      fromProp: fromProp.length,
+      fromBrowse: fromBrowse.length,
+      fromMine: fromMine.length,
+      browseError: browseError?.message,
+      mineError: mineError?.message,
+    });
+  }
 
   /* -------- render -------- */
 
@@ -189,43 +319,47 @@ export default function BindersTab({
   }
 
   if (!display.length) {
-    // Empty-state card kept the same (all text wrapped in <Text>)
+    const msg =
+      (viewingOtherUser ? browseError?.message : mineError?.message) ||
+      "No binders yet. Create one to start organizing your collection.";
+
     return (
       <View style={styles.card}>
         <Text style={styles.cardTitle}>{title}</Text>
-        <Text style={{ color: COLORS.textMuted, marginTop: 8 }}>
-          No binders yet. Create one to start organizing your collection.
-        </Text>
-        <View style={{ marginTop: 10 }}>
-          <Pressable
-            onPress={openCreate}
-            style={({ pressed }) => [
-              styles.createTile,
-              pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
-            ]}
-          >
-            <View style={styles.createIconBubble}>
-              <Ionicons name="add" size={18} color="#fff" />
-            </View>
-            <Text style={styles.createTitle}>New Binder</Text>
-            <Text style={styles.createSub}>Start organizing your cards</Text>
-          </Pressable>
-        </View>
+        <Text style={{ color: COLORS.textMuted, marginTop: 8 }}>{msg}</Text>
+
+        {/* Only show create CTA if owner */}
+        {effectiveIsOwner && (
+          <View style={{ marginTop: 10 }}>
+            <Pressable
+              onPress={openCreate}
+              style={({ pressed }) => [
+                styles.createTile,
+                pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
+              ]}
+            >
+              <View style={styles.createIconBubble}>
+                <Ionicons name="add" size={18} color="#fff" />
+              </View>
+              <Text style={styles.createTitle}>New Binder</Text>
+              <Text style={styles.createSub}>Start organizing your cards</Text>
+            </Pressable>
+          </View>
+        )}
       </View>
     );
   }
 
-  // Match the "binders" segment layout from Collection tab
   return (
     <ScrollView contentContainerStyle={styles.scrollContent}>
-      {/* Banner only on your own profile */}
-      {!userId && <CreateBinderBanner onPress={openCreate} />}
+      {/* CHANGED: Banner only when owner (not based on presence of userId) */}
+      {effectiveIsOwner && <CreateBinderBanner onPress={openCreate} />}
 
-      {/* Same grid for visuals/behaviour */}
       <BinderGrid
         binders={display}
         onCreate={openCreate}
-        onOpen={(id) => handleOpenBinder(id)}
+        // CHANGED: pass ownerId through if BinderGrid provides it; fallback still works
+        onOpen={(id, ownerId) => handleOpenBinder(id, ownerId)}
       />
 
       <View style={{ height: 28 }} />
@@ -279,7 +413,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 12,
-    // `gap` is supported on newer RN; if you're on older RN and this warns, replace with explicit margins
     gap: 10,
   },
   createBannerIcon: {
