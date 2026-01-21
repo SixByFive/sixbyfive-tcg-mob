@@ -1,18 +1,4 @@
 // components/collection/CollectionCardTile.js
-// PURPOSE: Collection tile with a calmer, cleaner action bar.
-// - Unified rounded footer container
-// - Ghost-style actions (no per-button borders)
-// - Compact spacing, subtle colors
-// - Same handlers: onView / onEdit / onRemove
-//
-// [CHANGE] Provider-agnostic pricing (still):
-// - Normalize any incoming price rows (item.prices / item.pricing / item.priceLatest)
-// - Pick a single "best overall" row (prefer GBP, then newest by updatedAt)
-// - Render a single-line inline pill with value + updated time.
-//
-// [UI] Replaced the stacked PriceBadge with PricePillInline:
-// - Looks like:  £2.99  •  ⏱ 20h
-// - Uses a subtle border and small padding so it reads as metadata, not a button.
 
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
@@ -25,23 +11,35 @@ import { normalizeImageUrl } from "../../utils/cards";
 // Normalize a single row into a consistent shape.
 function normalizePriceRow(p) {
   if (!p || typeof p !== "object") return null;
-  const provider = (p.provider ?? p.source ?? "").toString().toLowerCase() || null;
-  const variant  = (p.variant  ?? p.variation ?? "").toString().toLowerCase() || null;
+  const provider =
+    (p.provider ?? p.source ?? "").toString().toLowerCase() || null;
+  const variant =
+    (p.variant ?? p.variation ?? "").toString().toLowerCase() || null;
 
   // Prefer pre-converted GBP if present; otherwise keep mid/market.
   const gbp = Number.isFinite(p?.gbp) ? Number(p.gbp) : null;
   const mid = Number.isFinite(p?.mid)
     ? Number(p.mid)
     : Number.isFinite(p?.market)
-    ? Number(p.market)
-    : null;
+      ? Number(p.market)
+      : null;
 
-  const low       = Number.isFinite(p?.low)  ? Number(p.low)  : null;
-  const high      = Number.isFinite(p?.high) ? Number(p.high) : null;
-  const currency  = p?.currency ?? (gbp != null ? "GBP" : null);
+  const low = Number.isFinite(p?.low) ? Number(p.low) : null;
+  const high = Number.isFinite(p?.high) ? Number(p.high) : null;
+  const currency = p?.currency ?? (gbp != null ? "GBP" : null);
   const updatedAt = p?.updatedAt ?? p?.lastUpdated ?? null;
 
-  return { provider, variant, gbp, mid, low, high, currency, updatedAt, _raw: p };
+  return {
+    provider,
+    variant,
+    gbp,
+    mid,
+    low,
+    high,
+    currency,
+    updatedAt,
+    _raw: p,
+  };
 }
 
 // Fold shapes into an array we can evaluate.
@@ -49,7 +47,10 @@ function collectPriceRows(item) {
   const rows = [];
   const a = Array.isArray(item?.prices) ? item.prices : null;
   const b = Array.isArray(item?.pricing) ? item.pricing : null;
-  const c = item?.priceLatest && !Array.isArray(item.priceLatest) ? [item.priceLatest] : null;
+  const c =
+    item?.priceLatest && !Array.isArray(item.priceLatest)
+      ? [item.priceLatest]
+      : null;
 
   if (a) rows.push(...a);
   if (b) rows.push(...b);
@@ -125,8 +126,7 @@ function PricePillInline({ priceRow }) {
     );
   }
 
-  const updated =
-    priceRow.updatedAt ? timeAgoShort(priceRow.updatedAt) : null;
+  const updated = priceRow.updatedAt ? timeAgoShort(priceRow.updatedAt) : null;
 
   return (
     <View
@@ -149,10 +149,10 @@ function PricePillInline({ priceRow }) {
 /* =================== Component =================== */
 
 export default function CollectionCardTile({
-  item = {},                // { id, name, setName, number, image, prices/pricing/priceLatest, _collection? }
-  onView,                   // () => void
-  onEdit,                   // () => void
-  onRemove,                 // () => void
+  item = {}, // { id, name, setName, number, image, prices/pricing/priceLatest, _collection? }
+  onView, // () => void
+  onEdit, // () => void
+  onRemove, // () => void
 }) {
   // Compute best price once, provider-agnostic.
   const bestPriceRow = useMemo(() => {
@@ -169,18 +169,29 @@ export default function CollectionCardTile({
       <Pressable onPress={onView} android_ripple={{ color: "#00000022" }}>
         <View style={styles.cardImageWrap}>
           {imageUri ? (
-            <Image source={{ uri: imageUri }} style={styles.cardImage} resizeMode="contain" />
+            <Image
+              source={{ uri: imageUri }}
+              style={styles.cardImage}
+              resizeMode="contain"
+            />
           ) : null}
 
           {/* Owned quantity pill */}
           <View style={styles.qtyPill}>
-            <Ionicons name="albums" size={12} color="#fff" style={{ marginRight: 4 }} />
+            <Ionicons
+              name="albums"
+              size={12}
+              color="#fff"
+              style={{ marginRight: 4 }}
+            />
             <Text style={styles.qtyText}>x{qty}</Text>
           </View>
 
           {/* Variation tag */}
           <View style={styles.variationPill}>
-            <Text style={styles.variationText}>{variationLabel(variation)}</Text>
+            <Text style={styles.variationText}>
+              {variationLabel(variation)}
+            </Text>
           </View>
         </View>
 
@@ -206,16 +217,32 @@ export default function CollectionCardTile({
       {/* Unified action bar */}
       <View style={styles.actionBarWrap}>
         <ActionGhost icon="eye" color={COLORS.accent} onPress={onView} />
-        <ActionGhost icon="create-outline" color={COLORS.text} onPress={onEdit} />
-        <ActionGhost icon="trash-outline" color={COLORS.error || "#ff6b6b"} onPress={onRemove} />
+        <ActionGhost
+          icon="create-outline"
+          color={COLORS.text}
+          onPress={onEdit}
+        />
+        <ActionGhost
+          icon="trash-outline"
+          color={COLORS.error || "#ff6b6b"}
+          onPress={onRemove}
+        />
       </View>
     </View>
   );
 }
 
 function variationLabel(v) {
-  const k = String(v || "").toLowerCase().replace(/[\s_-]/g, "");
-  if (k === "reverse" || k === "reverseholo" || k === "reverseholofoil" || k === "rev") return "Reverse";
+  const k = String(v || "")
+    .toLowerCase()
+    .replace(/[\s_-]/g, "");
+  if (
+    k === "reverse" ||
+    k === "reverseholo" ||
+    k === "reverseholofoil" ||
+    k === "rev"
+  )
+    return "Reverse";
   if (k === "holo" || k === "holofoil" || k === "foil") return "Holo";
   if (k === "normal" || k === "nonholo" || k === "nonfoil") return "Normal";
   return v || "Normal";
@@ -230,9 +257,20 @@ function ActionGhost({ icon, label, color, onPress }) {
       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
       accessibilityRole="button"
     >
-      <Ionicons name={icon} size={14} color={color} style={{ marginRight: 6 }} />
+      <Ionicons
+        name={icon}
+        size={14}
+        color={color}
+        style={{ marginRight: 6 }}
+      />
       {label ? (
-        <Text style={[styles.ghostLabel, { color, fontWeight: label === "View" ? "900" : "800" }]} numberOfLines={1}>
+        <Text
+          style={[
+            styles.ghostLabel,
+            { color, fontWeight: label === "View" ? "900" : "800" },
+          ]}
+          numberOfLines={1}
+        >
           {label}
         </Text>
       ) : null}
@@ -295,7 +333,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  cardMeta: { color: COLORS.textMuted, fontSize: 12, flexShrink: 1, marginRight: 8 },
+  cardMeta: {
+    color: COLORS.textMuted,
+    fontSize: 12,
+    flexShrink: 1,
+    marginRight: 8,
+  },
   cardMetaStrong: { color: COLORS.text, fontSize: 12, fontWeight: "700" },
 
   /* ---- Inline price pill ---- */
@@ -303,7 +346,7 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,                         // space between value · time
+    gap: 8, // space between value · time
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 10,
@@ -311,10 +354,15 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
   },
-  priceValue: { color: COLORS.text, fontSize: 13, fontWeight: "900", letterSpacing: 0.2 },
-  priceDot:   { color: COLORS.textMuted, fontSize: 12, fontWeight: "900" },
-  timeWrap:   { flexDirection: "row", alignItems: "center", gap: 4 },
-  timeText:   { color: COLORS.textMuted, fontSize: 11, fontWeight: "800" },
+  priceValue: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+  priceDot: { color: COLORS.textMuted, fontSize: 12, fontWeight: "900" },
+  timeWrap: { flexDirection: "row", alignItems: "center", gap: 4 },
+  timeText: { color: COLORS.textMuted, fontSize: 11, fontWeight: "800" },
 
   /* Fallback when no price is available */
   pricePlaceholder: {
@@ -326,7 +374,11 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 8,
   },
-  pricePlaceholderText: { color: COLORS.textMuted, fontSize: 11, fontWeight: "700" },
+  pricePlaceholderText: {
+    color: COLORS.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+  },
 
   /* Unified action bar container */
   actionBarWrap: {

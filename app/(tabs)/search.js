@@ -1,16 +1,41 @@
 // app/(tabs)/search.js
+//
+// UPDATED (2026-01-21):
+// - FIX: Search bar missing because the collapsible wrapper started at height: 0 on first render,
+//        so the inner content never got laid out -> onLayout never fired -> height stayed 0 forever.
+//        Solution: render a NON-animated wrapper until we measure the header once.
+// - FIX: Stop mutating shared values during render (can cause flicker / unexpected behavior).
+//        collapseDistanceSV is now synced inside a useEffect.
+// - KEEP: Reanimated-driven collapse (smooth on Android) with REAL layout height shrinking (no empty space).
+// - KEEP: No list translate tricks, so no growing bottom void.
+//
+// NOTE: This file assumes react-native-reanimated is correctly installed (Babel plugin enabled).
 
 import { useApolloClient, useLazyQuery, useMutation } from "@apollo/client";
 import { useRouter } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
-  FlatList,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+
+import Animated, {
+  Extrapolate,
+  interpolate,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 
 import {
   AddToCollectionDocument,
@@ -40,42 +65,15 @@ const GBP_SYMBOL = "\u00A3";
 /* -------------------------------------------------------------------------- */
 
 const RARITY_CONFIG = [
-  {
-    id: "common",
-    label: "Common",
-  },
-  {
-    id: "uncommon",
-    label: "Uncommon",
-  },
-  {
-    id: "rare",
-    label: "Rare",
-  },
-  {
-    id: "double-rare",
-    label: "Double Rare",
-  },
-  {
-    id: "art-rare",
-    label: "Art Rare",
-  },
-  {
-    id: "ace-spec",
-    label: "ACE SPEC Rare",
-  },
-  {
-    id: "sir",
-    label: "Special Illustration Rare",
-  },
-  {
-    id: "ur",
-    label: "Ultra Rare",
-  },
-  {
-    id: "hr",
-    label: "Hyper Rare",
-  },
+  { id: "common", label: "Common" },
+  { id: "uncommon", label: "Uncommon" },
+  { id: "rare", label: "Rare" },
+  { id: "double-rare", label: "Double Rare" },
+  { id: "art-rare", label: "Art Rare" },
+  { id: "ace-spec", label: "ACE SPEC Rare" },
+  { id: "sir", label: "Special Illustration Rare" },
+  { id: "ur", label: "Ultra Rare" },
+  { id: "hr", label: "Hyper Rare" },
 ];
 
 const normaliseRarity = (value) =>
@@ -83,71 +81,48 @@ const normaliseRarity = (value) =>
 
 /**
  * Central, explicit map of normalised rarity string -> canonical group id.
+ * NOTE: keys must be lowercase because we normalise input to lowercase.
  */
 const RAW_RARITY_GROUP_MAP = {
-  // Base tiers
   common: "common",
   uncommon: "uncommon",
   rare: "rare",
-  
-  // Double / art / illustration
+
   "double rare": "double-rare",
   "double-rare": "double-rare",
   "art rare": "art-rare",
   "illustration rare": "art-rare",
 
-  // Special / ultra / hyper
-  "Special illustration rare": "sir",
+  "special illustration rare": "sir",
   "hyper rare": "hr",
   "ultra rare": "ur",
 
-  // ACE SPEC — a few variants
   "ace spec": "ace-spec",
   "ace-spec": "ace-spec",
   "ace spec rare": "ace-spec",
 };
 
-/**
- * Map raw rarity → canonical id ONCE and re-use.
- * - exact matches via RAW_RARITY_GROUP_MAP
- * - tolerant substring fallbacks for noisy strings like:
- *   "Hyper Rare ★", "Special Illustration Rare ex", etc.
- */
 function getRarityGroupId(raw) {
   const norm = normaliseRarity(raw);
   if (!norm) return null;
 
-  // 1) Exact mapping first
-  if (RAW_RARITY_GROUP_MAP[norm]) {
-    return RAW_RARITY_GROUP_MAP[norm];
-  }
+  if (RAW_RARITY_GROUP_MAP[norm]) return RAW_RARITY_GROUP_MAP[norm];
 
-  // 2) Tolerant fallbacks for noisy labels
   if (norm.includes("ace spec")) return "ace-spec";
-
   if (norm.includes("special") && norm.includes("illustration")) return "sir";
-
   if (norm.includes("hyper") && norm.includes("rare")) return "hr";
-
   if (norm.includes("ultra") && norm.includes("rare")) return "ur";
-
   if (norm.includes("double") && norm.includes("rare")) return "double-rare";
-
   if (norm.includes("art") && norm.includes("rare")) return "art-rare";
-
   if (norm.includes("illustration") && norm.includes("rare")) return "art-rare";
 
-  // base tiers, tolerant
   if (norm === "common" || norm.endsWith(" common")) return "common";
   if (norm === "uncommon" || norm.endsWith(" uncommon")) return "uncommon";
-
-  // plain rare fallback
   if (norm === "rare" || norm.endsWith(" rare")) return "rare";
 
   return null;
 }
 
-// group id → rarity rank (for sorting)
 const RARITY_RANK = RARITY_CONFIG.reduce((acc, cfg, index) => {
   acc[cfg.id] = index + 1;
   return acc;
@@ -172,15 +147,10 @@ function isForeignKeyConstraintError(error) {
   return typeof message === "string" && /foreign key/i.test(message);
 }
 
-/**
- * Variant keys → display labels for the app:
- *   "normal"   → "Normal"
- *   "holo"     → "Holo"
- *   "reverse*" → "Reverse Holo"
- *   "1st ed"   → "1st Ed"
- */
 function canonicalVariantKey(raw) {
-  const value = String(raw ?? "normal").trim().toLowerCase();
+  const value = String(raw ?? "normal")
+    .trim()
+    .toLowerCase();
   if (!value || value === "normal") return "Normal";
   if (
     [
@@ -195,11 +165,10 @@ function canonicalVariantKey(raw) {
   if (["holo", "holofoil", "holo foil"].includes(value)) return "Holo";
   if (
     ["firstedition", "first edition", "1stedition", "1st edition"].includes(
-      value
+      value,
     )
   )
     return "1st Ed";
-  // Any unknown values, we just treat as "Normal" for search UI purposes
   return "Normal";
 }
 
@@ -209,28 +178,20 @@ function firstNumber(...values) {
   return null;
 }
 
-/* ---------------- PRICE HANDLING (simplified for GBP-only) ----------------- */
+/* ---------------- PRICE HANDLING (GBP-only) ----------------- */
 
-/**
- * We only care about GBP market price.
- * Backend is already giving us `currency: "GBP"` and fields:
- *   gbp, market, mid, low, high
- */
 function normalizePriceEntry(price) {
   if (!price || typeof price !== "object") return null;
 
   const variation = canonicalVariantKey(
-    price.variation ?? price.variant ?? "normal"
+    price.variation ?? price.variant ?? "normal",
   );
 
   const market =
     firstNumber(price.gbp, price.market, price.mid, price.low, price.high) ??
     null;
 
-  return {
-    variation, // "Normal", "Holo", etc.
-    market, // single numeric value in GBP
-  };
+  return { variation, market };
 }
 
 function normalizePriceList(list) {
@@ -246,7 +207,6 @@ function normalizePriceList(list) {
       byVariant.set(key, { ...entry });
       continue;
     }
-    // If we ever see multiple rows per variant, prefer the one with a value
     if (entry.market != null && existing.market == null) {
       existing.market = entry.market;
     }
@@ -263,10 +223,6 @@ function hasPrice(entry) {
   );
 }
 
-/**
- * With the simplified shape, “average price” is just the single GBP market
- * value for that best variant.
- */
 function computeAveragePrice(entry) {
   if (!entry || !hasPrice(entry)) return null;
   return entry.market;
@@ -277,9 +233,6 @@ function formatGBP(value) {
   return `${GBP_SYMBOL}${Number(value).toFixed(2)}`;
 }
 
-/**
- * Best price: pick preferred variant in order, otherwise any with a value.
- */
 function getBestPrice(prices) {
   if (!Array.isArray(prices) || prices.length === 0) return null;
 
@@ -287,7 +240,7 @@ function getBestPrice(prices) {
 
   for (const key of pref) {
     const hit = prices.find(
-      (p) => (p?.variation ?? p?.variant) === key && hasPrice(p)
+      (p) => (p?.variation ?? p?.variant) === key && hasPrice(p),
     );
     if (hit) return hit;
   }
@@ -303,23 +256,19 @@ function collectVariantList(item) {
       typeof v === "string"
         ? canonicalVariantKey(v)
         : canonicalVariantKey(
-            v?.key || v?.variant || v?.label || v?.displayName
+            v?.key || v?.variant || v?.label || v?.displayName,
           );
     if (key) variants.add(key);
   };
 
-  if (Array.isArray(item?.variants)) {
-    for (const v of item.variants) push(v);
-  }
-  if (Array.isArray(item?.variations)) {
-    for (const v of item.variations) push(v);
-  }
+  if (Array.isArray(item?.variants)) for (const v of item.variants) push(v);
+  if (Array.isArray(item?.variations)) for (const v of item.variations) push(v);
 
   const source = Array.isArray(item?.latestPrices)
     ? item.latestPrices
     : Array.isArray(item?.prices)
-    ? item.prices
-    : [];
+      ? item.prices
+      : [];
   for (const p of source) {
     if (typeof p === "string") push(p);
     else if (p?.variation || p?.variant) push(p.variation || p.variant);
@@ -352,7 +301,7 @@ function resolveCardIdentifier(card) {
     normalize(card?.cardCode),
     normalize(card?.card?.code),
     normalize(
-      card?.setCode && card?.number ? `${card.setCode}-${card.number}` : null
+      card?.setCode && card?.number ? `${card.setCode}-${card.number}` : null,
     ),
   ].filter(Boolean);
   for (const candidate of candidates)
@@ -369,16 +318,15 @@ function resolveVariation(card) {
       if (typeof entry === "string") return canonicalVariantKey(entry);
       if (typeof entry === "object")
         return canonicalVariantKey(
-          entry.variant || entry.variation || entry.displayName || entry.key
+          entry.variant || entry.variation || entry.displayName || entry.key,
         );
     }
   }
 
   if (Array.isArray(card?.variants) && card.variants.length > 0) {
     for (const entry of card.variants) {
-      if (entry?.default) {
+      if (entry?.default)
         return canonicalVariantKey(entry.key || entry.label || "normal");
-      }
     }
   }
 
@@ -386,10 +334,6 @@ function resolveVariation(card) {
   return "Normal";
 }
 
-/**
- * Compute a canonical rarityGroupId ONCE per card
- * and store it on the object. All filtering/sorting uses this field.
- */
 function normalizeCardsearchItem(item, index = 0) {
   if (!item) return null;
   const setRecord = item.set || {};
@@ -404,22 +348,25 @@ function normalizeCardsearchItem(item, index = 0) {
   const rarityGroupId = getRarityGroupId(rawRarity);
 
   const preferredId =
-    item.cardId || item.id || (setCode && number ? `${setCode}-${number}` : null);
+    item.cardId ||
+    item.id ||
+    (setCode && number ? `${setCode}-${number}` : null);
   const id = preferredId || `card-${index}`;
+
   return {
     id,
     cardId: preferredId || id,
     name: item.name || "",
     set: setCode || "",
-    setCode: setCode || "",
+    setCode,
     setName,
     number: number || "",
     image,
     tcgImageUrl: image,
-    rarity: rawRarity, // raw string from API
-    rarityGroupId, // canonical group id ("sir", "ur", "hr", etc.)
-    variations, // ["Normal", "Holo", ...]
-    prices, // normalised price entries
+    rarity: rawRarity,
+    rarityGroupId,
+    variations,
+    prices,
   };
 }
 
@@ -460,10 +407,6 @@ const SORT_OPTIONS = [
   { value: "name-desc", label: "Name Z → A" },
 ];
 
-/**
- * Rarity filtering is now purely on card.rarityGroupId
- * (canonical group id), not re-computed from raw strings.
- */
 function applyFiltersAndSort(cards, filters) {
   if (!Array.isArray(cards) || cards.length === 0 || !filters) return cards;
 
@@ -480,7 +423,6 @@ function applyFiltersAndSort(cards, filters) {
   const min = minPrice !== "" ? parseFloat(minPrice) : null;
   const max = maxPrice !== "" ? parseFloat(maxPrice) : null;
 
-  // rarities: list of canonical group IDs ("sir", "ur", "hr", "ace-spec", etc.
   const raritySet = new Set((rarities || []).map((r) => String(r)));
   const variationSet = new Set(variations || []);
 
@@ -491,16 +433,13 @@ function applyFiltersAndSort(cards, filters) {
     const bestRow = getBestPrice(card.prices || []);
     const price = computeAveragePrice(bestRow);
 
-    if (onlyHasPrices && (price == null || Number.isNaN(price))) {
-      return false;
-    }
+    if (onlyHasPrices && (price == null || Number.isNaN(price))) return false;
 
     if (min != null && price != null && price < min) return false;
     if (max != null && price != null && price > max) return false;
 
     if (hasRarityFilter) {
-      const groupId =
-        card.rarityGroupId || getRarityGroupId(card.rarity || "");
+      const groupId = card.rarityGroupId || getRarityGroupId(card.rarity || "");
       if (!groupId || !raritySet.has(groupId)) return false;
     }
 
@@ -508,7 +447,7 @@ function applyFiltersAndSort(cards, filters) {
       const hasReverse =
         Array.isArray(card.variations) &&
         card.variations.some((v) =>
-          String(v).toLowerCase().includes("reverse")
+          String(v).toLowerCase().includes("reverse"),
         );
       if (!hasReverse) return false;
     }
@@ -535,12 +474,10 @@ function applyFiltersAndSort(cards, filters) {
 
     const aNorm = normaliseRarity(a.rarity);
     const bNorm = normaliseRarity(b.rarity);
-    const aGroup =
-      a.rarityGroupId || getRarityGroupId(a.rarity || "");
-    const bGroup =
-      b.rarityGroupId || getRarityGroupId(b.rarity || "");
-    const aRank = aGroup ? RARITY_RANK[aGroup] ?? 999 : 999;
-    const bRank = bGroup ? RARITY_RANK[bGroup] ?? 999 : 999;
+    const aGroup = a.rarityGroupId || getRarityGroupId(a.rarity || "");
+    const bGroup = b.rarityGroupId || getRarityGroupId(b.rarity || "");
+    const aRank = aGroup ? (RARITY_RANK[aGroup] ?? 999) : 999;
+    const bRank = bGroup ? (RARITY_RANK[bGroup] ?? 999) : 999;
 
     const aNum = parseInt(a.number, 10);
     const bNum = parseInt(b.number, 10);
@@ -591,7 +528,7 @@ function applyFiltersAndSort(cards, filters) {
 function AdvancedFiltersMobile({
   filters,
   onChange,
-  availableRarities, // array of canonical group IDs present in results
+  availableRarities,
   availableVariations,
 }) {
   const {
@@ -606,10 +543,7 @@ function AdvancedFiltersMobile({
 
   const [isOpen, setIsOpen] = useState(false);
 
-  const currentRarities = useMemo(
-    () => new Set(rarities || []),
-    [rarities]
-  );
+  const currentRarities = useMemo(() => new Set(rarities || []), [rarities]);
 
   const currentSort =
     SORT_OPTIONS.find((opt) => opt.value === (sortBy || "relevance")) ||
@@ -619,16 +553,12 @@ function AdvancedFiltersMobile({
     const presence = new Map();
     RARITY_CONFIG.forEach((g) => presence.set(g.id, false));
     (availableRarities || []).forEach((groupId) => {
-      if (presence.has(groupId)) {
-        presence.set(groupId, true);
-      }
+      if (presence.has(groupId)) presence.set(groupId, true);
     });
     return presence;
   }, [availableRarities]);
 
-  const updateField = (key, value) => {
-    onChange({ ...filters, [key]: value });
-  };
+  const updateField = (key, value) => onChange({ ...filters, [key]: value });
 
   const toggleArrayFilter = (key, value) => {
     const current = new Set(filters[key] || []);
@@ -639,11 +569,8 @@ function AdvancedFiltersMobile({
 
   const toggleRarityGroup = (group) => {
     const next = new Set(currentRarities);
-    if (next.has(group.id)) {
-      next.delete(group.id);
-    } else {
-      next.add(group.id);
-    }
+    if (next.has(group.id)) next.delete(group.id);
+    else next.add(group.id);
     onChange({ ...filters, rarities: Array.from(next) });
   };
 
@@ -663,7 +590,6 @@ function AdvancedFiltersMobile({
 
   return (
     <View style={styles.filtersWrapper}>
-      {/* header row + clear, all within the same card */}
       <View style={styles.filtersHeaderRow}>
         <Text style={styles.filtersTitle}>Advanced filters</Text>
 
@@ -672,9 +598,7 @@ function AdvancedFiltersMobile({
             onPress={() => setIsOpen(true)}
             style={styles.sortCurrentChip}
           >
-            <Text style={styles.sortCurrentChipLabel}>
-              {currentSort.label}
-            </Text>
+            <Text style={styles.sortCurrentChipLabel}>{currentSort.label}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -694,7 +618,6 @@ function AdvancedFiltersMobile({
 
       {isOpen && (
         <>
-          {/* sort options */}
           <View style={styles.filtersColumn}>
             <Text style={styles.filtersSectionTitle}>Sort by</Text>
             <View style={styles.sortRow}>
@@ -704,16 +627,10 @@ function AdvancedFiltersMobile({
                   <TouchableOpacity
                     key={opt.value}
                     onPress={() => updateField("sortBy", opt.value)}
-                    style={[
-                      styles.chip,
-                      active && styles.chipActive,
-                    ]}
+                    style={[styles.chip, active && styles.chipActive]}
                   >
                     <Text
-                      style={[
-                        styles.chipText,
-                        active && styles.chipTextActive,
-                      ]}
+                      style={[styles.chipText, active && styles.chipTextActive]}
                     >
                       {opt.label}
                     </Text>
@@ -723,7 +640,6 @@ function AdvancedFiltersMobile({
             </View>
           </View>
 
-          {/* price */}
           <View style={styles.filtersColumn}>
             <Text style={styles.filtersSectionTitle}>Price (GBP)</Text>
             <View style={styles.priceRow}>
@@ -747,9 +663,7 @@ function AdvancedFiltersMobile({
 
             <View style={styles.toggleRow}>
               <TouchableOpacity
-                onPress={() =>
-                  updateField("onlyHasPrices", !onlyHasPrices)
-                }
+                onPress={() => updateField("onlyHasPrices", !onlyHasPrices)}
                 style={[
                   styles.toggleChip,
                   onlyHasPrices && styles.toggleChipActive,
@@ -766,9 +680,7 @@ function AdvancedFiltersMobile({
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() =>
-                  updateField("onlyHasReverse", !onlyHasReverse)
-                }
+                onPress={() => updateField("onlyHasReverse", !onlyHasReverse)}
                 style={[
                   styles.toggleChip,
                   onlyHasReverse && styles.toggleChipActive,
@@ -786,13 +698,12 @@ function AdvancedFiltersMobile({
             </View>
           </View>
 
-          {/* rarity */}
           <View style={styles.filtersColumn}>
             <Text style={styles.filtersSectionTitle}>Rarity</Text>
             {availableRarities && availableRarities.length > 0 ? (
               <View style={styles.chipWrap}>
                 {RARITY_CONFIG.map((group) => {
-                  const active = isGroupActive(group);
+                  const active = currentRarities.has(group.id);
                   const present = groupPresence.get(group.id) ?? false;
                   return (
                     <TouchableOpacity
@@ -823,7 +734,6 @@ function AdvancedFiltersMobile({
             )}
           </View>
 
-          {/* variants */}
           <View style={styles.filtersColumn}>
             <Text style={styles.filtersSectionTitle}>Variants</Text>
             {availableVariations && availableVariations.length > 0 ? (
@@ -833,13 +743,8 @@ function AdvancedFiltersMobile({
                   return (
                     <TouchableOpacity
                       key={variation}
-                      onPress={() =>
-                        toggleArrayFilter("variations", variation)
-                      }
-                      style={[
-                        styles.chip,
-                        isActive && styles.chipActive,
-                      ]}
+                      onPress={() => toggleArrayFilter("variations", variation)}
+                      style={[styles.chip, isActive && styles.chipActive]}
                     >
                       <Text
                         style={[
@@ -872,6 +777,92 @@ export default function SearchTab() {
   const toast = useToast();
   const apollo = useApolloClient();
 
+  const listRef = useRef(null);
+
+  // Measured once (JS state) + mirrored into a UI-thread shared value (for smooth animation)
+  const [collapsibleHeightState, setCollapsibleHeightState] = useState(0);
+  const [hasMeasuredHeader, setHasMeasuredHeader] = useState(false); // FIX: gate animation until we have a height
+  const headerHeight = useSharedValue(0);
+
+  // Scroll shared value (UI thread)
+  const scrollY = useSharedValue(0);
+
+  // Collapse distance is capped (prevents “long slide forever”)
+  const collapseDistance = useMemo(() => {
+    const h = collapsibleHeightState || 0;
+    if (!h) return 140;
+    return Math.max(80, Math.min(h, 180));
+  }, [collapsibleHeightState]);
+
+  const collapseDistanceSV = useSharedValue(140);
+
+  // FIX: sync shared value in an effect, not during render
+  useEffect(() => {
+    collapseDistanceSV.value = collapseDistance;
+  }, [collapseDistance, collapseDistanceSV]);
+
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      scrollY.value = e.contentOffset.y;
+    },
+  });
+
+  // CHANGED: real layout height shrinks on UI thread (smooth + no empty space)
+  const collapsibleWrapAnimatedStyle = useAnimatedStyle(() => {
+    const h = headerHeight.value;
+    if (!h) return { height: 0 };
+
+    const d = collapseDistanceSV.value;
+    const clamp = Math.min(Math.max(scrollY.value, 0), d);
+    const nextHeight = Math.max(h - clamp, 0);
+
+    return { height: nextHeight };
+  }, []);
+
+  // CHANGED: content slides/fades as it collapses (pure transform/opacity on UI thread)
+  const collapsibleContentAnimatedStyle = useAnimatedStyle(() => {
+    const h = headerHeight.value;
+    if (!h) return { opacity: 1, transform: [{ translateY: 0 }] };
+
+    const d = collapseDistanceSV.value;
+    const clamp = Math.min(Math.max(scrollY.value, 0), d);
+
+    const opacity = interpolate(
+      clamp,
+      [0, d * 0.6, d],
+      [1, 0.35, 0],
+      Extrapolate.CLAMP,
+    );
+    const translateY = interpolate(
+      clamp,
+      [0, d],
+      [0, -Math.min(h, 120)],
+      Extrapolate.CLAMP,
+    );
+
+    return { opacity, transform: [{ translateY }] };
+  }, []);
+
+  const backToTopAnimatedStyle = useAnimatedStyle(() => {
+    const opacity = interpolate(
+      scrollY.value,
+      [0, 250, 420],
+      [0, 0, 1],
+      Extrapolate.CLAMP,
+    );
+    const translateY = interpolate(
+      scrollY.value,
+      [0, 250, 420],
+      [12, 12, 0],
+      Extrapolate.CLAMP,
+    );
+    return { opacity, transform: [{ translateY }] };
+  }, []);
+
+  const onBackToTop = useCallback(() => {
+    listRef.current?.scrollToOffset?.({ offset: 0, animated: true });
+  }, []);
+
   const [name, setName] = useState("");
   const [setCode, setSetCode] = useState("");
   const [number, setNumber] = useState("");
@@ -881,8 +872,8 @@ export default function SearchTab() {
   const [filters, setFilters] = useState({
     minPrice: "",
     maxPrice: "",
-    rarities: [], // canonical group IDs only ("sir", "ur", "hr", "ace-spec", etc.)
-    variations: [], // ["Normal", "Holo", ...]
+    rarities: [],
+    variations: [],
     sortBy: "relevance",
     onlyHasPrices: false,
     onlyHasReverse: false,
@@ -895,7 +886,7 @@ export default function SearchTab() {
       nextFetchPolicy: "cache-first",
       notifyOnNetworkStatusChange: true,
       returnPartialData: false,
-    }
+    },
   );
 
   const canSearch = useMemo(
@@ -903,7 +894,7 @@ export default function SearchTab() {
       (name ?? "").trim().length > 0 ||
       (setCode ?? "").trim().length > 0 ||
       (number ?? "").trim().length > 0,
-    [name, setCode, number]
+    [name, setCode, number],
   );
 
   const onSearch = useCallback(() => {
@@ -911,46 +902,20 @@ export default function SearchTab() {
 
     setResults([]);
 
-    const limit = CARDSEARCH_LIMIT;
-
     runSearch({
       variables: {
         input: {
           name: name || undefined,
           set: setCode || undefined,
           number: number || undefined,
-          limit,
+          limit: CARDSEARCH_LIMIT,
           offset: 0,
         },
       },
-      // FIX: single onCompleted callback with debug inside
       onCompleted: (res) => {
         const payload = res?.searchCards;
         const items = mapCardsearchItems(payload?.items || []);
         const filtered = filterOutPocket(items, !/pocket/i.test(setCode || ""));
-
-        // DEBUG: log raw rarities, normalised form and mapped group ids
-        const rarityDebug = {};
-        filtered.forEach((c) => {
-          const raw = String(c.rarity || "").trim();
-          const norm = normaliseRarity(raw);
-          const gid = c.rarityGroupId || getRarityGroupId(raw);
-          if (!rarityDebug[raw]) {
-            rarityDebug[raw] = { norm, groups: new Set() };
-          }
-          rarityDebug[raw].groups.add(gid);
-        });
-
-        const rarityDebugArray = Object.entries(rarityDebug).map(
-          ([raw, info]) => ({
-            raw,
-            norm: info.norm,
-            groups: Array.from(info.groups),
-          })
-        );
-
-        console.log("RARITY DEBUG", rarityDebugArray);
-
         setResults(filtered);
       },
     });
@@ -978,7 +943,7 @@ export default function SearchTab() {
 
   const filteredResults = useMemo(
     () => applyFiltersAndSort(results, filters),
-    [results, filters]
+    [results, filters],
   );
 
   const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
@@ -1000,27 +965,24 @@ export default function SearchTab() {
         return false;
       }
     },
-    [apollo]
+    [apollo],
   );
 
   const wishlistSuccess = (result) => {
     const d = result?.data || {};
     return Boolean(
       d.addToWishlist === true ||
-        d.toggleWishlist === true ||
-        d.addToWishlist?.id ||
-        d.addToWishlist?.cardId ||
-        d.wishlistEntry?.id
+      d.toggleWishlist === true ||
+      d.addToWishlist?.id ||
+      d.addToWishlist?.cardId ||
+      d.wishlistEntry?.id,
     );
   };
 
   const collectionSuccess = (result) => {
     const d = result?.data || {};
     const entry =
-      d.addToCollection ||
-      d.updateCollectionEntry ||
-      d.collectionEntry ||
-      null;
+      d.addToCollection || d.updateCollectionEntry || d.collectionEntry || null;
     return Boolean(entry && (entry.id || entry.cardId));
   };
 
@@ -1095,12 +1057,25 @@ export default function SearchTab() {
       }
     }
 
-    const message =
-      extractErrorMessage(err) || "Couldn't add to collection";
+    const message = extractErrorMessage(err) || "Couldn't add to collection";
     toast.show(message, { type: "error" });
   };
 
   const showPlaceholders = !loading && results.length === 0;
+
+  // FIX: single place to measure header height (SearchForm + filters block)
+  const handleHeaderLayout = useCallback(
+    (e) => {
+      if (hasMeasuredHeader) return;
+      const h = e?.nativeEvent?.layout?.height ?? 0;
+      if (h > 0) {
+        setCollapsibleHeightState(h);
+        headerHeight.value = h;
+        setHasMeasuredHeader(true);
+      }
+    },
+    [hasMeasuredHeader, headerHeight],
+  );
 
   return (
     <View style={styles.container}>
@@ -1109,46 +1084,86 @@ export default function SearchTab() {
         subtitle="Search for any Pokémon card and add it to your collection"
       />
 
-      <SearchForm
-        name={name}
-        setName={setName}
-        setCode={setCode}
-        setSetCode={setSetCode}
-        number={number}
-        setNumber={setNumber}
-        canSearch={canSearch}
-        loading={loading}
-        onSearch={onSearch}
-        errorMessage={error?.message}
-      />
+      {/* ------------------------------------------------------------------ */}
+      {/* Collapsible area: SearchForm + Filters                              */}
+      {/* ------------------------------------------------------------------ */}
+      {/* FIX: Before we measure height, DO NOT wrap in an Animated.View with height:0.
+              Render a normal View so layout happens and onLayout fires. */}
+      {!hasMeasuredHeader ? (
+        <View style={styles.collapsibleWrap} onLayout={handleHeaderLayout}>
+          <SearchForm
+            name={name}
+            setName={setName}
+            setCode={setCode}
+            setSetCode={setSetCode}
+            number={number}
+            setNumber={setNumber}
+            canSearch={canSearch}
+            loading={loading}
+            onSearch={onSearch}
+            errorMessage={error?.message}
+          />
 
-      <AdvancedFiltersMobile
-        filters={filters}
-        onChange={setFilters}
-        availableRarities={availableRarities}
-        availableVariations={availableVariations}
-      />
+          <AdvancedFiltersMobile
+            filters={filters}
+            onChange={setFilters}
+            availableRarities={availableRarities}
+            availableVariations={availableVariations}
+          />
+        </View>
+      ) : (
+        <Animated.View
+          style={[styles.collapsibleWrap, collapsibleWrapAnimatedStyle]}
+        >
+          <Animated.View style={collapsibleContentAnimatedStyle}>
+            <SearchForm
+              name={name}
+              setName={setName}
+              setCode={setCode}
+              setSetCode={setSetCode}
+              number={number}
+              setNumber={setNumber}
+              canSearch={canSearch}
+              loading={loading}
+              onSearch={onSearch}
+              errorMessage={error?.message}
+            />
+
+            <AdvancedFiltersMobile
+              filters={filters}
+              onChange={setFilters}
+              availableRarities={availableRarities}
+              availableVariations={availableVariations}
+            />
+          </Animated.View>
+        </Animated.View>
+      )}
 
       {filteredResults.length > 0 ? (
-        <FlatList
+        <Animated.FlatList
+          ref={listRef}
           contentContainerStyle={styles.listContent}
           data={filteredResults}
-          keyExtractor={(item, idx) =>
-            item?.id ? String(item.id) : `${idx}`
-          }
+          keyExtractor={(item, idx) => (item?.id ? String(item.id) : `${idx}`)}
           numColumns={2}
           columnWrapperStyle={styles.column}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          removeClippedSubviews
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          updateCellsBatchingPeriod={50}
+          windowSize={9}
           renderItem={({ item }) => {
             const best = getBestPrice(item?.prices || []);
             const avg = computeAveragePrice(best);
+
             return (
               <CardTile
-                item={{
-                  ...item,
-                  averagePrice: avg,
-                  bestPrice: best,
-                  averagePriceFormatted: formatGBP(avg),
-                }}
+                item={item}
+                bestPrice={best}
+                averagePrice={avg}
+                averagePriceFormatted={formatGBP(avg)}
                 onAddToWishlist={onAddToWishlist}
                 onAddToCollection={onAddToCollection}
                 onPress={() =>
@@ -1174,6 +1189,19 @@ export default function SearchTab() {
       ) : (
         <EmptyState message="No results found. Try different filters." />
       )}
+
+      <Animated.View
+        pointerEvents="box-none"
+        style={[styles.backToTopWrap, backToTopAnimatedStyle]}
+      >
+        <Pressable
+          onPress={onBackToTop}
+          style={styles.backToTopBtn}
+          hitSlop={10}
+        >
+          <Text style={styles.backToTopText}>↑ Top</Text>
+        </Pressable>
+      </Animated.View>
     </View>
   );
 }
@@ -1195,12 +1223,7 @@ function PlaceholderGrid({ shimmer = false, rows = 3 }) {
 function PlaceholderTile({ shimmer = false }) {
   return (
     <View style={styles.placeholderCard}>
-      <View
-        style={[
-          styles.placeholderImageWrap,
-          shimmer && styles.pulse,
-        ]}
-      />
+      <View style={[styles.placeholderImageWrap, shimmer && styles.pulse]} />
       <View style={styles.placeholderInfo}>
         <View
           style={[
@@ -1226,6 +1249,12 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   listContent: { paddingHorizontal: 6, paddingBottom: 20 },
   column: { gap: 4 },
+
+  // Collapsible wrapper MUST hide overflow while height is shrinking
+  collapsibleWrap: {
+    overflow: "hidden",
+  },
+
   placeholderWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1263,6 +1292,25 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   pulse: { opacity: 0.8 },
+
+  backToTopWrap: {
+    position: "absolute",
+    right: 14,
+    bottom: 20, // above tab bar
+  },
+  backToTopBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: COLORS.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+  },
+  backToTopText: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: "600",
+  },
 
   /* ---- Advanced filters styling (single card) ---- */
   filtersWrapper: {

@@ -2,21 +2,17 @@
   "expo": {
     "name": "SixByFive TCG",
     "slug": "sbf-tcg-mobile",
-    "version": "1.1.6",
+    "version": "1.1.7",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "tcgmobile",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sixbyfive.sbftcgmobile",
-      "associatedDomains": [
-        "applinks:tcg.sixbyfive.com"
-      ]
+      "associatedDomains": ["applinks:tcg.sixbyfive.com"]
     },
-
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
@@ -37,16 +33,26 @@
               "pathPrefix": "/reset-password"
             }
           ]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "tcg.sixbyfive.com",
+              "pathPrefix": "/reset-password"
+            }
+          ]
         }
       ]
     },
-
     "web": {
       "bundler": "metro",
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
-
     "plugins": [
       "expo-router",
       [
@@ -59,11 +65,9 @@
         }
       ]
     ],
-
     "experiments": {
       "typedRoutes": false
     },
-
     "extra": {
       "EXPO_PUBLIC_SITE_ORIGIN": "https://tcg.sixbyfive.com",
       "EXPO_PUBLIC_GRAPHQL_ENDPOINT": "https://backendtcg.sixbyfive.com/graphql",
@@ -73,7 +77,14 @@
         "projectId": "941ffa41-876d-4f3b-83aa-f66b7f1bb442"
       }
     },
-
-    "owner": "sixbyfive"
+    "owner": "sixbyfive",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/941ffa41-876d-4f3b-83aa-f66b7f1bb442",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    }
   }
 }

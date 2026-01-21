@@ -1,4 +1,12 @@
 // components/search/CardTile.js
+//
+// UPDATED (2026-01-21):
+// - FIX: Remove JSON.stringify memo key (expensive + causes churn).
+// - CHANGE: Accept derived price props (averagePrice / bestPrice / averagePriceFormatted)
+//           so Search renderItem doesn't create a new item object.
+// - PERF: Wrap CardTile in React.memo with a custom comparator to prevent re-render jitter.
+// - PERF: best-price selection memo now depends on stable inputs, not stringified arrays.
+
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
@@ -25,12 +33,25 @@ function pickValue(p) {
 }
 
 function canonicalVariant(v) {
-  const s = String(v ?? "normal").toLowerCase().trim();
+  const s = String(v ?? "normal")
+    .toLowerCase()
+    .trim();
   if (!s) return "normal";
-  if (["reverse", "reverse holo", "reverse-holo", "reverseholo", "reverseholofoil"].includes(s))
+  if (
+    [
+      "reverse",
+      "reverse holo",
+      "reverse-holo",
+      "reverseholo",
+      "reverseholofoil",
+    ].includes(s)
+  )
     return "reverseHolofoil";
   if (["holo", "holofoil", "holo foil"].includes(s)) return "holofoil";
-  if (["first edition", "firstedition", "1st edition", "1stedition"].includes(s)) return "firstEdition";
+  if (
+    ["first edition", "firstedition", "1st edition", "1stedition"].includes(s)
+  )
+    return "firstEdition";
   return s;
 }
 
@@ -51,7 +72,9 @@ function localBestPrice(prices = []) {
 
   // normalize variants for ordering
   const rows = prices
-    .map((r) => (r ? { ...r, _v: canonicalVariant(r.variation ?? r.variant) } : null))
+    .map((r) =>
+      r ? { ...r, _v: canonicalVariant(r.variation ?? r.variant) } : null,
+    )
     .filter(Boolean)
     .filter(hasAnyValue);
 
@@ -66,38 +89,48 @@ function localBestPrice(prices = []) {
   return rows.find((r) => pickValue(r) != null) || null;
 }
 
-export default function CardTile({
+/* -------------------------------------------------------------------------- */
+/*  Memoized tile                                                             */
+/* -------------------------------------------------------------------------- */
+
+function CardTileInner({
   item = {},
   onPress,
   onAddToCollection,
   onAddToWishlist,
   isInCollection = false,
   isInWishlist = false,
+
+  // UPDATED: derived price props (so parent doesn't create a new item object)
+  averagePrice,
+  bestPrice,
+  averagePriceFormatted,
 }) {
   const pricesArray = Array.isArray(item?.prices)
     ? item.prices
     : Array.isArray(item?.pricing)
-    ? item.pricing
-    : [];
+      ? item.pricing
+      : [];
 
-  // Memoize off the *content* so re-renders don’t “reset” the pill
-  const pricesKey = useMemo(() => JSON.stringify(pricesArray), [pricesArray]);
-
-  // CHANGED: only use util result if it actually contains a price;
-  // otherwise, fall back to the robust local selector that understands market/mid/low/high.
+  // UPDATED: compute best price only when inputs actually change
   const best = useMemo(() => {
-    const utilResult = getBestPrice({ ...item, prices: pricesArray }, { strategy: "recent" });
-    const useUtil = utilResult && hasAnyValue(utilResult); // <- key fix
+    // Prefer explicitly passed bestPrice from parent if present
+    if (bestPrice && hasAnyValue(bestPrice)) return bestPrice;
+
+    const utilResult = getBestPrice(
+      { ...item, prices: pricesArray },
+      { strategy: "recent" },
+    );
+    const useUtil = utilResult && hasAnyValue(utilResult);
     return useUtil ? utilResult : localBestPrice(pricesArray);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pricesKey]);
+  }, [bestPrice, item?.id, pricesArray]);
 
   // Derive values for AvgPriceBlock
   const tcgp = useMemo(() => {
     if (!best) return undefined;
     return (
-      (isNum(best.tcgplayer) ? best.tcgplayer : undefined) ??
-      pickValue(best) // fallback to market/gbp/mid/low/high
+      (isNum(best.tcgplayer) ? best.tcgplayer : undefined) ?? pickValue(best)
     );
   }, [best]);
 
@@ -106,13 +139,27 @@ export default function CardTile({
     return isNum(best.cardmarket) ? best.cardmarket : undefined;
   }, [best]);
 
+  // (Optional) accept derived averagePriceFormatted if parent provided it
+  // Not currently displayed in this tile because AvgPriceBlock handles UI,
+  // but keeping for future / parity.
+  const _avg = averagePrice; // eslint-disable-line no-unused-vars
+  const _avgFmt = averagePriceFormatted; // eslint-disable-line no-unused-vars
+
   const imageUri = normalizeImageUrl(item?.image);
 
   return (
-    <Pressable onPress={onPress} style={styles.card} android_ripple={{ color: "#00000022" }}>
+    <Pressable
+      onPress={onPress}
+      style={styles.card}
+      android_ripple={{ color: "#00000022" }}
+    >
       <View style={styles.cardImageWrap}>
         {imageUri ? (
-          <Image source={{ uri: imageUri }} style={styles.cardImage} resizeMode="contain" />
+          <Image
+            source={{ uri: imageUri }}
+            style={styles.cardImage}
+            resizeMode="contain"
+          />
         ) : null}
       </View>
 
@@ -158,6 +205,47 @@ export default function CardTile({
   );
 }
 
+// UPDATED: memo comparator to stop scroll jitter re-renders
+function areEqual(prev, next) {
+  const a = prev.item || {};
+  const b = next.item || {};
+
+  // If identity changes, re-render
+  if (String(a.id ?? "") !== String(b.id ?? "")) return false;
+
+  // Re-render if core visible fields changed
+  if ((a.name ?? "") !== (b.name ?? "")) return false;
+  if ((a.setName ?? "") !== (b.setName ?? "")) return false;
+  if (String(a.number ?? "") !== String(b.number ?? "")) return false;
+  if ((a.image ?? "") !== (b.image ?? "")) return false;
+
+  // Buttons state changes
+  if (!!prev.isInCollection !== !!next.isInCollection) return false;
+  if (!!prev.isInWishlist !== !!next.isInWishlist) return false;
+
+  // Derived pricing props (if you pass them)
+  if ((prev.averagePriceFormatted ?? "") !== (next.averagePriceFormatted ?? ""))
+    return false;
+
+  // If parent passed bestPrice, use a small fingerprint
+  const pa = prev.bestPrice;
+  const pb = next.bestPrice;
+  const paKey =
+    pa && typeof pa === "object"
+      ? `${pa.variation ?? pa.variant ?? ""}:${pa.market ?? pa.gbp ?? pa.mid ?? pa.low ?? pa.high ?? ""}`
+      : "";
+  const pbKey =
+    pb && typeof pb === "object"
+      ? `${pb.variation ?? pb.variant ?? ""}:${pb.market ?? pb.gbp ?? pb.mid ?? pb.low ?? pb.high ?? ""}`
+      : "";
+  if (paKey !== pbKey) return false;
+
+  return true;
+}
+
+const CardTile = React.memo(CardTileInner, areEqual);
+export default CardTile;
+
 function ActionButton({ icon, label, filled, tinted, disabled, onPress }) {
   const base = [
     styles.actBtn,
@@ -170,7 +258,10 @@ function ActionButton({ icon, label, filled, tinted, disabled, onPress }) {
       onPress={onPress}
       disabled={disabled}
       android_ripple={{ color: "#00000022", borderless: false }}
-      style={({ pressed }) => [base, pressed && !disabled && { transform: [{ scale: 0.98 }] }]}
+      style={({ pressed }) => [
+        base,
+        pressed && !disabled && { transform: [{ scale: 0.98 }] },
+      ]}
       accessibilityRole="button"
       accessibilityState={{ disabled }}
     >
@@ -178,7 +269,13 @@ function ActionButton({ icon, label, filled, tinted, disabled, onPress }) {
         name={icon}
         size={14}
         color={
-          disabled ? COLORS.textMuted : filled ? "#fff" : tinted ? COLORS.accent : COLORS.text
+          disabled
+            ? COLORS.textMuted
+            : filled
+              ? "#fff"
+              : tinted
+                ? COLORS.accent
+                : COLORS.text
         }
         style={{ marginRight: 6 }}
       />
@@ -223,9 +320,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  cardMeta: { color: COLORS.textMuted, fontSize: 12, flexShrink: 1, marginRight: 8 },
+  cardMeta: {
+    color: COLORS.textMuted,
+    fontSize: 12,
+    flexShrink: 1,
+    marginRight: 8,
+  },
   cardMetaStrong: { color: COLORS.text, fontSize: 12, fontWeight: "700" },
-  actionBar: { flexDirection: "row", gap: 6, paddingHorizontal: 8, paddingBottom: 8 },
+  actionBar: {
+    flexDirection: "row",
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+  },
   actBtn: {
     flex: 1,
     flexDirection: "row",
@@ -240,5 +347,10 @@ const styles = StyleSheet.create({
   actBtnFilled: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
   actBtnTint: { backgroundColor: COLORS.alt, borderColor: COLORS.accent },
   actBtnDisabled: { opacity: 0.6 },
-  actLabel: { color: COLORS.text, fontWeight: "800", fontSize: 12.5, letterSpacing: 0.2 },
+  actLabel: {
+    color: COLORS.text,
+    fontWeight: "800",
+    fontSize: 12.5,
+    letterSpacing: 0.2,
+  },
 });

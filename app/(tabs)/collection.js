@@ -1,10 +1,31 @@
 // app/(tabs)/collection.js
-// NOTE: Price hydration now tries schema-first with NO variant first, then with variant + aliases.
-// Look for [PRICES], [CACHE], [DIAG], and [VARIANT-PROBE] comments.
+//
+// UPDATED (2026-01-20):
+// - NEW: CompactSearchFiltersBar added to BOTH Collection + Wishlist tabs
+//   - Takes minimal space when closed (single 40px row)
+//   - Opens filters in a bottom-sheet modal
+// - NEW: Collection filters
+//   - Search (name / set / number)
+//   - Variation chips (Normal / Holo / Reverse)
+//   - Rarity chips (dynamic from your collection data)
+//   - Sort (Recent (default order) / Name / Set)
+// - NEW: Wishlist filters
+//   - Search (name / set / number)
+//   - Status chips (Hunting/Dream/Someday/Upgrade)
+//   - Variation chips
+//   - Sort (Recent updated / Name / Set / Price)
+// - CHANGE: Binder search query is now separate from Collection/Wishlist search state
+//   (TopControls query continues to power binder filtering only)
 
 import { gql, useApolloClient, useMutation, useQuery } from "@apollo/client";
 import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -28,22 +49,30 @@ import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";
 import { filterBinders } from "../../utils/collectionFilters";
 
+// NEW: ultra-compact bar for search + filters
+import CompactSearchFiltersBar from "../../components/collection/CompactSearchFiltersBar";
+
 import {
   CardByIdDocument,
   MyBindersDocument,
   UpdateCollectionEntryDocument,
 } from "@sixbyfive/tcg-binder/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+
+import { useCollectionWishlistActions } from "../../hooks/useCollectionWishlistActions";
+import { resolveSetNameForCardlike } from "../../utils/setNames";
+
 let MY_BINDERS_QUERY = MyBindersDocument;
 try {
   const maybeSafe = require("../../graphql/binders-temp");
   if (maybeSafe?.MY_BINDERS_SAFE) MY_BINDERS_QUERY = maybeSafe.MY_BINDERS_SAFE;
 } catch (err) {
-  if (__DEV__) console.warn("[CollectionTab] Safe myBinders query unavailable", err?.message ?? err);
+  if (__DEV__)
+    console.warn(
+      "[CollectionTab] Safe myBinders query unavailable",
+      err?.message ?? err,
+    );
 }
-
-import { useCollectionWishlistActions } from "../../hooks/useCollectionWishlistActions";
-import { resolveSetNameForCardlike } from "../../utils/setNames";
 
 /* ---------------- [CACHE] Apollo cache policies ---------------- */
 function ensureApolloPolicies(apollo) {
@@ -80,7 +109,10 @@ const MY_COLLECTION_APP = gql`
         image
         rarity
         setName
-        set { code name }
+        set {
+          code
+          name
+        }
       }
     }
   }
@@ -94,15 +126,51 @@ const MY_WISHLIST = gql`
         id
         cardId
         variation
+        quantity
+        notes
+        status
+        updatedAt
         card {
           id
           name
           number
           image
           setName
-          set { code name }
+          set {
+            code
+            name
+          }
         }
       }
+    }
+  }
+`;
+
+/* ------------------------------------------------------------------ */
+/*  FIXED: UPDATE_WISHLIST_ENTRY                                       */
+/* ------------------------------------------------------------------ */
+const UPDATE_WISHLIST_ENTRY = gql`
+  mutation UpdateWishlistEntry(
+    $cardId: String!
+    $variation: String
+    $quantity: Int
+    $notes: String
+    $status: WishlistStatus
+  ) {
+    updateWishlistEntry(
+      cardId: $cardId
+      variation: $variation
+      quantity: $quantity
+      notes: $notes
+      status: $status
+    ) {
+      id
+      cardId
+      variation
+      quantity
+      notes
+      status
+      updatedAt
     }
   }
 `;
@@ -127,6 +195,7 @@ const Q_CARD_cardsearchCardById = gql`
     }
   }
 `;
+
 const Q_ROOT_cardsearchPriceLatest = gql`
   query PriceLatest_cardsearch($id: ID!, $variant: String) {
     cardsearchPriceLatest(cardId: $id, variant: $variant) {
@@ -147,74 +216,213 @@ const Q_CARD_card = gql`
   query CardById_card($id: ID!) {
     card(id: $id) {
       id
-      priceLatest { source market currency low mid high lastUpdated variant }
-      prices      { source market currency low mid high lastUpdated variant }
-      pricing     { source market currency low mid high lastUpdated variant }
+      priceLatest {
+        source
+        market
+        currency
+        low
+        mid
+        high
+        lastUpdated
+        variant
+      }
+      prices {
+        source
+        market
+        currency
+        low
+        mid
+        high
+        lastUpdated
+        variant
+      }
+      pricing {
+        source
+        market
+        currency
+        low
+        mid
+        high
+        lastUpdated
+        variant
+      }
     }
   }
 `;
+
 const Q_CARD_cardById = gql`
   query CardById_cardById($id: ID!) {
     cardById(id: $id) {
       id
-      priceLatest { source market currency low mid high lastUpdated variant }
-      prices      { source market currency low mid high lastUpdated variant }
-      pricing     { source market currency low mid high lastUpdated variant }
+      priceLatest {
+        source
+        market
+        currency
+        low
+        mid
+        high
+        lastUpdated
+        variant
+      }
+      prices {
+        source
+        market
+        currency
+        low
+        mid
+        high
+        lastUpdated
+        variant
+      }
+      pricing {
+        source
+        market
+        currency
+        low
+        mid
+        high
+        lastUpdated
+        variant
+      }
     }
   }
 `;
+
 const Q_CARD_Cap = gql`
   query CardById_Cap($id: ID!) {
     Card(id: $id) {
       id
-      priceLatest { source market currency low mid high lastUpdated variant }
-      prices      { source market currency low mid high lastUpdated variant }
-      pricing     { source market currency low mid high lastUpdated variant }
+      priceLatest {
+        source
+        market
+        currency
+        low
+        mid
+        high
+        lastUpdated
+        variant
+      }
+      prices {
+        source
+        market
+        currency
+        low
+        mid
+        high
+        lastUpdated
+        variant
+      }
+      pricing {
+        source
+        market
+        currency
+        low
+        mid
+        high
+        lastUpdated
+        variant
+      }
     }
   }
 `;
+
 const Q_ROOT_priceLatest = gql`
   query PriceLatestRoot($id: ID!, $variant: String) {
     priceLatest(cardId: $id, variant: $variant) {
-      source market currency low mid high lastUpdated variant
+      source
+      market
+      currency
+      low
+      mid
+      high
+      lastUpdated
+      variant
     }
   }
 `;
+
 const Q_ROOT_prices = gql`
   query PricesRoot($id: ID!) {
     prices(cardId: $id) {
-      source market currency low mid high lastUpdated variant
+      source
+      market
+      currency
+      low
+      mid
+      high
+      lastUpdated
+      variant
     }
   }
 `;
 
 /* ---------------- utils ---------------- */
-const debugLog = (...args) => { if (__DEV__) console.log("[CollectionTab]", ...args); };
+const debugLog = (...args) => {
+  if (__DEV__) console.log("[CollectionTab]", ...args);
+};
 
 function extractGraphQLError(err) {
   const net = err?.networkError;
-  const gerrs =
-    err?.graphQLErrors?.length ? err.graphQLErrors :
-    net?.result?.errors?.length ? net.result.errors :
-    [];
+  const gerrs = err?.graphQLErrors?.length
+    ? err.graphQLErrors
+    : net?.result?.errors?.length
+      ? net.result.errors
+      : [];
   const msg = [err?.message, ...gerrs.map((e) => e?.message).filter(Boolean)]
-    .filter(Boolean).join(" | ");
+    .filter(Boolean)
+    .join(" | ");
   return msg || err?.toString?.() || "Unknown GraphQL error";
 }
 
 /* id + image helpers (same as before) */
-function forceHttps(url) { if (!url || typeof url !== "string") return null; return url.replace(/^http:\/\//i, "https://"); }
-function isAbs(url) { return /^https?:\/\//i.test(url || ""); }
-function normalizeSetCode(code) { if (!code) return ""; return String(code).trim().toLowerCase().replace(/\s+/g, ""); }
-function inferEraFromSetCode(code) { const c = normalizeSetCode(code); if (!c) return null; const m = c.match(/^[a-z]+/); return m ? m[0] : null; }
-function parseCardId(id) { if (typeof id !== "string") return { setCode: null, number: null }; const parts = id.split("-"); if (parts.length < 2) return { setCode: null, number: null }; const setCode = parts[0]?.trim() || null; const numberRaw = parts.slice(1).join("-").trim(); const number = numberRaw || null; return { setCode, number }; }
-function tcgdexFromParts(setCode, number, era = null, quality = "high") { if (!setCode || !number) return null; const eraSlug = (era || inferEraFromSetCode(setCode) || "").toLowerCase().replace(/[^a-z]/g, ""); const numPadded = String(number).replace(/^0+/, "").padStart(3, "0"); if (!eraSlug) return null; return `https://assets.tcgdex.net/en/${eraSlug}/${setCode}/${numPadded}/${quality}.webp`; }
-function pokemontcgFromParts(setCode, number, hires = true) { if (!setCode || !number) return null; const n = String(number).replace(/^0+/, ""); const suffix = hires ? "_hires" : ""; return `https://images.pokemontcg.io/${setCode}/${n}${suffix}.png`; }
+function forceHttps(url) {
+  if (!url || typeof url !== "string") return null;
+  return url.replace(/^http:\/\//i, "https://");
+}
+function isAbs(url) {
+  return /^https?:\/\//i.test(url || "");
+}
+function normalizeSetCode(code) {
+  if (!code) return "";
+  return String(code).trim().toLowerCase().replace(/\s+/g, "");
+}
+function inferEraFromSetCode(code) {
+  const c = normalizeSetCode(code);
+  if (!c) return null;
+  const m = c.match(/^[a-z]+/);
+  return m ? m[0] : null;
+}
+function parseCardId(id) {
+  if (typeof id !== "string") return { setCode: null, number: null };
+  const parts = id.split("-");
+  if (parts.length < 2) return { setCode: null, number: null };
+  const setCode = parts[0]?.trim() || null;
+  const numberRaw = parts.slice(1).join("-").trim();
+  const number = numberRaw || null;
+  return { setCode, number };
+}
+function tcgdexFromParts(setCode, number, era = null, quality = "high") {
+  if (!setCode || !number) return null;
+  const eraSlug = (era || inferEraFromSetCode(setCode) || "")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+  const numPadded = String(number).replace(/^0+/, "").padStart(3, "0");
+  if (!eraSlug) return null;
+  return `https://assets.tcgdex.net/en/${eraSlug}/${setCode}/${numPadded}/${quality}.webp`;
+}
+function pokemontcgFromParts(setCode, number, hires = true) {
+  if (!setCode || !number) return null;
+  const n = String(number).replace(/^0+/, "");
+  const suffix = hires ? "_hires" : "";
+  return `https://images.pokemontcg.io/${setCode}/${n}${suffix}.png`;
+}
 function buildImageCandidates(cardish) {
   const out = [];
   const raw = cardish?.image;
   if (raw && isAbs(raw)) out.push(forceHttps(raw));
-  const parsed = parseCardId(cardish?.id || cardish?.cardId || cardish?._collection?.cardId || "");
+  const parsed = parseCardId(
+    cardish?.id || cardish?.cardId || cardish?._collection?.cardId || "",
+  );
   if (parsed.setCode && parsed.number) {
     const era = inferEraFromSetCode(parsed.setCode);
     const dHigh = tcgdexFromParts(parsed.setCode, parsed.number, era, "high");
@@ -227,21 +435,41 @@ function buildImageCandidates(cardish) {
     if (pStd) out.push(pStd);
   }
   const seen = new Set();
-  const list = out.filter((u) => { const k = String(u || ""); if (!k || seen.has(k)) return false; seen.add(k); return true; });
-  const tcgdexFirst = list.find((u) => u.includes("assets.tcgdex.net")) || list[0] || "";
+  const list = out.filter((u) => {
+    const k = String(u || "");
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const tcgdexFirst =
+    list.find((u) => u.includes("assets.tcgdex.net")) || list[0] || "";
   return [tcgdexFirst, ...list.filter((u) => u !== tcgdexFirst)];
 }
 
 /* ---------------- [PRICES] helpers ---------------- */
 function mapAppVariantToBackend(v) {
-  const raw = String(v || "").toLowerCase().trim();
+  const raw = String(v || "")
+    .toLowerCase()
+    .trim();
   if (!raw || raw === "normal" || raw === "base") return null; // omit
   if (raw === "holo" || raw === "foil") return "holofoil";
   if (raw === "reverse" || raw === "rev") return "reverse_holo";
   if (raw === "reverse_holofoil") return "reverse_holo";
-  if (["holofoil","reverse_holo","full_art","alt_art","illustration","gold","trainer_gallery"].includes(raw)) return raw;
+  if (
+    [
+      "holofoil",
+      "reverse_holo",
+      "full_art",
+      "alt_art",
+      "illustration",
+      "gold",
+      "trainer_gallery",
+    ].includes(raw)
+  )
+    return raw;
   return raw;
 }
+
 function normalizePrice(p) {
   if (!p || typeof p !== "object") return p;
   const source = p.source ?? p.provider ?? null;
@@ -249,28 +477,52 @@ function normalizePrice(p) {
   const lastUpdated = p.lastUpdated ?? p.updatedAt ?? null;
   const hasCamel = Object.prototype.hasOwnProperty.call(p, "tcgPlayer");
   const hasLower = Object.prototype.hasOwnProperty.call(p, "tcgplayer");
-  return { ...p, source, variant, lastUpdated,
-    tcgplayer: hasLower ? p.tcgplayer : hasCamel ? p.tcgPlayer : p.tcgplayer ?? p.tcgPlayer ?? null };
+  return {
+    ...p,
+    source,
+    variant,
+    lastUpdated,
+    tcgplayer: hasLower
+      ? p.tcgplayer
+      : hasCamel
+        ? p.tcgPlayer
+        : (p.tcgplayer ?? p.tcgPlayer ?? null),
+  };
 }
-function normalizePricesArray(arr) { if (!Array.isArray(arr)) return []; return arr.map(normalizePrice); }
+
+function normalizePricesArray(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr.map(normalizePrice);
+}
+
 function normalizeFromPriceLatest(priceLatest) {
   if (!priceLatest) return [];
-  return Array.isArray(priceLatest) ? normalizePricesArray(priceLatest) : [normalizePrice(priceLatest)];
+  return Array.isArray(priceLatest)
+    ? normalizePricesArray(priceLatest)
+    : [normalizePrice(priceLatest)];
 }
+
 function preferVariant(pricesArray, variation) {
   if (!Array.isArray(pricesArray) || !pricesArray.length) return [];
   const want = mapAppVariantToBackend(variation) ?? "normal";
   const alias = new Set([want]);
   if (want === "holofoil") alias.add("holo");
-  if (want === "reverse_holo") { alias.add("reverse"); alias.add("reverse_holofoil"); }
-  const exact = pricesArray.filter((p) => alias.has(String(p?.variant ?? p?.variation ?? "").toLowerCase()));
+  if (want === "reverse_holo") {
+    alias.add("reverse");
+    alias.add("reverse_holofoil");
+  }
+  const exact = pricesArray.filter((p) =>
+    alias.has(String(p?.variant ?? p?.variation ?? "").toLowerCase()),
+  );
   if (exact.length) return exact;
   return [pricesArray[0]];
 }
+
 function toArray(input) {
   if (!input) return [];
   if (Array.isArray(input)) return input;
-  if (Array.isArray(input.edges)) return input.edges.map((e) => e?.node ?? e).filter(Boolean);
+  if (Array.isArray(input.edges))
+    return input.edges.map((e) => e?.node ?? e).filter(Boolean);
   if (Array.isArray(input.nodes)) return input.nodes.filter(Boolean);
   if (Array.isArray(input.items)) return input.items.filter(Boolean);
   if (Array.isArray(input.results)) return input.results.filter(Boolean);
@@ -279,7 +531,8 @@ function toArray(input) {
     const v = input[k];
     if (Array.isArray(v)) return v;
     if (v && typeof v === "object") {
-      if (Array.isArray(v.edges)) return v.edges.map((e) => e?.node ?? e).filter(Boolean);
+      if (Array.isArray(v.edges))
+        return v.edges.map((e) => e?.node ?? e).filter(Boolean);
       if (Array.isArray(v.nodes)) return v.nodes.filter(Boolean);
     }
   }
@@ -287,9 +540,56 @@ function toArray(input) {
 }
 
 /* ---------------- wishlist helpers ---------------- */
-function readWishlistRoot(data) { return data?.myWishlist ?? data?.wishlist ?? {}; }
-function readWishlistList(root) { return Array.isArray(root?.entries) ? root.entries : []; }
-function readWishlistServerTotal(root) { const n = root.total ?? root.totalCount ?? root.count ?? 0; return Number(n) || 0; }
+function readWishlistRoot(data) {
+  return data?.myWishlist ?? data?.wishlist ?? {};
+}
+function readWishlistList(root) {
+  return Array.isArray(root?.entries) ? root.entries : [];
+}
+function readWishlistServerTotal(root) {
+  const n = root.total ?? root.totalCount ?? root.count ?? 0;
+  return Number(n) || 0;
+}
+
+/* ---------------- NEW: filtering helpers (collection + wishlist) ---------------- */
+
+// CHANGED/NEW: normalize a variation into one of: "normal" | "holo" | "reverse"
+function bucketVariation(v) {
+  const s = String(v || "").toLowerCase();
+  if (!s) return "normal";
+  if (s.includes("reverse")) return "reverse";
+  if (s.includes("holo") || s.includes("foil")) return "holo";
+  return "normal";
+}
+
+// NEW: lightweight price extract (used for wishlist price sorting)
+function getAnyNumericPrice(item) {
+  const rows = []
+    .concat(Array.isArray(item?.prices) ? item.prices : [])
+    .concat(Array.isArray(item?.pricing) ? item.pricing : [])
+    .concat(
+      item?.priceLatest && !Array.isArray(item.priceLatest)
+        ? [item.priceLatest]
+        : [],
+    );
+
+  for (const p of rows) {
+    if (!p || typeof p !== "object") continue;
+    const gbp = Number.isFinite(p?.gbp) ? Number(p.gbp) : null;
+    if (gbp != null) return gbp;
+    const mid = Number.isFinite(p?.mid)
+      ? Number(p.mid)
+      : Number.isFinite(p?.market)
+        ? Number(p.market)
+        : null;
+    if (mid != null) return mid;
+  }
+  return null;
+}
+
+function safeLower(s) {
+  return String(s || "").toLowerCase();
+}
 
 /* ---------------- UI ---------------- */
 function CreateBinderBanner({ onPress }) {
@@ -297,7 +597,10 @@ function CreateBinderBanner({ onPress }) {
     <Pressable
       onPress={onPress}
       android_ripple={{ color: "#00000018" }}
-      style={({ pressed }) => [styles.createBanner, pressed && { transform: [{ scale: 0.99 }], opacity: 0.96 }]}
+      style={({ pressed }) => [
+        styles.createBanner,
+        pressed && { transform: [{ scale: 0.99 }], opacity: 0.96 },
+      ]}
       accessibilityRole="button"
     >
       <View style={styles.createBannerIcon}>
@@ -317,10 +620,28 @@ export default function CollectionTab() {
   const toast = useToast();
   const apollo = useApolloClient();
 
-  useEffect(() => { ensureApolloPolicies(apollo); }, [apollo]);
+  useEffect(() => {
+    ensureApolloPolicies(apollo);
+  }, [apollo]);
 
-  const [segment, setSegment] = useState("binders");
-  const [query, setQuery] = useState("");
+  // CHANGED: default tab is now "all"
+  const [segment, setSegment] = useState("all");
+
+  // CHANGED: binder query is now isolated (TopControls should primarily affect binders)
+  const [binderQuery, setBinderQuery] = useState("");
+
+  // NEW: collection search/filters (compact bar)
+  const [collectionQuery, setCollectionQuery] = useState("");
+  const [collectionSort, setCollectionSort] = useState("recent"); // recent|name|set
+  const [collectionVariations, setCollectionVariations] = useState([]); // ["normal","holo","reverse"]
+  const [collectionRarities, setCollectionRarities] = useState([]); // dynamic rarities
+
+  // NEW: wishlist search/filters (compact bar)
+  const [wishlistQuery, setWishlistQuery] = useState("");
+  const [wishlistSort, setWishlistSort] = useState("recent"); // recent|name|set|price
+  const [wishlistStatuses, setWishlistStatuses] = useState([]); // ["ACTIVE","GRAIL","EVENTUAL","UPGRADE"]
+  const [wishlistVariations, setWishlistVariations] = useState([]); // ["normal","holo","reverse"]
+
   const [refreshing, setRefreshing] = useState(false);
 
   const [editing, setEditing] = useState(null);
@@ -329,6 +650,7 @@ export default function CollectionTab() {
   const [savingRemoval, setSavingRemoval] = useState(false);
 
   const [updateCollectionEntry] = useMutation(UpdateCollectionEntryDocument);
+  const [updateWishlistEntryMutation] = useMutation(UPDATE_WISHLIST_ENTRY);
 
   const {
     moveWishlistToCollection,
@@ -342,10 +664,20 @@ export default function CollectionTab() {
   const hydratedIdsRef = useRef(new Set());
   const inFlightRef = useRef(false);
 
-  // [PRICES] price hydration state
-  const [collectionPricesById, setCollectionPricesById] = useState(() => new Map());
+  // [PRICES] price hydration state (collection)
+  const [collectionPricesById, setCollectionPricesById] = useState(
+    () => new Map(),
+  );
   const collPriceHydratingRef = useRef(false);
   const hydratedPriceIdsRef = useRef(new Set());
+
+  // [PRICES] wishlist price hydration state (separate cache)
+  const [wishlistPricesById, setWishlistPricesById] = useState(() => new Map());
+  const wishPriceHydratingRef = useRef(false);
+  const hydratedWishlistPriceIdsRef = useRef(new Set());
+
+  // keep a ref to wishlist meta so we can update UI instantly
+  const wishlistMetaRef = useRef(new Map());
 
   const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
   const userId = meData?.me?.id ?? null;
@@ -411,6 +743,36 @@ export default function CollectionTab() {
     },
   });
 
+  /* -------- derived: wishlist (MOVED UP so price hydrate effect can use wishlistRawList) -------- */
+  const wishlistRoot = useMemo(
+    () => readWishlistRoot(wishlistData),
+    [wishlistData],
+  );
+  const wishlistRawList = useMemo(
+    () => readWishlistList(wishlistRoot),
+    [wishlistRoot],
+  );
+  const wishlistServerTotal = useMemo(
+    () => readWishlistServerTotal(wishlistRoot),
+    [wishlistRoot],
+  );
+  const wishlistRawCount = Array.isArray(wishlistRawList)
+    ? wishlistRawList.length
+    : 0;
+
+  useEffect(() => {
+    if (!wishlistData) return;
+    const preview =
+      Array.isArray(wishlistRawList) && wishlistRawList.length
+        ? wishlistRawList.slice(0, 1)
+        : wishlistData?.myWishlist || wishlistData?.wishlist;
+    debugLog("wishlist raw payload", {
+      keys: Object.keys(wishlistData || {}),
+      hasMyWishlist: !!wishlistData?.myWishlist,
+      preview,
+    });
+  }, [wishlistData, wishlistRawList]);
+
   /* -------- derived: collection cards -------- */
   const myCollection = useMemo(() => {
     if (!collData) return [];
@@ -445,7 +807,10 @@ export default function CollectionTab() {
           set: card?.set,
         });
 
-        const candidates = buildImageCandidates({ id: idKey, image: card?.image });
+        const candidates = buildImageCandidates({
+          id: idKey,
+          image: card?.image,
+        });
         const displayImage = candidates[0] || card?.image || "";
 
         const hydrated = collectionPricesById.get(idKey);
@@ -476,7 +841,9 @@ export default function CollectionTab() {
       .filter(Boolean);
   }, [myCollection, collectionPricesById]);
 
-  const collectionCardsCount = Array.isArray(collectionCards) ? collectionCards.length : 0;
+  const collectionCardsCount = Array.isArray(collectionCards)
+    ? collectionCards.length
+    : 0;
 
   useEffect(() => {
     debugLog("collection query state", {
@@ -488,30 +855,26 @@ export default function CollectionTab() {
 
   /* -------- [PRICES] background hydration with variant probing -------- */
 
-  // [VARIANT-PROBE] try cardsearch without variant first, then with variant and common aliases.
   const tryFetchPrices = useCallback(
     async (id, variation) => {
       const mapped = mapAppVariantToBackend(variation);
 
-      // Build variable sets: first without variant, then with mapped + aliases
       const variantCandidates = [
-        null,                                      // <— no variant filter (broadest)
+        null,
         mapped,
-        "holo", "holofoil",                        // aliases for holo
-        "reverse", "reverse_holo", "reverse_holofoil", // aliases for reverse
-      ].filter((v, idx, arr) => arr.indexOf(v) === idx); // dedupe
+        "holo",
+        "holofoil",
+        "reverse",
+        "reverse_holo",
+        "reverse_holofoil",
+      ].filter((v, idx, arr) => arr.indexOf(v) === idx);
 
-      // Attempt order:
-      //   1) cardsearchCardById (no variant) -> latestPrices (no-variant)
-      //   2) cardsearchPriceLatest (no variant)
-      //   3) Repeat both with each variant candidate (mapped + aliases)
-      //   4) Legacy fallbacks (unchanged)
-
-      // helper to run schema-first attempts with given variant value
       const runSchemaFirst = async (variantValue) => {
-        const baseVars = variantValue == null ? { id: String(id) } : { id: String(id), variant: String(variantValue) };
+        const baseVars =
+          variantValue == null
+            ? { id: String(id) }
+            : { id: String(id), variant: String(variantValue) };
 
-        // A) cardsearchCardById
         try {
           const { data } = await apollo.query({
             query: Q_CARD_cardsearchCardById,
@@ -523,14 +886,14 @@ export default function CollectionTab() {
           const lp = Array.isArray(card?.latestPrices) ? card.latestPrices : [];
           if (lp.length) {
             const normalized = normalizePricesArray(lp);
-            const picked = variantValue == null ? normalized : preferVariant(normalized, variantValue);
+            const picked =
+              variantValue == null
+                ? normalized
+                : preferVariant(normalized, variantValue);
             if (picked.length) return picked;
           }
-        } catch (err) {
-          // silent — we’ll keep probing
-        }
+        } catch (err) {}
 
-        // B) cardsearchPriceLatest
         try {
           const { data } = await apollo.query({
             query: Q_ROOT_cardsearchPriceLatest,
@@ -538,43 +901,51 @@ export default function CollectionTab() {
             fetchPolicy: "network-only",
             errorPolicy: "all",
           });
-          const rows = Array.isArray(data?.cardsearchPriceLatest) ? data.cardsearchPriceLatest : [];
+          const rows = Array.isArray(data?.cardsearchPriceLatest)
+            ? data.cardsearchPriceLatest
+            : [];
           if (rows.length) {
             const normalized = normalizePricesArray(rows);
-            const picked = variantValue == null ? normalized : preferVariant(normalized, variantValue);
+            const picked =
+              variantValue == null
+                ? normalized
+                : preferVariant(normalized, variantValue);
             if (picked.length) return picked;
           }
-        } catch (err) {
-          // silent
-        }
+        } catch (err) {}
 
         return [];
       };
 
-      // 1 & 2: no-variant first
       let result = await runSchemaFirst(null);
       if (result.length) return result;
 
-      // 3: try with mapped + aliases
       for (const v of variantCandidates.slice(1)) {
         result = await runSchemaFirst(v);
         if (result.length) return result;
       }
 
-      // 4: legacy fallbacks
       const legacyAttempts = [
-        { q: Q_CARD_card,        key: "card" },
-        { q: Q_CARD_cardById,    key: "cardById" },
-        { q: Q_CARD_Cap,         key: "Card" },
-        { q: Q_ROOT_priceLatest, key: "priceLatest", root: true, useVariant: true },
-        { q: Q_ROOT_prices,      key: "prices",      root: true },
+        { q: Q_CARD_card, key: "card" },
+        { q: Q_CARD_cardById, key: "cardById" },
+        { q: Q_CARD_Cap, key: "Card" },
+        {
+          q: Q_ROOT_priceLatest,
+          key: "priceLatest",
+          root: true,
+          useVariant: true,
+        },
+        { q: Q_ROOT_prices, key: "prices", root: true },
       ];
 
       for (const a of legacyAttempts) {
         try {
           const variables = a.useVariant
-            ? (mapped == null ? { id: String(id) } : { id: String(id), variant: String(mapped) })
+            ? mapped == null
+              ? { id: String(id) }
+              : { id: String(id), variant: String(mapped) }
             : { id: String(id) };
+
           const { data } = await apollo.query({
             query: a.q,
             variables,
@@ -586,9 +957,12 @@ export default function CollectionTab() {
             const card = data?.[a.key];
             if (!card) continue;
             let all = [];
-            if (Array.isArray(card?.prices))  all = all.concat(normalizePricesArray(card.prices));
-            if (Array.isArray(card?.pricing)) all = all.concat(normalizePricesArray(card.pricing));
-            if (card?.priceLatest)            all = all.concat(normalizeFromPriceLatest(card.priceLatest));
+            if (Array.isArray(card?.prices))
+              all = all.concat(normalizePricesArray(card.prices));
+            if (Array.isArray(card?.pricing))
+              all = all.concat(normalizePricesArray(card.pricing));
+            if (card?.priceLatest)
+              all = all.concat(normalizeFromPriceLatest(card.priceLatest));
             if (!all.length) continue;
             return preferVariant(all, variation);
           }
@@ -600,16 +974,23 @@ export default function CollectionTab() {
             return preferVariant(normalizePricesArray(data.prices), variation);
           }
         } catch (err) {
-          if (__DEV__) console.warn("[CollectionTab] price hydrate attempt failed", {
-            shape: a.key, id, message: extractGraphQLError(err),
-          });
+          if (__DEV__)
+            console.warn("[CollectionTab] price hydrate attempt failed", {
+              shape: a.key,
+              id,
+              message: extractGraphQLError(err),
+            });
         }
       }
 
-      if (__DEV__) console.warn("[CollectionTab] price hydrate yielded no rows", { id, variation });
+      if (__DEV__)
+        console.warn("[CollectionTab] price hydrate yielded no rows", {
+          id,
+          variation,
+        });
       return [];
     },
-    [apollo]
+    [apollo],
   );
 
   const hydrateCollectionPrices = useCallback(
@@ -647,9 +1028,48 @@ export default function CollectionTab() {
         collPriceHydratingRef.current = false;
       }
     },
-    [tryFetchPrices]
+    [tryFetchPrices],
   );
 
+  const hydrateWishlistPrices = useCallback(
+    async (idsAndVariations) => {
+      if (wishPriceHydratingRef.current) return;
+      const targets = (idsAndVariations || []).filter((t) => t && t.id);
+      if (!targets.length) return;
+
+      wishPriceHydratingRef.current = true;
+      try {
+        for (const { id, variation } of targets) {
+          if (hydratedWishlistPriceIdsRef.current.has(id)) continue;
+          hydratedWishlistPriceIdsRef.current.add(id);
+
+          const picked = await tryFetchPrices(id, variation);
+
+          if (picked.length) {
+            if (__DEV__) {
+              const head = picked[0];
+              console.log("[CollectionTab] wishlist price hydrated", {
+                id,
+                variant: head?.variant ?? head?.variation ?? null,
+                provider: head?.provider ?? head?.source ?? null,
+                mid: head?.mid ?? head?.market ?? null,
+              });
+            }
+            setWishlistPricesById((prev) => {
+              const next = new Map(prev);
+              next.set(String(id), picked);
+              return next;
+            });
+          }
+        }
+      } finally {
+        wishPriceHydratingRef.current = false;
+      }
+    },
+    [tryFetchPrices],
+  );
+
+  // Collection price hydration trigger
   useEffect(() => {
     if (!myCollection.length) return;
     const pending = [];
@@ -669,12 +1089,41 @@ export default function CollectionTab() {
     }
   }, [myCollection, collectionPricesById, hydrateCollectionPrices]);
 
+  // Wishlist price hydration trigger
+  useEffect(() => {
+    if (segment !== "wishlist") return;
+    if (!wishlistRawList.length) return;
+
+    const pending = [];
+    for (const it of wishlistRawList) {
+      const node = it?.node ?? it;
+      const cid = node?.card?.id ?? node?.cardId ?? node?.id ?? null;
+      if (!cid) continue;
+
+      const idKey = String(cid);
+      if (wishlistPricesById.has(idKey)) continue;
+
+      const variation =
+        typeof node?.variation === "string" ? node.variation : "normal";
+
+      pending.push({ id: idKey, variation });
+    }
+
+    if (pending.length) {
+      debugLog("wishlist price hydrate pending", {
+        count: pending.length,
+        sample: pending.slice(0, 5).map((x) => x.id),
+      });
+      hydrateWishlistPrices(pending);
+    }
+  }, [segment, wishlistRawList, wishlistPricesById, hydrateWishlistPrices]);
+
   /* -------- derived: binders -------- */
   const rawBindersList = useMemo(() => {
     const root =
       !bindersData || Array.isArray(bindersData)
         ? bindersData
-        : bindersData.myBinders ??
+        : (bindersData.myBinders ??
           bindersData.binders ??
           bindersData.items ??
           bindersData.results ??
@@ -682,14 +1131,17 @@ export default function CollectionTab() {
           bindersData.nodes ??
           bindersData.data ??
           bindersData.list ??
-          bindersData;
+          bindersData);
     return toArray(root);
   }, [bindersData]);
 
   const DEFAULT_BINDER_COVER = "#23243c";
   const DEFAULT_BINDER_ACCENT = "#424a80";
 
-  const asNumber = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+  const asNumber = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
 
   function coerceColor(value, fallback = COLORS.alt) {
     if (!value && value !== 0) return fallback;
@@ -724,11 +1176,13 @@ export default function CollectionTab() {
     const id = b.id ?? b._id ?? b.uuid ?? b.key;
     const name = b.name ?? b.title ?? b.label ?? "Binder";
 
-    const pagesArray =
-      Array.isArray(b.pages) ? b.pages :
-      Array.isArray(b.sheets) ? b.sheets :
-      Array.isArray(b.children) ? b.children :
-      null;
+    const pagesArray = Array.isArray(b.pages)
+      ? b.pages
+      : Array.isArray(b.sheets)
+        ? b.sheets
+        : Array.isArray(b.children)
+          ? b.children
+          : null;
     const pagesCount =
       asNumber(b?.pagesCount) ??
       asNumber(b?.pageCount) ??
@@ -751,7 +1205,7 @@ export default function CollectionTab() {
         b?.colourHex ??
         b?.themeColor ??
         b?.theme,
-      DEFAULT_BINDER_COVER
+      DEFAULT_BINDER_COVER,
     );
 
     const accentColor = coerceColor(
@@ -760,7 +1214,7 @@ export default function CollectionTab() {
         b?.spineColor ??
         b?.highlightColor ??
         b?.secondaryColor,
-      DEFAULT_BINDER_ACCENT
+      DEFAULT_BINDER_ACCENT,
     );
 
     return {
@@ -786,14 +1240,17 @@ export default function CollectionTab() {
 
   const normalizedBinders = useMemo(
     () => rawBindersList.map(normalizeBinder).filter(Boolean),
-    [rawBindersList]
+    [rawBindersList],
   );
 
+  // CHANGED: binder filtering now uses binderQuery (not shared query)
   const filteredBinders = useMemo(
-    () => filterBinders(normalizedBinders, query),
-    [normalizedBinders, query]
+    () => filterBinders(normalizedBinders, binderQuery),
+    [normalizedBinders, binderQuery],
   );
-  const filteredBindersCount = Array.isArray(filteredBinders) ? filteredBinders.length : 0;
+  const filteredBindersCount = Array.isArray(filteredBinders)
+    ? filteredBinders.length
+    : 0;
 
   useEffect(() => {
     debugLog("binders query state", {
@@ -801,41 +1258,193 @@ export default function CollectionTab() {
       networkStatus: bindersNS,
       received: Array.isArray(rawBindersList) ? rawBindersList.length : 0,
       filtered: filteredBindersCount,
-      query,
+      query: binderQuery,
     });
-  }, [bindersLoading, bindersNS, rawBindersList, filteredBindersCount, query]);
+  }, [
+    bindersLoading,
+    bindersNS,
+    rawBindersList,
+    filteredBindersCount,
+    binderQuery,
+  ]);
 
-  /* -------- derived: wishlist -------- */
-  const wishlistRoot = useMemo(() => readWishlistRoot(wishlistData), [wishlistData]);
-  const wishlistRawList = useMemo(() => readWishlistList(wishlistRoot), [wishlistRoot]);
-  const wishlistServerTotal = useMemo(() => readWishlistServerTotal(wishlistRoot), [wishlistRoot]);
-  const wishlistRawCount = Array.isArray(wishlistRawList) ? wishlistRawList.length : 0;
+  /* -------- derived: wishlist meta map -------- */
+  const wishlistEntryMetaMap = useMemo(() => {
+    const metaMap = new Map();
 
-  useEffect(() => {
-    if (!wishlistData) return;
-    const preview =
-      Array.isArray(wishlistRawList) && wishlistRawList.length
-        ? wishlistRawList.slice(0, 1)
-        : wishlistData?.myWishlist || wishlistData?.wishlist;
-    debugLog("wishlist raw payload", {
-      keys: Object.keys(wishlistData || {}),
-      hasMyWishlist: !!wishlistData?.myWishlist,
-      preview,
-    });
-  }, [wishlistData, wishlistRawList]);
-
-  const wishlistVariationMap = useMemo(() => {
-    const variationMap = new Map();
     for (const it of wishlistRawList) {
       const node = it?.node ?? it;
       const card = node?.card ?? null;
       const cid = card?.id ?? node?.cardId ?? node?.id ?? null;
       if (!cid) continue;
-      const variation = typeof node?.variation === "string" ? node.variation : "normal";
-      variationMap.set(String(cid), variation);
+
+      const key = String(cid);
+
+      const qty =
+        typeof node?.quantity === "number" &&
+        Number.isFinite(node.quantity) &&
+        node.quantity > 0
+          ? Math.round(node.quantity)
+          : 1;
+
+      metaMap.set(key, {
+        entryId: node?.id ? String(node.id) : null,
+        cardId: String(node?.cardId ?? cid),
+        variation:
+          typeof node?.variation === "string" ? node.variation : "normal",
+        status: node?.status ?? null,
+        quantity: qty,
+        notes: typeof node?.notes === "string" ? node.notes : "",
+        updatedAt: node?.updatedAt ?? null,
+      });
     }
-    return variationMap;
+
+    wishlistMetaRef.current = metaMap;
+    return metaMap;
   }, [wishlistRawList]);
+
+  const handleUpdateWishlistEntry = useCallback(
+    async ({ cardId, variation, status, quantity, notes }) => {
+      const cid = String(cardId || "").trim();
+      if (!cid) return { ok: false, error: "Missing cardId" };
+
+      const varNorm =
+        variation == null
+          ? null
+          : String(variation).trim().toLowerCase() === "normal"
+            ? "normal"
+            : String(variation).trim();
+
+      const safeQty =
+        typeof quantity === "number" &&
+        Number.isFinite(quantity) &&
+        quantity > 0
+          ? Math.round(quantity)
+          : (wishlistMetaRef.current.get(cid)?.quantity ?? 1);
+
+      const safeNotes =
+        typeof notes === "string"
+          ? notes
+          : (wishlistMetaRef.current.get(cid)?.notes ?? "");
+
+      const optimisticMeta = {
+        ...(wishlistMetaRef.current.get(cid) || {}),
+        cardId: cid,
+        variation:
+          varNorm ?? wishlistMetaRef.current.get(cid)?.variation ?? "normal",
+        status: status ?? null,
+        quantity: safeQty,
+        notes: safeNotes,
+        updatedAt: new Date().toISOString(),
+      };
+
+      wishlistMetaRef.current = new Map(wishlistMetaRef.current);
+      wishlistMetaRef.current.set(cid, optimisticMeta);
+
+      setCardsByIdMap((prev) => {
+        if (!prev.has(cid)) return prev;
+        const next = new Map(prev);
+        const existing = next.get(cid);
+        next.set(cid, {
+          ...existing,
+          _wishlist: { ...(existing?._wishlist || {}), ...optimisticMeta },
+        });
+        return next;
+      });
+
+      if (__DEV__) {
+        console.log("[CollectionTab] handleUpdateWishlistEntry", {
+          cardId: cid,
+          variation: varNorm,
+          status,
+          quantity: safeQty,
+          notes: safeNotes,
+        });
+      }
+
+      try {
+        const { data } = await updateWishlistEntryMutation({
+          variables: {
+            cardId: cid,
+            variation: varNorm,
+            status: status || null,
+            quantity: safeQty,
+            notes: safeNotes,
+          },
+        });
+
+        const updated = data?.updateWishlistEntry || null;
+
+        if (__DEV__) {
+          console.log("[CollectionTab] updateWishlistEntry ok", updated);
+        }
+
+        if (updated?.cardId) {
+          const key = String(updated.cardId);
+
+          const mergedMeta = {
+            ...(wishlistMetaRef.current.get(key) || {}),
+            entryId:
+              updated.id || wishlistMetaRef.current.get(key)?.entryId || null,
+            cardId: key,
+            variation:
+              updated.variation ??
+              wishlistMetaRef.current.get(key)?.variation ??
+              "normal",
+            status: updated.status ?? null,
+            quantity:
+              typeof updated.quantity === "number" &&
+              Number.isFinite(updated.quantity) &&
+              updated.quantity > 0
+                ? Math.round(updated.quantity)
+                : (wishlistMetaRef.current.get(key)?.quantity ?? 1),
+            notes:
+              typeof updated.notes === "string"
+                ? updated.notes
+                : (wishlistMetaRef.current.get(key)?.notes ?? ""),
+            updatedAt:
+              updated.updatedAt ??
+              wishlistMetaRef.current.get(key)?.updatedAt ??
+              null,
+          };
+
+          wishlistMetaRef.current = new Map(wishlistMetaRef.current);
+          wishlistMetaRef.current.set(key, mergedMeta);
+
+          setCardsByIdMap((prev) => {
+            if (!prev.has(key)) return prev;
+            const next = new Map(prev);
+            const existing = next.get(key);
+            next.set(key, {
+              ...existing,
+              _wishlist: { ...(existing?._wishlist || {}), ...mergedMeta },
+            });
+            return next;
+          });
+        }
+
+        try {
+          await refetchWishlist?.();
+        } catch {}
+
+        return { ok: true, updated };
+      } catch (err) {
+        if (__DEV__) {
+          console.warn(
+            "[CollectionTab] updateWishlistEntry failed",
+            extractGraphQLError(err),
+          );
+        }
+
+        try {
+          await refetchWishlist?.();
+        } catch {}
+
+        return { ok: false, error: err };
+      }
+    },
+    [updateWishlistEntryMutation, refetchWishlist],
+  );
 
   const allWishlistIds = useMemo(() => {
     const ids = new Set();
@@ -848,7 +1457,9 @@ export default function CollectionTab() {
     return Array.from(ids);
   }, [wishlistRawList]);
 
-  const pendingWishlistHydration = Array.isArray(allWishlistIds) ? allWishlistIds.length : 0;
+  const pendingWishlistHydration = Array.isArray(allWishlistIds)
+    ? allWishlistIds.length
+    : 0;
 
   useEffect(() => {
     debugLog("wishlist query state", {
@@ -858,10 +1469,17 @@ export default function CollectionTab() {
       hydrated: cardsByIdMap.size,
       pendingIds: pendingWishlistHydration,
     });
-  }, [wishlistLoading, wishlistNS, wishlistRawCount, cardsByIdMap.size, pendingWishlistHydration]);
+  }, [
+    wishlistLoading,
+    wishlistNS,
+    wishlistRawCount,
+    cardsByIdMap.size,
+    pendingWishlistHydration,
+  ]);
 
   const wishlistDisplayItems = useMemo(() => {
     const list = [];
+
     for (const it of wishlistRawList) {
       const node = it?.node ?? it;
       const inline = node?.card ?? null;
@@ -869,39 +1487,86 @@ export default function CollectionTab() {
       if (!cid) continue;
       const key = String(cid);
 
+      const fallbackQty =
+        typeof node?.quantity === "number" &&
+        Number.isFinite(node.quantity) &&
+        node.quantity > 0
+          ? Math.round(node.quantity)
+          : 1;
+
+      const meta = wishlistMetaRef.current.get(key) ||
+        wishlistEntryMetaMap.get(key) || {
+          entryId: node?.id ? String(node.id) : null,
+          cardId: String(node?.cardId ?? cid),
+          variation:
+            typeof node?.variation === "string" ? node.variation : "normal",
+          status: node?.status ?? null,
+          quantity: fallbackQty,
+          notes: typeof node?.notes === "string" ? node.notes : "",
+          updatedAt: node?.updatedAt ?? null,
+        };
+
+      const hydratedPrices = wishlistPricesById.get(key);
+      const prices = Array.isArray(hydratedPrices) ? hydratedPrices : [];
+      const pricing = prices;
+      const priceLatest = prices[0] || null;
+
       const hydrated = cardsByIdMap.get(key);
       if (hydrated) {
-        list.push(hydrated);
+        list.push({
+          ...hydrated,
+          prices,
+          pricing,
+          priceLatest,
+          _wishlist: { ...(hydrated?._wishlist || {}), ...meta },
+        });
         continue;
       }
 
       if (inline) {
-        const candidates = buildImageCandidates({ id: key, image: inline?.image });
+        const candidates = buildImageCandidates({
+          id: key,
+          image: inline?.image,
+        });
         const displayImage = candidates[0] || inline?.image || "";
         const setName = resolveSetNameForCardlike({
           id: key,
           setName: inline?.setName,
           set: inline?.set,
         });
-        list.push({ ...inline, id: key, image: displayImage, setName });
+
+        list.push({
+          ...inline,
+          id: key,
+          image: displayImage,
+          setName,
+          prices,
+          pricing,
+          priceLatest,
+          _wishlist: { ...meta },
+        });
         continue;
       }
 
       const setName = resolveSetNameForCardlike({ id: key });
       const candidates = buildImageCandidates({ id: key, image: null });
       const displayImage = candidates[0] || "";
+
       list.push({
         id: key,
         name: "Card",
         image: displayImage,
         setName,
         number: undefined,
-        prices: [],
-        _wishlist: { variation: wishlistVariationMap.get(key) ?? "normal" },
+        prices,
+        pricing,
+        priceLatest,
+        _wishlist: { ...meta },
       });
     }
+
     return list;
-  }, [wishlistRawList, cardsByIdMap, wishlistVariationMap]);
+  }, [wishlistRawList, cardsByIdMap, wishlistEntryMetaMap, wishlistPricesById]);
 
   useEffect(() => {
     setCardsByIdMap((prev) => {
@@ -914,27 +1579,67 @@ export default function CollectionTab() {
         const cid = card?.id ?? node?.cardId ?? node?.id ?? null;
         if (!cid) continue;
         const key = String(cid);
-        const variation = wishlistVariationMap.get(key) ?? "normal";
+
+        const metaFromRef = wishlistMetaRef.current.get(key);
+
+        const qty =
+          typeof node?.quantity === "number" &&
+          Number.isFinite(node.quantity) &&
+          node.quantity > 0
+            ? Math.round(node.quantity)
+            : 1;
+
+        const meta = metaFromRef ||
+          wishlistEntryMetaMap.get(key) || {
+            entryId: node?.id ? String(node.id) : null,
+            cardId: String(node?.cardId ?? cid),
+            variation:
+              typeof node?.variation === "string" ? node.variation : "normal",
+            status: node?.status ?? null,
+            quantity: qty,
+            notes: typeof node?.notes === "string" ? node.notes : "",
+            updatedAt: node?.updatedAt ?? null,
+          };
 
         if (card) {
           hydratedIdsRef.current.add(key);
-          const candidates = buildImageCandidates({ id: key, image: card?.image });
+          const candidates = buildImageCandidates({
+            id: key,
+            image: card?.image,
+          });
           const displayImage = candidates[0] || card?.image || "";
-          const setName = resolveSetNameForCardlike({ id: key, setName: card?.setName, set: card?.set });
+          const setName = resolveSetNameForCardlike({
+            id: key,
+            setName: card?.setName,
+            set: card?.set,
+          });
 
           const prevEntry = prev.get(key);
           const enhanced = { ...card, image: displayImage, setName };
 
-          if (prevEntry?.__sourceCard === card && prevEntry?._wishlist?.variation === variation) {
+          if (
+            prevEntry?.__sourceCard === card &&
+            JSON.stringify(prevEntry?._wishlist || {}) === JSON.stringify(meta)
+          ) {
             next.set(key, prevEntry);
           } else {
-            next.set(key, { ...enhanced, _wishlist: { variation }, __sourceCard: card });
+            next.set(key, {
+              ...enhanced,
+              _wishlist: { ...meta },
+              __sourceCard: card,
+            });
             changed = true;
           }
         } else if (prev.has(key)) {
           const prevEntry = prev.get(key);
-          if ((prevEntry?._wishlist?.variation ?? "normal") !== variation) {
-            next.set(key, { ...prevEntry, _wishlist: { variation } });
+          const prevMeta = prevEntry?._wishlist || {};
+          const same = JSON.stringify(prevMeta) === JSON.stringify(meta);
+
+          if (!same) {
+            next.set(key, {
+              ...prevEntry,
+              _wishlist: { ...prevMeta, ...meta },
+            });
             changed = true;
           } else {
             next.set(key, prevEntry);
@@ -946,84 +1651,141 @@ export default function CollectionTab() {
         if (next.size !== prev.size) {
           changed = true;
         } else {
-          for (const [key, value] of next.entries()) {
-            if (prev.get(key) !== value) { changed = true; break; }
+          for (const [k, value] of next.entries()) {
+            if (prev.get(k) !== value) {
+              changed = true;
+              break;
+            }
           }
         }
       }
 
       if (changed) {
-        debugLog("wishlist map updated", { total: next.size, hydrated: hydratedIdsRef.current.size });
+        debugLog("wishlist map updated", {
+          total: next.size,
+          hydrated: hydratedIdsRef.current.size,
+        });
       }
 
       return changed ? next : prev;
     });
-  }, [wishlistRawList, wishlistVariationMap]);
+  }, [wishlistRawList, wishlistEntryMetaMap]);
 
   /* -------- wishlist hydration (CardById only) -------- */
   const hydrateMissingWishlistCards = useCallback(async () => {
     if (inFlightRef.current) return;
-    const targets = allWishlistIds.filter((id) => !hydratedIdsRef.current.has(id) && !cardsByIdMap.has(id));
+
+    const targets = allWishlistIds.filter(
+      (id) => !hydratedIdsRef.current.has(id) && !cardsByIdMap.has(id),
+    );
+
     if (!targets.length) return;
 
     inFlightRef.current = true;
     setHydrating(true);
     debugLog("wishlist hydrate start", { pending: targets.length });
+
     try {
       for (const id of targets) {
-        const variation = wishlistVariationMap.get(id) ?? "normal";
+        const fromRef = wishlistMetaRef.current.get(id);
+        const baseMeta = wishlistEntryMetaMap.get(id);
+
+        const meta = fromRef ||
+          baseMeta || {
+            entryId: null,
+            cardId: String(id),
+            variation: "normal",
+            status: null,
+            quantity: 1,
+            notes: "",
+            updatedAt: null,
+          };
+
         try {
           const { data } = await apollo.query({
             query: CardByIdDocument,
             variables: { id },
             fetchPolicy: "network-only",
           });
-          const card = data?.card ?? data?.cardById ?? data?.Card ?? data?.cardsearchCardById ?? null;
+
+          const card =
+            data?.card ??
+            data?.cardById ??
+            data?.Card ??
+            data?.cardsearchCardById ??
+            null;
+
           if (card?.id) {
             const candidates = buildImageCandidates({ id, image: card?.image });
             const displayImage = candidates[0] || card?.image || "";
-            const setName = resolveSetNameForCardlike({ id, setName: card?.setName, set: card?.set });
+            const setName = resolveSetNameForCardlike({
+              id,
+              setName: card?.setName,
+              set: card?.set,
+            });
 
             hydratedIdsRef.current.add(id);
             setCardsByIdMap((prev) => {
               const next = new Map(prev);
-              next.set(id, { ...card, image: displayImage, setName, _wishlist: { variation }, __sourceCard: card });
+              next.set(id, {
+                ...card,
+                image: displayImage,
+                setName,
+                _wishlist: { ...meta },
+                __sourceCard: card,
+              });
               return next;
             });
+
             debugLog("wishlist card hydrated", { id });
           } else {
             hydratedIdsRef.current.add(id);
           }
         } catch (err) {
           if (__DEV__) {
-            console.warn("Failed to hydrate wishlist card", { id, message: extractGraphQLError(err) });
+            console.warn("Failed to hydrate wishlist card", {
+              id,
+              message: extractGraphQLError(err),
+            });
           }
         }
       }
     } finally {
       setHydrating(false);
       inFlightRef.current = false;
-      debugLog("wishlist hydrate complete", { hydrated: hydratedIdsRef.current.size, mapSize: cardsByIdMap.size });
+      debugLog("wishlist hydrate complete", {
+        hydrated: hydratedIdsRef.current.size,
+        mapSize: cardsByIdMap.size,
+      });
     }
-  }, [allWishlistIds, apollo, cardsByIdMap, wishlistVariationMap]);
+  }, [allWishlistIds, apollo, cardsByIdMap, wishlistEntryMetaMap]);
 
   useEffect(() => {
     if (segment !== "wishlist") return;
     hydrateMissingWishlistCards();
   }, [segment, hydrateMissingWishlistCards]);
 
-  useEffect(() => { debugLog("segment changed", { segment }); }, [segment]);
+  useEffect(() => {
+    debugLog("segment changed", { segment });
+  }, [segment]);
 
   /* -------- stats -------- */
   const stats = {
-    cards: collectionCardsCount,
+    cards: Array.isArray(collectionCards) ? collectionCards.length : 0,
     binders: filteredBindersCount,
     wishlist: wishlistServerTotal || wishlistRawCount || cardsByIdMap.size,
   };
-  useEffect(() => { debugLog("stats updated", stats); }, [stats.cards, stats.binders, stats.wishlist]);
+
+  useEffect(() => {
+    debugLog("stats updated", stats);
+  }, [stats.cards, stats.binders, stats.wishlist]);
 
   const refetchCollectionSafe = useCallback(async () => {
-    try { await refetchCollection(); } catch (err) { console.warn("Failed to refetch collection after mutation", err); }
+    try {
+      await refetchCollection();
+    } catch (err) {
+      console.warn("Failed to refetch collection after mutation", err);
+    }
   }, [refetchCollection]);
 
   const mutateCollectionEntry = useCallback(
@@ -1051,14 +1813,17 @@ export default function CollectionTab() {
       await updateCollectionEntry({ variables });
       return { removed: false };
     },
-    [removeFromCollection, updateCollectionEntry]
+    [removeFromCollection, updateCollectionEntry],
   );
 
   const handleEditSubmit = useCallback(
     async (card, values = {}) => {
       if (!card) return;
-      const nextQuantity = Number(values.quantity ?? card?._collection?.quantity ?? 0);
-      const nextCondition = values.condition ?? card?._collection?.condition ?? "near_mint";
+      const nextQuantity = Number(
+        values.quantity ?? card?._collection?.quantity ?? 0,
+      );
+      const nextCondition =
+        values.condition ?? card?._collection?.condition ?? "near_mint";
 
       setSavingEdit(true);
       try {
@@ -1067,16 +1832,23 @@ export default function CollectionTab() {
           condition: nextCondition,
         });
         await refetchCollectionSafe();
-        toast.show(result.removed ? "Removed from your collection." : "Updated your collection.", { type: "success" });
+        toast.show(
+          result.removed
+            ? "Removed from your collection."
+            : "Updated your collection.",
+          { type: "success" },
+        );
         setEditing(null);
       } catch (err) {
         console.error("Failed to save collection entry", err);
-        toast.show("Couldn't update your collection. Please try again.", { type: "error" });
+        toast.show("Couldn't update your collection. Please try again.", {
+          type: "error",
+        });
       } finally {
         setSavingEdit(false);
       }
     },
-    [mutateCollectionEntry, refetchCollectionSafe, toast]
+    [mutateCollectionEntry, refetchCollectionSafe, toast],
   );
 
   const handleRemoveQuantity = useCallback(
@@ -1094,28 +1866,173 @@ export default function CollectionTab() {
           condition: card?._collection?.condition,
         });
         await refetchCollectionSafe();
-        toast.show(result.removed ? "Removed from your collection." : "Updated your collection.", { type: "success" });
+        toast.show(
+          result.removed
+            ? "Removed from your collection."
+            : "Updated your collection.",
+          { type: "success" },
+        );
         setRemoving(null);
       } catch (err) {
         console.error("Failed to remove from collection", err);
-        toast.show("Couldn't update your collection. Please try again.", { type: "error" });
+        toast.show("Couldn't update your collection. Please try again.", {
+          type: "error",
+        });
       } finally {
         if (closeModal) setSavingRemoval(false);
       }
     },
-    [mutateCollectionEntry, refetchCollectionSafe, toast]
+    [mutateCollectionEntry, refetchCollectionSafe, toast],
   );
 
-  /* -------- render -------- */
+  /* -------- NEW: dynamic rarity options (collection) -------- */
+  const collectionRarityOptions = useMemo(() => {
+    const uniq = new Map();
+    for (const c of collectionCards) {
+      const raw = String(c?.rarity ?? "").trim();
+      if (!raw) continue;
+      const key = raw.toLowerCase();
+      if (!uniq.has(key)) uniq.set(key, raw);
+    }
+    const list = Array.from(uniq.entries())
+      .map(([key, label]) => ({ key, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return list;
+  }, [collectionCards]);
+
+  /* -------- NEW: filtered/sorted collection list -------- */
+  const filteredCollectionCards = useMemo(() => {
+    let list = Array.isArray(collectionCards) ? collectionCards : [];
+
+    const q = collectionQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter((c) => {
+        const name = safeLower(c?.name);
+        const setName = safeLower(c?.setName);
+        const num = safeLower(c?.number);
+        return name.includes(q) || setName.includes(q) || num.includes(q);
+      });
+    }
+
+    if (collectionVariations.length) {
+      const wanted = new Set(
+        collectionVariations.map((x) => String(x).toLowerCase()),
+      );
+      list = list.filter((c) =>
+        wanted.has(bucketVariation(c?._collection?.variation)),
+      );
+    }
+
+    if (collectionRarities.length) {
+      const wanted = new Set(
+        collectionRarities.map((x) => String(x).toLowerCase()),
+      );
+      list = list.filter((c) =>
+        wanted.has(String(c?.rarity ?? "").toLowerCase()),
+      );
+    }
+
+    if (collectionSort === "name") {
+      list = [...list].sort((a, b) =>
+        String(a?.name || "").localeCompare(String(b?.name || "")),
+      );
+    } else if (collectionSort === "set") {
+      list = [...list].sort((a, b) =>
+        String(a?.setName || "").localeCompare(String(b?.setName || "")),
+      );
+    }
+    // "recent" = keep server order
+
+    return list;
+  }, [
+    collectionCards,
+    collectionQuery,
+    collectionVariations,
+    collectionRarities,
+    collectionSort,
+  ]);
+
+  /* -------- NEW: filtered/sorted wishlist list -------- */
+  const filteredWishlistItems = useMemo(() => {
+    let list = Array.isArray(wishlistDisplayItems) ? wishlistDisplayItems : [];
+
+    const q = wishlistQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter((c) => {
+        const name = safeLower(c?.name);
+        const setName = safeLower(c?.setName);
+        const num = safeLower(c?.number);
+        return name.includes(q) || setName.includes(q) || num.includes(q);
+      });
+    }
+
+    if (wishlistStatuses.length) {
+      const wanted = new Set(
+        wishlistStatuses.map((x) => String(x).toUpperCase()),
+      );
+      list = list.filter((c) =>
+        wanted.has(String(c?._wishlist?.status ?? "").toUpperCase()),
+      );
+    }
+
+    if (wishlistVariations.length) {
+      const wanted = new Set(
+        wishlistVariations.map((x) => String(x).toLowerCase()),
+      );
+      list = list.filter((c) =>
+        wanted.has(bucketVariation(c?._wishlist?.variation)),
+      );
+    }
+
+    if (wishlistSort === "name") {
+      list = [...list].sort((a, b) =>
+        String(a?.name || "").localeCompare(String(b?.name || "")),
+      );
+    } else if (wishlistSort === "set") {
+      list = [...list].sort((a, b) =>
+        String(a?.setName || "").localeCompare(String(b?.setName || "")),
+      );
+    } else if (wishlistSort === "price") {
+      list = [...list].sort((a, b) => {
+        const pa = getAnyNumericPrice(a);
+        const pb = getAnyNumericPrice(b);
+        if (pa == null && pb == null) return 0;
+        if (pa == null) return 1;
+        if (pb == null) return -1;
+        return pb - pa; // high -> low
+      });
+    } else if (wishlistSort === "recent") {
+      // prefer _wishlist.updatedAt desc (most recent first)
+      list = [...list].sort((a, b) => {
+        const ta = +new Date(a?._wishlist?.updatedAt || 0);
+        const tb = +new Date(b?._wishlist?.updatedAt || 0);
+        return (tb || 0) - (ta || 0);
+      });
+    }
+
+    return list;
+  }, [
+    wishlistDisplayItems,
+    wishlistQuery,
+    wishlistStatuses,
+    wishlistVariations,
+    wishlistSort,
+  ]);
+
+  /* -------- render helpers -------- */
   const loadingBySegment =
     segment === "binders"
       ? bindersLoading && !bindersData
       : segment === "all"
-      ? collLoading && !collData
-      : wishlistLoading && !wishlistData;
+        ? collLoading && !collData
+        : wishlistLoading && !wishlistData;
 
   const errorBySegment =
-    segment === "binders" ? bindersError : segment === "all" ? collError : wishlistError;
+    segment === "binders"
+      ? bindersError
+      : segment === "all"
+        ? collError
+        : wishlistError;
 
   const isRefetching = collNS === 4 || bindersNS === 4 || wishlistNS === 4;
 
@@ -1123,11 +2040,22 @@ export default function CollectionTab() {
     setRefreshing(true);
     debugLog("pull-to-refresh start");
     try {
-      await Promise.allSettled([refetchCollection?.(), refetchBinders?.(), refetchWishlist?.()]);
+      await Promise.allSettled([
+        refetchCollection?.(),
+        refetchBinders?.(),
+        refetchWishlist?.(),
+      ]);
+
       hydratedIdsRef.current = new Set();
       setCardsByIdMap(new Map());
-      setCollectionPricesById(new Map());     // clear price cache
+
+      setCollectionPricesById(new Map());
       hydratedPriceIdsRef.current = new Set();
+
+      setWishlistPricesById(new Map());
+      hydratedWishlistPriceIdsRef.current = new Set();
+
+      wishlistMetaRef.current = new Map();
     } finally {
       setRefreshing(false);
       debugLog("pull-to-refresh complete");
@@ -1139,14 +2067,17 @@ export default function CollectionTab() {
       try {
         const id = typeof entryOrId === "object" ? entryOrId?.id : entryOrId;
         if (!id) return;
-        const cacheId = apollo.cache.identify({ __typename: "WishlistEntry", id: String(id) });
+        const cacheId = apollo.cache.identify({
+          __typename: "WishlistEntry",
+          id: String(id),
+        });
         if (cacheId) {
           apollo.cache.evict({ id: cacheId });
           apollo.cache.gc();
         }
       } catch {}
     },
-    [apollo.cache]
+    [apollo.cache],
   );
 
   const handleMoveWishlistItemToCollection = useCallback(
@@ -1158,38 +2089,78 @@ export default function CollectionTab() {
         return;
       }
       try {
-        setCardsByIdMap((prev) => { const next = new Map(prev); next.delete(cardId); return next; });
+        setCardsByIdMap((prev) => {
+          const next = new Map(prev);
+          next.delete(cardId);
+          return next;
+        });
+
+        wishlistMetaRef.current = new Map(wishlistMetaRef.current);
+        wishlistMetaRef.current.delete(cardId);
+
+        setWishlistPricesById((prev) => {
+          if (!prev.has(cardId)) return prev;
+          const next = new Map(prev);
+          next.delete(cardId);
+          return next;
+        });
+
         await moveWishlistToCollection({ cardId, variation, quantity: 1 });
-        evictWishlistEntryFromCache(item?._wishlistEntryId || item?.wishlistEntryId || item?.id);
+        evictWishlistEntryFromCache(item?._wishlist?.entryId);
         toast.show("Moved to collection", { type: "success" });
       } catch (err) {
         const msg = extractGraphQLError(err);
         toast.show(msg || "Couldn't move to collection", { type: "error" });
       }
     },
-    [moveWishlistToCollection, evictWishlistEntryFromCache, toast]
+    [moveWishlistToCollection, evictWishlistEntryFromCache, toast],
   );
 
   const handleRemoveFromWishlistLocal = useCallback(
     async (item) => {
       const cardId = item?.id ? String(item.id) : null;
+
       if (cardId) {
-        setCardsByIdMap((prev) => { const next = new Map(prev); next.delete(cardId); return next; });
+        setCardsByIdMap((prev) => {
+          const next = new Map(prev);
+          next.delete(cardId);
+          return next;
+        });
+
+        wishlistMetaRef.current = new Map(wishlistMetaRef.current);
+        wishlistMetaRef.current.delete(cardId);
+
+        setWishlistPricesById((prev) => {
+          if (!prev.has(cardId)) return prev;
+          const next = new Map(prev);
+          next.delete(cardId);
+          return next;
+        });
       }
+
       try {
-        await removeFromWishlist({ cardId, variation: item?._wishlist?.variation ?? "normal" });
-        evictWishlistEntryFromCache(item?._wishlistEntryId || item?.wishlistEntryId || item?.id);
+        await removeFromWishlist({
+          cardId,
+          variation: item?._wishlist?.variation ?? "normal",
+        });
+        evictWishlistEntryFromCache(item?._wishlist?.entryId);
         toast.show("Removed from wishlist", { type: "success" });
       } catch (err) {
         const msg = extractGraphQLError(err);
         toast.show(msg || "Couldn't remove from wishlist", { type: "error" });
       }
     },
-    [removeFromWishlist, evictWishlistEntryFromCache, toast]
+    [removeFromWishlist, evictWishlistEntryFromCache, toast],
   );
 
   const wishlistHasData =
     wishlistServerTotal > 0 || wishlistRawCount > 0 || cardsByIdMap.size > 0;
+
+  // NEW: count active filters for compact badges
+  const collectionActiveFilterCount =
+    (collectionVariations?.length || 0) + (collectionRarities?.length || 0);
+  const wishlistActiveFilterCount =
+    (wishlistStatuses?.length || 0) + (wishlistVariations?.length || 0);
 
   return (
     <View style={styles.container}>
@@ -1199,8 +2170,9 @@ export default function CollectionTab() {
         stats={stats}
         segment={segment}
         onChangeSegment={setSegment}
-        query={query}
-        onChangeQuery={setQuery}
+        // CHANGED: TopControls query now only drives binder filtering
+        query={segment === "binders" ? binderQuery : ""}
+        onChangeQuery={segment === "binders" ? setBinderQuery : () => {}}
       />
 
       {loadingBySegment ? (
@@ -1209,7 +2181,13 @@ export default function CollectionTab() {
         </View>
       ) : errorBySegment ? (
         <View style={styles.center}>
-          <Text style={{ color: COLORS.error, textAlign: "center", paddingHorizontal: 24 }}>
+          <Text
+            style={{
+              color: COLORS.error,
+              textAlign: "center",
+              paddingHorizontal: 24,
+            }}
+          >
             {errorBySegment?.message || "Something went wrong"}
           </Text>
         </View>
@@ -1235,7 +2213,7 @@ export default function CollectionTab() {
       ) : segment === "all" ? (
         <FlatList
           contentContainerStyle={styles.gridContent}
-          data={collectionCards}
+          data={filteredCollectionCards} // CHANGED: filtered/sorted list
           keyExtractor={(item, idx) => (item?.id ? String(item.id) : `${idx}`)}
           numColumns={2}
           columnWrapperStyle={styles.column}
@@ -1246,16 +2224,66 @@ export default function CollectionTab() {
               onRefresh={onRefresh}
             />
           }
+          // NEW: compact search + filters header (minimal when closed)
+          ListHeaderComponent={
+            <View style={{ paddingTop: 2, paddingBottom: 6 }}>
+              <CompactSearchFiltersBar
+                query={collectionQuery}
+                onChangeQuery={setCollectionQuery}
+                sortKey={collectionSort}
+                sortOptions={[
+                  { key: "recent", label: "Recent" },
+                  { key: "name", label: "Name" },
+                  { key: "set", label: "Set" },
+                ]}
+                onChangeSort={setCollectionSort}
+                activeFilterCount={collectionActiveFilterCount}
+                filterGroups={[
+                  {
+                    key: "variation",
+                    title: "Variation",
+                    value: collectionVariations,
+                    onChange: setCollectionVariations,
+                    options: [
+                      { key: "normal", label: "Normal" },
+                      { key: "holo", label: "Holo" },
+                      { key: "reverse", label: "Reverse" },
+                    ],
+                  },
+                  {
+                    key: "rarity",
+                    title: "Rarity",
+                    value: collectionRarities,
+                    onChange: setCollectionRarities,
+                    // dynamic options from your actual collection data
+                    options: collectionRarityOptions.length
+                      ? collectionRarityOptions
+                      : [{ key: "unknown", label: "No rarity data" }],
+                  },
+                ]}
+                onClearAll={() => {
+                  setCollectionQuery("");
+                  setCollectionSort("recent");
+                  setCollectionVariations([]);
+                  setCollectionRarities([]);
+                }}
+              />
+            </View>
+          }
           renderItem={({ item }) => {
             const normalizedPrices = Array.isArray(item?.prices)
               ? item.prices
               : Array.isArray(item?.pricing)
-              ? item.pricing
-              : [];
+                ? item.pricing
+                : [];
 
             return (
               <CollectionCardTile
-                item={{ ...item, pricing: normalizedPrices, priceLatest: normalizedPrices[0] || null }}
+                item={{
+                  ...item,
+                  pricing: normalizedPrices,
+                  priceLatest: normalizedPrices[0] || null,
+                }}
                 isInCollection={true}
                 onView={() =>
                   router.push({
@@ -1289,10 +2317,13 @@ export default function CollectionTab() {
               <ActivityIndicator color={COLORS.accent} />
             </View>
           ) : null}
+
           <FlatList
             contentContainerStyle={styles.gridContent}
-            data={wishlistDisplayItems}
-            keyExtractor={(item, idx) => (item?.id ? String(item.id) : `${idx}`)}
+            data={filteredWishlistItems} // CHANGED: filtered/sorted list
+            keyExtractor={(item, idx) =>
+              item?.id ? String(item.id) : `${idx}`
+            }
             numColumns={2}
             columnWrapperStyle={styles.column}
             refreshControl={
@@ -1302,15 +2333,70 @@ export default function CollectionTab() {
                 onRefresh={onRefresh}
               />
             }
+            // NEW: compact search + filters header (minimal when closed)
+            ListHeaderComponent={
+              <View style={{ paddingTop: 2, paddingBottom: 6 }}>
+                <CompactSearchFiltersBar
+                  query={wishlistQuery}
+                  onChangeQuery={setWishlistQuery}
+                  sortKey={wishlistSort}
+                  sortOptions={[
+                    { key: "recent", label: "Recent" }, // (recently updated)
+                    { key: "name", label: "Name" },
+                    { key: "set", label: "Set" },
+                    { key: "price", label: "Price" },
+                  ]}
+                  onChangeSort={setWishlistSort}
+                  activeFilterCount={wishlistActiveFilterCount}
+                  filterGroups={[
+                    {
+                      key: "status",
+                      title: "Status",
+                      value: wishlistStatuses,
+                      onChange: setWishlistStatuses,
+                      options: [
+                        { key: "ACTIVE", label: "Hunting" },
+                        { key: "GRAIL", label: "Dream" },
+                        { key: "EVENTUAL", label: "Someday" },
+                        { key: "UPGRADE", label: "Upgrade" },
+                      ],
+                    },
+                    {
+                      key: "variation",
+                      title: "Variation",
+                      value: wishlistVariations,
+                      onChange: setWishlistVariations,
+                      options: [
+                        { key: "normal", label: "Normal" },
+                        { key: "holo", label: "Holo" },
+                        { key: "reverse", label: "Reverse" },
+                      ],
+                    },
+                  ]}
+                  onClearAll={() => {
+                    setWishlistQuery("");
+                    setWishlistSort("recent");
+                    setWishlistStatuses([]);
+                    setWishlistVariations([]);
+                  }}
+                />
+              </View>
+            }
             renderItem={({ item }) => {
               const prices = Array.isArray(item?.prices)
                 ? item.prices
                 : Array.isArray(item?.pricing)
-                ? item.pricing
-                : [];
+                  ? item.pricing
+                  : [];
+
               return (
                 <WishlistCardTile
-                  item={{ ...item, pricing: prices, priceLatest: prices[0] || null }}
+                  item={{
+                    ...item,
+                    prices,
+                    pricing: prices,
+                    priceLatest: prices[0] || null,
+                  }}
                   onView={() =>
                     router.push({
                       pathname: "/card/[id]",
@@ -1324,8 +2410,13 @@ export default function CollectionTab() {
                       },
                     })
                   }
-                  onMoveToCollection={() => handleMoveWishlistItemToCollection(item)}
-                  onRemoveFromWishlist={() => handleRemoveFromWishlistLocal(item)}
+                  onMoveToCollection={() =>
+                    handleMoveWishlistItemToCollection(item)
+                  }
+                  onRemoveFromWishlist={() =>
+                    handleRemoveFromWishlistLocal(item)
+                  }
+                  onUpdateWishlistEntry={handleUpdateWishlistEntry}
                 />
               );
             }}
@@ -1365,7 +2456,9 @@ export default function CollectionTab() {
         onClose={() => setRemoving(null)}
         card={removing}
         removing={savingRemoval}
-        onConfirm={(qty) => handleRemoveQuantity(removing, qty, { closeModal: true })}
+        onConfirm={(qty) =>
+          handleRemoveQuantity(removing, qty, { closeModal: true })
+        }
       />
     </View>
   );

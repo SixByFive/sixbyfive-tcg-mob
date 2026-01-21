@@ -4,6 +4,7 @@
 
 import { useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
+import { SearchSetsDocument } from "@sixbyfive/tcg-binder/client";
 import { useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
@@ -21,7 +22,6 @@ import PageHeaderBackSimple from "../../components/common/PageHeaderBackSimple";
 import SetLogo from "../../components/sets/SetLogo.native";
 import { COLORS } from "../../theme/colors";
 import inferSetEra from "../../utils/setEra.native";
-import { SearchSetsDocument } from "@sixbyfive/tcg-binder/client";
 
 /* ---------------- Era labels & order ---------------- */
 const ERA_LABELS = {
@@ -39,7 +39,20 @@ const ERA_LABELS = {
   misc: "Special / Misc",
 };
 
-const ERA_ORDER = ["me", "sv", "swsh", "sm", "xy", "bw", "hgss", "dp", "ex", "ecard", "wotc", "misc"];
+const ERA_ORDER = [
+  "me",
+  "sv",
+  "swsh",
+  "sm",
+  "xy",
+  "bw",
+  "hgss",
+  "dp",
+  "ex",
+  "ecard",
+  "wotc",
+  "misc",
+];
 function eraRank(key) {
   const k = (key || "misc").toLowerCase();
   const idx = ERA_ORDER.indexOf(k);
@@ -54,7 +67,9 @@ function isPromoCode(code) {
 }
 function extractCodeNumber(code) {
   if (!code) return Number.POSITIVE_INFINITY;
-  const match = String(code).toLowerCase().match(/(\d+(?:\.\d+)?)/);
+  const match = String(code)
+    .toLowerCase()
+    .match(/(\d+(?:\.\d+)?)/);
   if (!match) return Number.POSITIVE_INFINITY;
   const value = Number.parseFloat(match[1]);
   return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
@@ -117,7 +132,8 @@ export default function SetsIndexScreen() {
         const name = (set.name || "").toLowerCase();
         const code = (set.code || "").toLowerCase();
         const abbr = (set.abbr || "").toLowerCase();
-        if (!name.includes(q) && !code.includes(q) && !abbr.includes(q)) continue;
+        if (!name.includes(q) && !code.includes(q) && !abbr.includes(q))
+          continue;
       }
       const key = set.era || "misc";
       if (!byEra.has(key)) byEra.set(key, []);
@@ -139,7 +155,12 @@ export default function SetsIndexScreen() {
   /* ---------- Loading / Error ---------- */
   if (loading) {
     return (
-      <View style={[styles.screen, { alignItems: "center", justifyContent: "center" }]}>
+      <View
+        style={[
+          styles.screen,
+          { alignItems: "center", justifyContent: "center" },
+        ]}
+      >
         <ActivityIndicator />
         <Text style={[styles.muted, { marginTop: 10 }]}>Loading sets…</Text>
       </View>
@@ -148,8 +169,15 @@ export default function SetsIndexScreen() {
   if (error) {
     return (
       <View style={[styles.screen, { padding: 16 }]}>
-        <View style={[styles.card, { borderColor: "#b24848", backgroundColor: "#2a1d1d" }]}>
-          <Text style={[styles.title, { color: "#ffb0b0" }]}>Unable to load sets</Text>
+        <View
+          style={[
+            styles.card,
+            { borderColor: "#b24848", backgroundColor: "#2a1d1d" },
+          ]}
+        >
+          <Text style={[styles.title, { color: "#ffb0b0" }]}>
+            Unable to load sets
+          </Text>
           <Text style={[styles.muted, { marginTop: 6 }]} selectable>
             {String(error.message)}
           </Text>
@@ -158,7 +186,6 @@ export default function SetsIndexScreen() {
     );
   }
 
-  // ✅ FIXED: Use PageHeaderBackSimple and return a single element for ListHeaderComponent
   const listHeader = (
     <View>
       <PageHeaderBackSimple title="Pokémon TCG Sets" />
@@ -175,7 +202,11 @@ export default function SetsIndexScreen() {
           />
           {!!query && (
             <Pressable onPress={() => setQuery("")} hitSlop={8}>
-              <Ionicons name="close-circle" size={16} color={COLORS.textMuted} />
+              <Ionicons
+                name="close-circle"
+                size={16}
+                color={COLORS.textMuted}
+              />
             </Pressable>
           )}
         </View>
@@ -206,7 +237,10 @@ export default function SetsIndexScreen() {
 
           <Pressable
             onPress={() => setPickerOpen(true)}
-            style={({ pressed }) => [styles.moreBtn, pressed && { opacity: 0.9 }]}
+            style={({ pressed }) => [
+              styles.moreBtn,
+              pressed && { opacity: 0.9 },
+            ]}
             accessibilityRole="button"
             accessibilityLabel="More filters"
             hitSlop={6}
@@ -232,7 +266,10 @@ export default function SetsIndexScreen() {
         )}
         renderItem={({ item }) => (
           <Pressable
-            style={({ pressed }) => [styles.setCard, pressed && { opacity: 0.94 }]}
+            style={({ pressed }) => [
+              styles.setCard,
+              pressed && { opacity: 0.94 },
+            ]}
             onPress={() => router.push(`/sets/${item.code}`)}
           >
             <View style={styles.thumbWrap}>
@@ -247,7 +284,11 @@ export default function SetsIndexScreen() {
                 {item.abbr ? `  •  Abbr: ${item.abbr}` : ""}
               </Text>
             </View>
-            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+            <Ionicons
+              name="chevron-forward"
+              size={16}
+              color={COLORS.textMuted}
+            />
           </Pressable>
         )}
         ListEmptyComponent={
@@ -273,13 +314,20 @@ export default function SetsIndexScreen() {
               </Pressable>
             </View>
 
-            <Pressable style={styles.radioRow} onPress={() => setEraFilter("all")}>
+            <Pressable
+              style={styles.radioRow}
+              onPress={() => setEraFilter("all")}
+            >
               <Radio checked={eraFilter === "all"} />
               <Text style={styles.radioLabel}>All</Text>
             </Pressable>
 
             {ERA_ORDER.map((k) => (
-              <Pressable key={k} style={styles.radioRow} onPress={() => setEraFilter(k)}>
+              <Pressable
+                key={k}
+                style={styles.radioRow}
+                onPress={() => setEraFilter(k)}
+              >
                 <Radio checked={eraFilter === k} />
                 <Text style={styles.radioLabel}>{ERA_LABELS[k]}</Text>
               </Pressable>
@@ -287,7 +335,10 @@ export default function SetsIndexScreen() {
 
             <Pressable
               onPress={() => setPickerOpen(false)}
-              style={({ pressed }) => [styles.applyBtn, pressed && { opacity: 0.92 }]}
+              style={({ pressed }) => [
+                styles.applyBtn,
+                pressed && { opacity: 0.92 },
+              ]}
             >
               <Text style={styles.applyText}>Apply</Text>
             </Pressable>
