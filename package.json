@@ -34,6 +34,7 @@
     "expo-status-bar": "~2.2.3",
     "expo-symbols": "~0.4.5",
     "expo-system-ui": "~5.0.10",
+    "expo-updates": "~0.28.17",
     "expo-web-browser": "~14.2.0",
     "graphql": "^16.11.0",
     "nativewind": "^4.1.23",
@@ -47,9 +48,9 @@
     "react-native-screens": "~4.11.1",
     "react-native-web": "~0.20.0",
     "react-native-webview": "13.13.5",
+    "socket.io-client": "^4.8.3",
     "tailwindcss": "^3.4.17",
-    "tslib": "^2.8.1",
-    "expo-updates": "~0.28.17"
+    "tslib": "^2.8.1"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

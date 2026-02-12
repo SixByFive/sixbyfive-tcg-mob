@@ -1,12 +1,24 @@
 // app/messages/[userId].js
+//
+// UPDATED (2026-02-12)
+//
+// CHANGES (Profile navigation UX):
+// - CHANGE: Remove "View profile" from the ⋯ modal menu
+// - ADD: Make the header center (avatar + username) tappable to open /profile/[username]
+// - ADD: Visual tap affordance (slight pressed opacity + optional subtle underline)
+//
+// NOTES:
+// - Profile route requires username: /profile/[username]
+// - If username isn't loaded yet, we show a toast instead of navigating.
 
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
-  useState
+  useState,
 } from "react";
 import {
   FlatList,
@@ -21,197 +33,709 @@ import {
   TextInput,
   View,
 } from "react-native";
-import PageHeaderBack from "../../components/common/PageHeaderBack";
+
 import { COLORS } from "../../theme/colors";
 
-const nameFromId = (id) => {
-  if (!id) return "Direct Message";
-  if (id === "u1") return "FalconChipp";
-  if (id === "u2") return "UnicornCards";
-  return `User ${String(id).slice(0, 6)}`;
-};
+import { useFocusEffect } from "@react-navigation/native";
+import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import { useMessaging } from "../contexts/MessengerContext";
 
-const isSameDay = (aTs, bTs) => {
-  const a = new Date(aTs),
-    b = new Date(bTs);
+import { gql, useApolloClient } from "@apollo/client";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+/* =============================================================================
+   GraphQL
+============================================================================= */
+
+const REPORT_USER_MUTATION = gql`
+  mutation ReportUser($userId: ID!, $reason: String!, $details: String) {
+    reportUser(userId: $userId, reason: $reason, details: $details)
+  }
+`;
+
+const REPORT_MESSAGE_MUTATION = gql`
+  mutation ReportMessage($messageId: ID!, $reason: String!, $details: String) {
+    reportMessage(messageId: $messageId, reason: $reason, details: $details)
+  }
+`;
+
+const BLOCK_USER_MUTATION = gql`
+  mutation BlockUserFromChat($userId: ID!, $reason: String) {
+    blockUserFromChat(userId: $userId, reason: $reason)
+  }
+`;
+
+/* =============================================================================
+   Helpers
+============================================================================= */
+
+function safeString(v) {
+  return String(v ?? "").trim();
+}
+
+function isSameDay(aTs, bTs) {
+  const a = new Date(aTs);
+  const b = new Date(bTs);
   return (
     a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate()
   );
-};
-const dayLabel = (ts) => {
+}
+
+function dayLabel(ts) {
   const d = new Date(ts);
   const today = new Date();
   const yday = new Date(Date.now() - 24 * 60 * 60 * 1000);
   if (isSameDay(ts, today)) return "Today";
   if (isSameDay(ts, yday)) return "Yesterday";
   return d.toLocaleDateString();
-};
+}
 
-// Seed data, with an example image message from "them"
-const SEED = [
-  {
-    id: "m0",
-    author: "them",
-    text: "Here’s a pic of the card condition.",
-    ts: Date.now() - 1000 * 60 * 6,
-    status: "read",
-    image:
-      "https://images.unsplash.com/photo-1611606063065-4c7d3b34f0d6?w=1200&q=70&auto=format&fit=crop",
-  },
-  {
-    id: "m1",
-    author: "them",
-    text: "Hey! Interested in trading?",
-    ts: Date.now() - 1000 * 60 * 4,
-    status: "read",
-  },
-  {
-    id: "m2",
-    author: "me",
-    text: "Yep! I can offer 2x Lugia.",
-    ts: Date.now() - 1000 * 60 * 3,
-    status: "read",
-  },
+function getRowUserId(row) {
+  return row?.user?.id || row?.userId || row?.id || null;
+}
+
+function getRowUsername(row) {
+  return row?.user?.username || row?.username || "";
+}
+
+function getRowAvatar(row) {
+  return (
+    row?.user?.avatar ||
+    row?.user?.avatarUrl ||
+    row?.avatar ||
+    row?.avatarUrl ||
+    null
+  );
+}
+
+/**
+ * Normalize message object based on your backend Message typeDefs.
+ */
+function normalizeMessage(raw, myUserId) {
+  const id =
+    raw?.id ||
+    raw?.messageId ||
+    raw?._id ||
+    `${raw?.createdAt || raw?.ts || Date.now()}-${Math.random()}`;
+
+  const created =
+    raw?.createdAt || raw?.ts || raw?.sentAt || raw?.created_at || Date.now();
+
+  const ts =
+    typeof created === "number" ? created : new Date(created).getTime();
+
+  const text = raw?.content ?? raw?.text ?? raw?.message ?? "";
+
+  const senderId =
+    raw?.senderId ||
+    raw?.fromUserId ||
+    raw?.from?.id ||
+    raw?.sender?.id ||
+    null;
+
+  const mine =
+    myUserId && senderId ? String(senderId) === String(myUserId) : false;
+
+  // Optional image from meta (still supported if backend sends it)
+  let image = null;
+  const meta = raw?.meta ?? raw?.metadata ?? null;
+
+  let metaObj = meta;
+  if (typeof meta === "string") {
+    try {
+      metaObj = JSON.parse(meta);
+    } catch (_) {
+      metaObj = null;
+    }
+  }
+
+  image =
+    metaObj?.image ||
+    metaObj?.imageUrl ||
+    metaObj?.imageURL ||
+    raw?.image ||
+    raw?.imageUrl ||
+    null;
+
+  return {
+    id: String(id),
+    author: mine ? "me" : "them",
+    text: safeString(text),
+    ts: Number.isFinite(ts) ? ts : Date.now(),
+    status: raw?.status || (mine ? "sent" : "read"),
+    image: image ? String(image) : null,
+    _raw: raw,
+  };
+}
+
+const REPORT_REASONS = [
+  { key: "HARASSMENT", label: "Harassment / bullying" },
+  { key: "HATE", label: "Hate speech" },
+  { key: "SCAM", label: "Scam / fraud" },
+  { key: "SEXUAL", label: "Sexual content" },
+  { key: "SPAM", label: "Spam" },
+  { key: "OTHER", label: "Other" },
 ];
 
+/* =============================================================================
+   Header (clean username bar)
+============================================================================= */
+
+function ThreadHeader({
+  title,
+  subtitle,
+  avatar,
+  onBack,
+  onOpenMenu,
+  onPressTitle, // ✅ NEW: tap username area to view profile
+  insetsTop = 0,
+}) {
+  const hasAvatar = !!safeString(avatar);
+
+  return (
+    <View style={[styles.headerWrap, { paddingTop: Math.max(insetsTop, 10) }]}>
+      <View style={styles.headerRow}>
+        <Pressable
+          onPress={onBack}
+          hitSlop={10}
+          style={({ pressed }) => [
+            styles.headerIconBtn,
+            pressed && { opacity: 0.75 },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={COLORS.text} />
+        </Pressable>
+
+        {/* ✅ CHANGE: Center becomes a tappable "view profile" target */}
+        <Pressable
+          onPress={onPressTitle}
+          disabled={!onPressTitle}
+          style={({ pressed }) => [
+            styles.headerCenter,
+            pressed && onPressTitle ? { opacity: 0.85 } : null,
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="View profile"
+        >
+          <View style={styles.headerAvatarRing}>
+            {hasAvatar ? (
+              <Image source={{ uri: avatar }} style={styles.headerAvatar} />
+            ) : (
+              <View
+                style={[styles.headerAvatar, { backgroundColor: COLORS.alt }]}
+              />
+            )}
+          </View>
+
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text
+              style={[
+                styles.headerTitle,
+                onPressTitle ? styles.headerTitleLink : null,
+              ]}
+              numberOfLines={1}
+            >
+              {title}
+            </Text>
+            <Text style={styles.headerSubtitle} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          </View>
+
+          {/* tiny affordance */}
+          {onPressTitle ? (
+            <Ionicons
+              name="chevron-forward"
+              size={16}
+              color={COLORS.textMuted}
+              style={{ marginLeft: 2 }}
+            />
+          ) : null}
+        </Pressable>
+
+        <Pressable
+          onPress={onOpenMenu}
+          hitSlop={10}
+          style={({ pressed }) => [
+            styles.headerIconBtn,
+            pressed && { opacity: 0.75 },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Conversation actions"
+        >
+          <Ionicons
+            name="ellipsis-vertical"
+            size={18}
+            color={COLORS.textMuted}
+          />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/* =============================================================================
+   Reusable Report Modal
+============================================================================= */
+
+function ReportModal({
+  visible,
+  title = "Report",
+  subtitle = "",
+  onClose,
+  onSubmit,
+  submitting = false,
+}) {
+  const [reason, setReason] = useState(REPORT_REASONS[0]?.key || "OTHER");
+  const [details, setDetails] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    setReason(REPORT_REASONS[0]?.key || "OTHER");
+    setDetails("");
+  }, [visible]);
+
+  const close = () => {
+    onClose?.();
+  };
+
+  const submit = () => {
+    onSubmit?.({ reason, details: safeString(details) || null });
+  };
+
+  return (
+    <Modal
+      visible={!!visible}
+      transparent
+      animationType="fade"
+      onRequestClose={close}
+    >
+      <Pressable style={styles.sheetBackdrop} onPress={close}>
+        <View />
+      </Pressable>
+
+      <View style={styles.reportCard}>
+        <View style={styles.sheetHandle} />
+        <Text style={styles.reportTitle}>{title}</Text>
+        {!!subtitle && (
+          <Text style={styles.reportSub} numberOfLines={2}>
+            {subtitle}
+          </Text>
+        )}
+
+        <Text style={styles.reportSection}>Reason</Text>
+        <View style={styles.reasonGrid}>
+          {REPORT_REASONS.map((r) => {
+            const active = r.key === reason;
+            return (
+              <Pressable
+                key={r.key}
+                onPress={() => setReason(r.key)}
+                style={({ pressed }) => [
+                  styles.reasonChip,
+                  active && styles.reasonChipActive,
+                  pressed && { opacity: 0.9 },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.reasonChipText,
+                    active && styles.reasonChipTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {r.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <Text style={styles.reportSection}>Details (optional)</Text>
+        <TextInput
+          value={details}
+          onChangeText={setDetails}
+          placeholder="Add a short note to help moderation…"
+          placeholderTextColor={COLORS.textMuted}
+          style={styles.detailsInput}
+          multiline
+          textAlignVertical="top"
+          maxLength={600}
+        />
+
+        <View style={styles.reportBtns}>
+          <Pressable
+            onPress={close}
+            style={({ pressed }) => [
+              styles.secondaryBtn,
+              { flex: 1, opacity: pressed ? 0.85 : 1 },
+            ]}
+          >
+            <Text style={styles.secondaryText}>Cancel</Text>
+          </Pressable>
+
+          <Pressable
+            disabled={submitting}
+            onPress={submit}
+            style={({ pressed }) => [
+              styles.primaryBtn,
+              { flex: 1, opacity: pressed || submitting ? 0.85 : 1 },
+            ]}
+          >
+            {submitting ? (
+              <View
+                style={{ flexDirection: "row", gap: 8, alignItems: "center" }}
+              >
+                <Ionicons name="time-outline" size={16} color="#fff" />
+                <Text style={styles.primaryText}>Submitting…</Text>
+              </View>
+            ) : (
+              <Text style={styles.primaryText}>Submit report</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const BLOCK_REASONS = [
+  { key: "HARASSMENT", label: "Harassment / bullying" },
+  { key: "SCAM", label: "Scam / fraud" },
+  { key: "SPAM", label: "Spam" },
+  { key: "UNWANTED", label: "Unwanted contact" },
+  { key: "OTHER", label: "Other" },
+];
+
+function BlockModal({
+  visible,
+  title = "Block user",
+  subtitle = "",
+  onClose,
+  onSubmit,
+  submitting = false,
+}) {
+  const [reason, setReason] = useState(BLOCK_REASONS[0]?.key || "OTHER");
+  const [details, setDetails] = useState("");
+
+  useEffect(() => {
+    if (!visible) return;
+    setReason(BLOCK_REASONS[0]?.key || "OTHER");
+    setDetails("");
+  }, [visible]);
+
+  const close = () => onClose?.();
+
+  const submit = () => {
+    const d = safeString(details);
+    const combined = d ? `${reason}: ${d}` : reason;
+    onSubmit?.({ reason: combined });
+  };
+
+  return (
+    <Modal
+      visible={!!visible}
+      transparent
+      animationType="fade"
+      onRequestClose={close}
+    >
+      <Pressable style={styles.sheetBackdrop} onPress={close}>
+        <View />
+      </Pressable>
+
+      <View style={styles.reportCard}>
+        <View style={styles.sheetHandle} />
+        <Text style={styles.reportTitle}>{title}</Text>
+
+        {!!subtitle && (
+          <Text style={styles.reportSub} numberOfLines={2}>
+            {subtitle}
+          </Text>
+        )}
+
+        <Text style={styles.reportSection}>Reason</Text>
+        <View style={styles.reasonGrid}>
+          {BLOCK_REASONS.map((r) => {
+            const active = r.key === reason;
+            return (
+              <Pressable
+                key={r.key}
+                onPress={() => setReason(r.key)}
+                style={({ pressed }) => [
+                  styles.reasonChip,
+                  active && styles.reasonChipActive,
+                  pressed && { opacity: 0.9 },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.reasonChipText,
+                    active && styles.reasonChipTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {r.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <Text style={styles.reportSection}>Details (optional)</Text>
+        <TextInput
+          value={details}
+          onChangeText={setDetails}
+          placeholder="Optional note…"
+          placeholderTextColor={COLORS.textMuted}
+          style={styles.detailsInput}
+          multiline
+          textAlignVertical="top"
+          maxLength={600}
+        />
+
+        <View style={styles.reportBtns}>
+          <Pressable
+            onPress={close}
+            style={({ pressed }) => [
+              styles.secondaryBtn,
+              { flex: 1, opacity: pressed ? 0.85 : 1 },
+            ]}
+          >
+            <Text style={styles.secondaryText}>Cancel</Text>
+          </Pressable>
+
+          <Pressable
+            disabled={submitting}
+            onPress={submit}
+            style={({ pressed }) => [
+              styles.primaryBtn,
+              { flex: 1, opacity: pressed || submitting ? 0.85 : 1 },
+            ]}
+          >
+            {submitting ? (
+              <View
+                style={{ flexDirection: "row", gap: 8, alignItems: "center" }}
+              >
+                <Ionicons name="time-outline" size={16} color="#fff" />
+                <Text style={styles.primaryText}>Blocking…</Text>
+              </View>
+            ) : (
+              <Text style={styles.primaryText}>Block user</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/* =============================================================================
+   Screen
+============================================================================= */
+
 export default function Thread() {
-  const { userId } = useLocalSearchParams();
+  const router = useRouter();
+  const client = useApolloClient();
+  const insets = useSafeAreaInsets();
+
+  const params = useLocalSearchParams();
+
+  const otherUserId = useMemo(() => {
+    const id = params?.userId ? String(params.userId) : "";
+    return id;
+  }, [params?.userId]);
+
+  const usernameParam = useMemo(
+    () => safeString(params?.username),
+    [params?.username],
+  );
+  const avatarUrlParam = useMemo(
+    () => safeString(params?.avatarUrl),
+    [params?.avatarUrl],
+  );
+
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [msgs, setMsgs] = useState(SEED);
+  const [msgs, setMsgs] = useState([]);
+
   const flatRef = useRef(null);
 
-  // state for ActionSheet and selected message
   const [sheetOpen, setSheetOpen] = useState(false);
   const [selectedMsg, setSelectedMsg] = useState(null);
 
-  // attachment sheet (simple for now, one action)
-  const [attachOpen, setAttachOpen] = useState(false);
+  const [threadMenuOpen, setThreadMenuOpen] = useState(false);
 
-  const title = useMemo(() => nameFromId(userId), [userId]);
+  const [reportTarget, setReportTarget] = useState(null);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportToast, setReportToast] = useState("");
+
+  const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
+  const me = meData?.me || null;
+
+  const { chats, fetchThread, sendMessage, markChatRead } = useMessaging();
+
+  const partnerRow = useMemo(() => {
+    const list = Array.isArray(chats) ? chats : [];
+    return (
+      list.find((row) => String(getRowUserId(row)) === String(otherUserId)) ||
+      null
+    );
+  }, [chats, otherUserId]);
+
+  const username = useMemo(() => {
+    const fromChats = partnerRow ? safeString(getRowUsername(partnerRow)) : "";
+    if (fromChats) return fromChats;
+    if (usernameParam) return usernameParam;
+    return "";
+  }, [partnerRow, usernameParam]);
+
+  const title = useMemo(() => {
+    if (username) return username;
+    return otherUserId ? `User ${otherUserId.slice(0, 6)}` : "Direct Message";
+  }, [username, otherUserId]);
+
   const subtitle = typing ? "Typing…" : "Direct message";
-  const avatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(
-    title
-  )}&background=2963FF&color=fff`;
 
-  const scrollToEnd = () => {
+  const avatar = useMemo(() => {
+    const fromChats = partnerRow ? safeString(getRowAvatar(partnerRow)) : "";
+    if (fromChats) return fromChats;
+    if (avatarUrlParam) return avatarUrlParam;
+
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(
+      title || "User",
+    )}&background=2963FF&color=fff`;
+  }, [partnerRow, avatarUrlParam, title]);
+
+  const scrollToEnd = useCallback(() => {
     requestAnimationFrame(() => {
       flatRef.current?.scrollToEnd({ animated: true });
     });
-  };
+  }, []);
 
-  const onSend = () => {
-    if (!input.trim()) return;
+  /* ---------------- Load thread (real) ---------------- */
+
+  const fetchThreadRef = useRef(fetchThread);
+  const markChatReadRef = useRef(markChatRead);
+
+  useEffect(() => {
+    fetchThreadRef.current = fetchThread;
+  }, [fetchThread]);
+
+  useEffect(() => {
+    markChatReadRef.current = markChatRead;
+  }, [markChatRead]);
+
+  const loadThread = useCallback(
+    async (source = "unknown") => {
+      if (!otherUserId) return;
+
+      try {
+        console.log("[thread] loadThread", { source, otherUserId });
+
+        const list = await fetchThreadRef.current?.(otherUserId, {
+          page: 1,
+          pageSize: 80,
+        });
+
+        const arr = Array.isArray(list) ? list : [];
+        const mapped = arr
+          .map((m) => normalizeMessage(m, me?.id))
+          .filter((m) => m && m.id)
+          .sort((a, b) => a.ts - b.ts);
+
+        setMsgs(mapped);
+
+        try {
+          markChatReadRef.current?.(otherUserId);
+        } catch (_) {}
+
+        setTimeout(scrollToEnd, 50);
+      } catch (e) {
+        console.log("[thread] loadThread error", e?.message || e);
+      }
+    },
+    [otherUserId, me?.id, scrollToEnd],
+  );
+
+  useEffect(() => {
+    loadThread("mount");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otherUserId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadThread("focus");
+      return () => {};
+    }, [loadThread]),
+  );
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    Promise.resolve(loadThread("pull_to_refresh")).finally(() => {
+      setTimeout(() => setRefreshing(false), 250);
+    });
+  }, [loadThread]);
+
+  /* ---------------- Sending (real) ---------------- */
+
+  const onSend = useCallback(async () => {
+    const content = safeString(input);
+    if (!content || !otherUserId) return;
+
     const optimistic = {
       id: `local-${Date.now()}`,
       author: "me",
-      text: input.trim(),
-      ts: Date.now(),
-      status: "sending", // sending → sent → delivered → read
-    };
-    setMsgs((prev) => [...prev, optimistic]);
-    setInput("");
-    scrollToEnd();
-
-    // Fake network progression of states + reply
-    setTimeout(() => {
-      setMsgs((prev) =>
-        prev.map((m) => (m.id === optimistic.id ? { ...m, status: "sent" } : m))
-      );
-    }, 400);
-    setTimeout(() => {
-      setMsgs((prev) =>
-        prev.map((m) =>
-          m.id === optimistic.id ? { ...m, status: "delivered" } : m
-        )
-      );
-    }, 900);
-    setTimeout(() => setTyping(true), 500);
-    setTimeout(() => {
-      setTyping(false);
-      const reply = {
-        id: `reply-${Date.now()}`,
-        author: "them",
-        text: "Sounds good—send your offer over.",
-        ts: Date.now(),
-        status: "read",
-      };
-      setMsgs((prev) => [...prev, reply]);
-      setMsgs((prev) =>
-        prev.map((m) => (m.id === optimistic.id ? { ...m, status: "read" } : m))
-      );
-      scrollToEnd();
-    }, 1500);
-  };
-
-  // attach placeholder — adds an image message from "me"
-  const onAttachImage = () => {
-    setAttachOpen(false);
-    const imgMsg = {
-      id: `img-${Date.now()}`,
-      author: "me",
-      text: "", // optional caption later
-      image:
-        "https://images.unsplash.com/photo-1542736667-069246bdbc74?w=1400&q=70&auto=format&fit=crop",
+      text: content,
       ts: Date.now(),
       status: "sending",
+      image: null,
+      _optimistic: true,
     };
-    setMsgs((prev) => [...prev, imgMsg]);
-    scrollToEnd();
-    // fake send state progression
-    setTimeout(() => {
-      setMsgs((prev) =>
-        prev.map((m) => (m.id === imgMsg.id ? { ...m, status: "sent" } : m))
-      );
-    }, 400);
-    setTimeout(() => {
+
+    setMsgs((prev) => [...prev, optimistic]);
+    setInput("");
+    setTimeout(scrollToEnd, 20);
+
+    try {
+      const sent = await sendMessage?.(otherUserId, content, null);
+      await loadThread("after_send");
+      return sent || null;
+    } catch (e) {
+      console.log("[thread] sendMessage error", e?.message || e);
       setMsgs((prev) =>
         prev.map((m) =>
-          m.id === imgMsg.id ? { ...m, status: "delivered" } : m
-        )
+          m.id === optimistic.id ? { ...m, status: "failed" } : m,
+        ),
       );
-    }, 900);
-    setTimeout(() => {
-      setMsgs((prev) =>
-        prev.map((m) => (m.id === imgMsg.id ? { ...m, status: "read" } : m))
-      );
-    }, 1500);
-  };
+      return null;
+    }
+  }, [input, otherUserId, sendMessage, loadThread, scrollToEnd]);
 
-  // Pull to refresh → prepend older mock messages
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setTimeout(() => {
-      const older = {
-        id: `old-${Date.now()}`,
-        author: "them",
-        text: "Hi! I have spares from SV8 if you’re collecting.",
-        ts: Date.now() - 1000 * 60 * 60 * 6, // 6h earlier
-        status: "read",
-      };
-      setMsgs((prev) => [older, ...prev]);
-      setRefreshing(false);
-    }, 800);
-  }, []);
+  /* ---------------- With day separators ---------------- */
 
-  // Build a renderable array with day separators
   const withSeparators = useMemo(() => {
     const out = [];
     let lastTs = null;
-    msgs.forEach((m) => {
+
+    (Array.isArray(msgs) ? msgs : []).forEach((m) => {
       if (!lastTs || !isSameDay(lastTs, m.ts)) {
         out.push({ _sep: true, id: `sep-${m.ts}`, label: dayLabel(m.ts) });
       }
       out.push(m);
       lastTs = m.ts;
     });
+
     return out;
   }, [msgs]);
 
-  // open sheet on long-press
+  /* ---------------- Message actions ---------------- */
+
   const handleLongPress = (msg) => {
     setSelectedMsg(msg);
     setSheetOpen(true);
@@ -219,17 +743,153 @@ export default function Thread() {
 
   const onCopy = () => {
     setSheetOpen(false);
-    // UI-only: if it's an image-only message with no text, show a small toast substitute:
-    // TODO: copy to clipboard via 'expo-clipboard'
-    // Clipboard.setStringAsync(selectedMsg?.text || selectedMsg?.image || "");
-    // For now, just close the sheet.
+    // TODO: expo-clipboard
   };
 
   const onDelete = () => {
     setSheetOpen(false);
     if (!selectedMsg) return;
-    setMsgs((prev) => prev.filter((m) => m.id !== selectedMsg.id && m.id !== `sep-${selectedMsg.ts}`));
+    setMsgs((prev) => prev.filter((m) => m.id !== selectedMsg.id));
   };
+
+  const openReportUser = useCallback(() => {
+    setThreadMenuOpen(false);
+    if (!otherUserId) return;
+
+    setReportTarget({
+      type: "user",
+      id: otherUserId,
+      subtitle: username
+        ? `Reporting @${username}`
+        : `Reporting user ${otherUserId.slice(0, 6)}`,
+    });
+    setReportOpen(true);
+  }, [otherUserId, username]);
+
+  const openReportMessage = useCallback(() => {
+    setSheetOpen(false);
+
+    const mid = selectedMsg?.id ? String(selectedMsg.id) : "";
+    if (!mid) return;
+
+    setReportTarget({
+      type: "message",
+      id: mid,
+      subtitle: "Reporting this message to moderation",
+    });
+    setReportOpen(true);
+  }, [selectedMsg]);
+
+  const submitReport = useCallback(
+    async ({ reason, details }) => {
+      if (!reportTarget?.type || !reportTarget?.id) return;
+
+      setReportSubmitting(true);
+      setReportToast("");
+
+      try {
+        if (reportTarget.type === "user") {
+          await client.mutate({
+            mutation: REPORT_USER_MUTATION,
+            variables: {
+              userId: String(reportTarget.id),
+              reason: String(reason),
+              details: details ? String(details) : null,
+            },
+          });
+        } else {
+          await client.mutate({
+            mutation: REPORT_MESSAGE_MUTATION,
+            variables: {
+              messageId: String(reportTarget.id),
+              reason: String(reason),
+              details: details ? String(details) : null,
+            },
+          });
+        }
+
+        setReportOpen(false);
+        setReportTarget(null);
+
+        setReportToast("Report submitted. Thanks for helping keep chat safe.");
+        setTimeout(() => setReportToast(""), 2500);
+      } catch (e) {
+        console.log("[thread] report error", e?.message || e);
+        setReportToast(
+          e?.message || "Could not submit report. Please try again.",
+        );
+        setTimeout(() => setReportToast(""), 3500);
+      } finally {
+        setReportSubmitting(false);
+      }
+    },
+    [client, reportTarget],
+  );
+
+  /* ---------------- Block user ---------------- */
+
+  const [blockOpen, setBlockOpen] = useState(false);
+  const [blockSubmitting, setBlockSubmitting] = useState(false);
+
+  const openBlockUser = useCallback(() => {
+    setThreadMenuOpen(false);
+    if (!otherUserId) return;
+    setBlockOpen(true);
+  }, [otherUserId]);
+
+  const submitBlock = useCallback(
+    async ({ reason }) => {
+      if (!otherUserId) return;
+
+      setBlockSubmitting(true);
+      setReportToast("");
+
+      try {
+        await client.mutate({
+          mutation: BLOCK_USER_MUTATION,
+          variables: {
+            userId: String(otherUserId),
+            reason: safeString(reason) || "OTHER",
+          },
+        });
+
+        setBlockOpen(false);
+
+        setReportToast(
+          username
+            ? `Blocked @${username}. You won’t receive messages from them.`
+            : "User blocked. You won’t receive messages from them.",
+        );
+
+        setTimeout(() => {
+          setReportToast("");
+          router.back();
+        }, 1200);
+      } catch (e) {
+        console.log("[thread] block error", e?.message || e);
+        setReportToast(e?.message || "Could not block user. Please try again.");
+        setTimeout(() => setReportToast(""), 3500);
+      } finally {
+        setBlockSubmitting(false);
+      }
+    },
+    [client, otherUserId, username, router],
+  );
+
+  /* ---------------- View profile (header tap) ---------------- */
+
+  const goToProfileFromHeader = useCallback(() => {
+    // ✅ NOTE: no modal to close; this is direct from header tap
+    if (!username) {
+      setReportToast("Profile unavailable until username is loaded.");
+      setTimeout(() => setReportToast(""), 2000);
+      return;
+    }
+
+    router.push(`/profile/${encodeURIComponent(username)}`);
+  }, [router, username]);
+
+  /* ---------------- Render ---------------- */
 
   const renderItem = ({ item }) => {
     if (item._sep) {
@@ -239,13 +899,16 @@ export default function Thread() {
         </View>
       );
     }
+
     const mine = item.author === "me";
     const bubbleStyle = [styles.bubble, mine ? styles.right : styles.left];
+
+    const textStyle = [styles.msg, mine ? styles.msgMine : styles.msgTheirs];
+    const metaStyle = [styles.meta, mine ? styles.metaMine : styles.metaTheirs];
 
     return (
       <Pressable onLongPress={() => handleLongPress(item)} delayLongPress={250}>
         <View style={bubbleStyle}>
-          {/* Image bubble (optional text below) */}
           {!!item.image && (
             <Image
               source={{ uri: item.image }}
@@ -253,15 +916,17 @@ export default function Thread() {
               resizeMode="cover"
             />
           )}
-          {!!item.text && <Text style={styles.msg}>{item.text}</Text>}
+
+          {!!item.text && <Text style={textStyle}>{item.text}</Text>}
 
           <View style={styles.metaRow}>
-            <Text style={styles.meta}>
+            <Text style={metaStyle}>
               {new Date(item.ts).toLocaleTimeString([], {
                 hour: "2-digit",
                 minute: "2-digit",
               })}
             </Text>
+
             {mine && <StatusTicks status={item.status} />}
           </View>
         </View>
@@ -271,14 +936,29 @@ export default function Thread() {
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-      <PageHeaderBack title={title} subtitle={subtitle} avatar={avatar} />
+      <ThreadHeader
+        title={title}
+        subtitle={subtitle}
+        avatar={avatar}
+        insetsTop={insets.top}
+        onBack={() => router.back()}
+        onOpenMenu={() => setThreadMenuOpen(true)}
+        onPressTitle={goToProfileFromHeader} // ✅ NEW
+      />
+
+      {!!reportToast && (
+        <View style={styles.toast}>
+          <Text style={styles.toastText} numberOfLines={2}>
+            {reportToast}
+          </Text>
+        </View>
+      )}
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={0}
       >
-        {/* Typing pill */}
         {typing && (
           <View style={styles.typingWrap}>
             <View style={styles.dot} />
@@ -291,7 +971,7 @@ export default function Thread() {
         <FlatList
           ref={flatRef}
           style={{ flex: 1, paddingHorizontal: 16 }}
-          contentContainerStyle={{ paddingTop: 8, paddingBottom: 12 }}
+          contentContainerStyle={{ paddingTop: 10, paddingBottom: 12 }}
           data={withSeparators}
           keyExtractor={(m) => m.id}
           renderItem={renderItem}
@@ -305,21 +985,21 @@ export default function Thread() {
               progressBackgroundColor={COLORS.surface}
             />
           }
+          ListEmptyComponent={
+            <View style={{ paddingTop: 30, alignItems: "center" }}>
+              <Text style={{ color: COLORS.textMuted, fontWeight: "800" }}>
+                No messages yet
+              </Text>
+              <Text style={{ color: COLORS.textMuted, marginTop: 6 }}>
+                Say hello to start the conversation.
+              </Text>
+            </View>
+          }
           onContentSizeChange={scrollToEnd}
           onLayout={scrollToEnd}
         />
 
-        {/* Composer */}
         <View style={styles.inputRow}>
-          {/* Attach button (UI-only) */}
-          <Pressable
-            onPress={() => setAttachOpen(true)}
-            style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1, paddingHorizontal: 6 }]}
-            accessibilityLabel="Attach image"
-          >
-            <Ionicons name="attach-outline" size={22} color={COLORS.textMuted} />
-          </Pressable>
-
           <TextInput
             value={input}
             onChangeText={setInput}
@@ -329,98 +1009,307 @@ export default function Thread() {
             returnKeyType="send"
             onSubmitEditing={onSend}
           />
+
           <Pressable style={styles.send} onPress={onSend}>
             <Text style={{ color: "#fff", fontWeight: "800" }}>Send</Text>
           </Pressable>
         </View>
       </KeyboardAvoidingView>
 
-      {/* ActionSheet for message options */}
+      {/* Message ActionSheet */}
       <Modal
         visible={sheetOpen}
         transparent
         animationType="fade"
         onRequestClose={() => setSheetOpen(false)}
       >
-        <Pressable style={styles.sheetBackdrop} onPress={() => setSheetOpen(false)}>
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setSheetOpen(false)}
+        >
           <View />
         </Pressable>
+
         <View style={styles.sheetCard}>
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle}>Message actions</Text>
+
           <Pressable style={styles.sheetBtn} onPress={onCopy}>
             <Ionicons name="copy-outline" size={18} color={COLORS.text} />
             <Text style={styles.sheetBtnText}>Copy</Text>
           </Pressable>
-          <Pressable style={[styles.sheetBtn, { borderTopWidth: 0 }]} onPress={onDelete}>
-            <Ionicons name="trash-outline" size={18} color={COLORS.error} />
-            <Text style={[styles.sheetBtnText, { color: COLORS.error }]}>Delete</Text>
+
+          <Pressable style={styles.sheetBtn} onPress={openReportMessage}>
+            <Ionicons
+              name="flag-outline"
+              size={18}
+              color={COLORS.error || "#ff6b6b"}
+            />
+            <Text
+              style={[
+                styles.sheetBtnText,
+                { color: COLORS.error || "#ff6b6b" },
+              ]}
+            >
+              Report message
+            </Text>
           </Pressable>
-          <Pressable style={styles.sheetCancel} onPress={() => setSheetOpen(false)}>
+
+          <Pressable
+            style={[styles.sheetBtn, { borderTopWidth: 0 }]}
+            onPress={onDelete}
+          >
+            <Ionicons name="trash-outline" size={18} color={COLORS.textMuted} />
+            <Text style={[styles.sheetBtnText, { color: COLORS.textMuted }]}>
+              Delete (UI-only)
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.sheetCancel}
+            onPress={() => setSheetOpen(false)}
+          >
             <Text style={styles.sheetCancelText}>Cancel</Text>
           </Pressable>
         </View>
       </Modal>
 
-      {/* Attachment sheet (simple) */}
+      {/* Thread Menu (no "View profile" here anymore) */}
       <Modal
-        visible={attachOpen}
+        visible={threadMenuOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => setAttachOpen(false)}
+        onRequestClose={() => setThreadMenuOpen(false)}
       >
-        <Pressable style={styles.sheetBackdrop} onPress={() => setAttachOpen(false)}>
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setThreadMenuOpen(false)}
+        >
           <View />
         </Pressable>
+
         <View style={styles.sheetCard}>
           <View style={styles.sheetHandle} />
-          <Text style={styles.sheetTitle}>Add attachment</Text>
-          <Pressable style={styles.sheetBtn} onPress={onAttachImage}>
-            <Ionicons name="image-outline" size={18} color={COLORS.text} />
-            <Text style={styles.sheetBtnText}>Attach image (placeholder)</Text>
+          <Text style={styles.sheetTitle}>Conversation</Text>
+
+          <Pressable style={styles.sheetBtn} onPress={openReportUser}>
+            <Ionicons
+              name="flag-outline"
+              size={18}
+              color={COLORS.error || "#ff6b6b"}
+            />
+            <Text
+              style={[
+                styles.sheetBtnText,
+                { color: COLORS.error || "#ff6b6b" },
+              ]}
+            >
+              Report user
+            </Text>
           </Pressable>
-          <Pressable style={styles.sheetCancel} onPress={() => setAttachOpen(false)}>
+
+          <Pressable style={styles.sheetBtn} onPress={openBlockUser}>
+            <Ionicons
+              name="ban-outline"
+              size={18}
+              color={COLORS.error || "#ff6b6b"}
+            />
+            <Text
+              style={[
+                styles.sheetBtnText,
+                { color: COLORS.error || "#ff6b6b" },
+              ]}
+            >
+              Block user
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.sheetCancel}
+            onPress={() => setThreadMenuOpen(false)}
+          >
             <Text style={styles.sheetCancelText}>Cancel</Text>
           </Pressable>
         </View>
       </Modal>
+
+      {/* Report Modal */}
+      <ReportModal
+        visible={reportOpen}
+        title={
+          reportTarget?.type === "message" ? "Report message" : "Report user"
+        }
+        subtitle={reportTarget?.subtitle || ""}
+        submitting={reportSubmitting}
+        onClose={() => {
+          if (reportSubmitting) return;
+          setReportOpen(false);
+          setReportTarget(null);
+        }}
+        onSubmit={submitReport}
+      />
+
+      {/* Block Modal */}
+      <BlockModal
+        visible={blockOpen}
+        title="Block user"
+        subtitle={username ? `Blocking @${username}` : "Blocking this user"}
+        submitting={blockSubmitting}
+        onClose={() => {
+          if (blockSubmitting) return;
+          setBlockOpen(false);
+        }}
+        onSubmit={submitBlock}
+      />
     </View>
   );
 }
 
-// Status ticks for your messages
+/* =============================================================================
+   Status ticks
+============================================================================= */
+
 function StatusTicks({ status }) {
   const s = status || "sent";
   const isDelivered = s === "delivered" || s === "read";
   const isRead = s === "read";
+
+  if (s === "failed") {
+    return (
+      <Ionicons
+        name="alert-circle-outline"
+        size={14}
+        color={COLORS.error || "#ff6b6b"}
+        style={{ marginLeft: 6 }}
+      />
+    );
+  }
+
   return (
     <View style={styles.ticks}>
       <View
         style={[
           styles.tick,
           styles.tickOn,
-          isRead ? { backgroundColor: "transparent", borderColor: COLORS.accent } : null,
+          isRead
+            ? { backgroundColor: "transparent", borderColor: COLORS.accent }
+            : null,
         ]}
       />
       <View
         style={[
           styles.tick,
           isDelivered ? styles.tickOn : styles.tickOff,
-          isRead ? { backgroundColor: "transparent", borderColor: COLORS.accent } : null,
+          isRead
+            ? { backgroundColor: "transparent", borderColor: COLORS.accent }
+            : null,
         ]}
       />
     </View>
   );
 }
 
+/* =============================================================================
+   Styles
+============================================================================= */
+
 const styles = StyleSheet.create({
-  // bubbles
+  /* ---------- Header ---------- */
+  headerWrap: {
+    backgroundColor: COLORS.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    paddingHorizontal: 10,
+    paddingBottom: 10,
+  },
+  headerRow: {
+    height: 54,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  headerIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.alt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+
+  // ✅ header center is now a Pressable
+  headerCenter: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 2,
+    minWidth: 0,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+
+  headerAvatarRing: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    padding: 2,
+    backgroundColor: "rgba(41,99,255,0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(41,99,255,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.alt,
+  },
+  headerTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 16,
+    letterSpacing: 0.2,
+  },
+  headerTitleLink: {
+    textDecorationLine: "underline",
+    textDecorationStyle: "solid",
+  },
+  headerSubtitle: {
+    color: COLORS.textMuted,
+    fontWeight: "800",
+    fontSize: 12.5,
+    marginTop: 1,
+  },
+
+  /* ---------- Toast ---------- */
+  toast: {
+    position: "absolute",
+    top: 92,
+    left: 12,
+    right: 12,
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    zIndex: 20,
+  },
+  toastText: { color: COLORS.text, fontWeight: "800", textAlign: "center" },
+
+  /* ---------- Bubbles ---------- */
   bubble: { maxWidth: "78%", padding: 10, borderRadius: 12 },
   left: { backgroundColor: COLORS.surface, alignSelf: "flex-start" },
   right: { backgroundColor: COLORS.accent, alignSelf: "flex-end" },
-  msg: { color: "#fff" },
 
-  // image message
+  msg: { fontWeight: "700" },
+  msgMine: { color: "#fff" },
+  msgTheirs: { color: COLORS.text },
+
   image: {
     width: 230,
     height: 150,
@@ -429,9 +1318,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#00000022",
   },
 
-  // time + ticks
   metaRow: { flexDirection: "row", alignItems: "center", marginTop: 4, gap: 6 },
-  meta: { color: "#e0e0e0aa", fontSize: 10 },
+  meta: { fontSize: 10, fontWeight: "800" },
+  metaMine: { color: "#e0e0e0aa" },
+  metaTheirs: { color: COLORS.textMuted },
+
   ticks: { flexDirection: "row", gap: 3 },
   tick: {
     width: 8,
@@ -444,7 +1335,7 @@ const styles = StyleSheet.create({
   tickOn: { backgroundColor: "#ffffffdd" },
   tickOff: { backgroundColor: "transparent" },
 
-  // day separator
+  /* ---------- Separators ---------- */
   sepWrap: { alignItems: "center", marginVertical: 6 },
   sepText: {
     color: COLORS.textMuted,
@@ -457,7 +1348,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
 
-  // typing
+  /* ---------- Typing ---------- */
   typingWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -474,7 +1365,7 @@ const styles = StyleSheet.create({
   },
   typingText: { color: COLORS.textMuted, fontSize: 12 },
 
-  // composer
+  /* ---------- Composer ---------- */
   inputRow: {
     flexDirection: "row",
     gap: 8,
@@ -499,11 +1390,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
 
-  // action sheet
-  sheetBackdrop: {
-    flex: 1,
-    backgroundColor: "#00000088",
-  },
+  /* ---------- Sheets ---------- */
+  sheetBackdrop: { flex: 1, backgroundColor: "#00000088" },
   sheetCard: {
     position: "absolute",
     left: 12,
@@ -527,11 +1415,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.border,
     marginBottom: 8,
   },
-  sheetTitle: {
-    color: COLORS.text,
-    fontWeight: "800",
-    marginBottom: 8,
-  },
+  sheetTitle: { color: COLORS.text, fontWeight: "800", marginBottom: 8 },
   sheetBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -549,4 +1433,75 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   sheetCancelText: { color: COLORS.text, fontWeight: "800" },
+
+  /* ---------- Report / Block modal ---------- */
+  reportCard: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    bottom: 12,
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    padding: 12,
+  },
+  reportTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
+  reportSub: { color: COLORS.textMuted, marginTop: 6, lineHeight: 18 },
+  reportSection: { color: COLORS.text, fontWeight: "900", marginTop: 12 },
+
+  reasonGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  reasonChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.alt,
+    maxWidth: "100%",
+  },
+  reasonChipActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: "rgba(41,99,255,0.12)",
+  },
+  reasonChipText: {
+    color: COLORS.textMuted,
+    fontWeight: "800",
+    fontSize: 12.5,
+  },
+  reasonChipTextActive: { color: COLORS.text, fontWeight: "900" },
+
+  detailsInput: {
+    marginTop: 10,
+    height: 110,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.alt,
+    color: COLORS.text,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+
+  reportBtns: { flexDirection: "row", gap: 10, marginTop: 12 },
+
+  primaryBtn: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryText: { color: "#fff", fontWeight: "900" },
+
+  secondaryBtn: {
+    backgroundColor: COLORS.alt,
+    borderColor: COLORS.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryText: { color: COLORS.text, fontWeight: "900" },
 });

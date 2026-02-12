@@ -1,7 +1,9 @@
+// app/(tabs)/_layout.js
 import { Ionicons } from "@expo/vector-icons";
-import { Tabs, useRouter } from "expo-router";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
-import { useEffect, useRef } from "react";
+import Constants from "expo-constants";
+import { Tabs, useRouter } from "expo-router";
+import { useEffect, useMemo, useRef } from "react";
 import { clearToken } from "../../lib/auth";
 import { FEATURES } from "../../lib/features";
 
@@ -10,14 +12,39 @@ export default function TabsLayout() {
   const { data, loading, error } = useMeQuery({ fetchPolicy: "cache-first" });
   const autoLoggedOutRef = useRef(false);
 
+  const extra = Constants.expoConfig?.extra || {};
+  const DEV_MODE = !!extra.EXPO_PUBLIC_DEV_MODE;
+
+  const showMessages = useMemo(() => {
+    if (DEV_MODE) return true;
+    return !!FEATURES.messages;
+  }, [DEV_MODE]);
+
+  const showExchange = useMemo(() => {
+    if (DEV_MODE) return !!FEATURES.exchange; // keep exchange true/false even in dev
+    return !!FEATURES.exchange;
+  }, [DEV_MODE]);
+
   useEffect(() => {
+    // Helpful one-liner to diagnose missing tab
+    console.log("[tabs] flags", {
+      DEV_MODE,
+      FEATURES_messages: FEATURES.messages,
+      showMessages,
+      hasUser: !!data?.me,
+      loading,
+      hasError: !!error,
+    });
+
     if (autoLoggedOutRef.current) return;
     if (loading) return;
 
     const user = data?.me;
     if (user) return;
 
-    const graphQlErrors = Array.isArray(error?.graphQLErrors) ? error.graphQLErrors : [];
+    const graphQlErrors = Array.isArray(error?.graphQLErrors)
+      ? error.graphQLErrors
+      : [];
     const hasAuthGraphQLError = graphQlErrors.some((err) => {
       const code = String(err?.extensions?.code || "").toUpperCase();
       return code === "UNAUTHENTICATED" || code === "FORBIDDEN";
@@ -26,7 +53,9 @@ export default function TabsLayout() {
     const networkError = error?.networkError;
     const statusCode =
       networkError && typeof networkError === "object"
-        ? networkError.statusCode ?? networkError.status ?? networkError.response?.status
+        ? (networkError.statusCode ??
+          networkError.status ??
+          networkError.response?.status)
         : null;
     const hasAuthNetworkError = statusCode === 401 || statusCode === 403;
 
@@ -46,7 +75,7 @@ export default function TabsLayout() {
       }
       router.replace("/auth");
     })();
-  }, [data, error, loading, router]);
+  }, [data, error, loading, router, DEV_MODE, showMessages]);
 
   return (
     <Tabs
@@ -61,26 +90,33 @@ export default function TabsLayout() {
         name="home"
         options={{
           title: "Home",
-          tabBarIcon: ({ color, size }) => <Ionicons name="home" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="home" color={color} size={size} />
+          ),
         }}
       />
+
       <Tabs.Screen
         name="search"
         options={{
           title: "Search",
-          tabBarIcon: ({ color, size }) => <Ionicons name="search" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="search" color={color} size={size} />
+          ),
         }}
       />
+
       <Tabs.Screen
         name="collection"
         options={{
           title: "Collection",
-          tabBarIcon: ({ color, size }) => <Ionicons name="albums" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="albums" color={color} size={size} />
+          ),
         }}
       />
 
-      {/* EXCHANGE: your route folder is likely "(tabs)/market", but the feature is "exchange" */}
-      {FEATURES.exchange ? (
+      {showExchange ? (
         <Tabs.Screen
           name="market"
           options={{
@@ -91,7 +127,6 @@ export default function TabsLayout() {
           }}
         />
       ) : (
-        // Hidden fallback ensures Expo Router does not auto-add the tab button
         <Tabs.Screen name="market" options={{ href: null }} />
       )}
 
@@ -99,12 +134,13 @@ export default function TabsLayout() {
         name="profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color, size }) => <Ionicons name="person" color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person" color={color} size={size} />
+          ),
         }}
       />
 
-      {/* MESSAGES */}
-      {FEATURES.messages ? (
+      {showMessages ? (
         <Tabs.Screen
           name="messages"
           options={{

@@ -70,7 +70,6 @@ const PROFILE_BINDERS_MIN_IDS = gql`
   }
 `;
 
-
 const PROFILE_WISHLIST_MIN = gql`
   query ProfileWishlist_Min($userId: ID!) {
     wishlist(userId: $userId, page: 1, pageSize: 1) {
@@ -87,7 +86,8 @@ const PROFILE_WISHLIST_MIN = gql`
 function toArray(input) {
   if (!input) return [];
   if (Array.isArray(input)) return input;
-  if (Array.isArray(input.edges)) return input.edges.map((e) => e?.node ?? e).filter(Boolean);
+  if (Array.isArray(input.edges))
+    return input.edges.map((e) => e?.node ?? e).filter(Boolean);
   if (Array.isArray(input.nodes)) return input.nodes.filter(Boolean);
   if (Array.isArray(input.items)) return input.items.filter(Boolean);
   if (Array.isArray(input.results)) return input.results.filter(Boolean);
@@ -96,7 +96,8 @@ function toArray(input) {
     const v = input[k];
     if (Array.isArray(v)) return v;
     if (v && typeof v === "object") {
-      if (Array.isArray(v.edges)) return v.edges.map((e) => e?.node ?? e).filter(Boolean);
+      if (Array.isArray(v.edges))
+        return v.edges.map((e) => e?.node ?? e).filter(Boolean);
       if (Array.isArray(v.nodes)) return v.nodes.filter(Boolean);
     }
   }
@@ -169,12 +170,15 @@ export default function OverviewTab({
     notifyOnNetworkStatusChange: true,
   });
 
-  const { data: myBindersData, error: myBindersError } = useQuery(MY_BINDERS_MIN_IDS, {
-    skip: !isOwner,
-    fetchPolicy: "cache-and-network",
-    nextFetchPolicy: "cache-first",
-    notifyOnNetworkStatusChange: true,
-  });
+  const { data: myBindersData, error: myBindersError } = useQuery(
+    MY_BINDERS_MIN_IDS,
+    {
+      skip: !isOwner,
+      fetchPolicy: "cache-and-network",
+      nextFetchPolicy: "cache-first",
+      notifyOnNetworkStatusChange: true,
+    },
+  );
 
   const { data: myWlData } = useQuery(MY_WISHLIST_MIN, {
     skip: !isOwner,
@@ -192,13 +196,16 @@ export default function OverviewTab({
     notifyOnNetworkStatusChange: true,
   });
 
-  const { data: profileBindersData, error: profileBindersError } = useQuery(PROFILE_BINDERS_MIN_IDS, {
-    skip: !isProfileView,
-    variables: isProfileView ? { userId } : undefined,
-    fetchPolicy: "cache-and-network",
-    nextFetchPolicy: "cache-first",
-    notifyOnNetworkStatusChange: true,
-  });
+  const { data: profileBindersData, error: profileBindersError } = useQuery(
+    PROFILE_BINDERS_MIN_IDS,
+    {
+      skip: !isProfileView,
+      variables: isProfileView ? { userId } : undefined,
+      fetchPolicy: "cache-and-network",
+      nextFetchPolicy: "cache-first",
+      notifyOnNetworkStatusChange: true,
+    },
+  );
 
   const { data: profileWlData } = useQuery(PROFILE_WISHLIST_MIN, {
     skip: !isProfileView,
@@ -238,7 +245,7 @@ export default function OverviewTab({
     // collection
     const collectionListRaw =
       Array.isArray(colData?.myCollection) || Array.isArray(colData?.collection)
-        ? (colData?.myCollection || colData?.collection)
+        ? colData?.myCollection || colData?.collection
         : toArray(colData?.myCollection || colData?.collection);
 
     const cardsFromQ = Array.isArray(collectionListRaw)
@@ -249,7 +256,7 @@ export default function OverviewTab({
     const bindersListRaw =
       Array.isArray(bindersData?.myBinders) ||
       Array.isArray(bindersData?.browseBinders)
-        ? (bindersData?.myBinders || bindersData?.browseBinders)
+        ? bindersData?.myBinders || bindersData?.browseBinders
         : toArray(bindersData?.myBinders || bindersData?.browseBinders);
 
     const bindersFromQ = Array.isArray(bindersListRaw)
@@ -265,17 +272,20 @@ export default function OverviewTab({
       binders:
         (isNum(bindersCount) ? bindersCount : undefined) ??
         (isNum(bindersFromQ) ? bindersFromQ : undefined) ??
-        (stats?.binders ?? 0),
+        stats?.binders ??
+        0,
 
       cards:
         (isNum(cardsCount) ? cardsCount : undefined) ??
         (isNum(cardsFromQ) ? cardsFromQ : undefined) ??
-        (stats?.cards ?? 0),
+        stats?.cards ??
+        0,
 
       wishlist:
         (isNum(wishlistCount) ? wishlistCount : undefined) ??
         (isNum(wlFromQ) ? wlFromQ : undefined) ??
-        (stats?.wishlist ?? 0),
+        stats?.wishlist ??
+        0,
 
       trades: stats?.trades ?? 0,
       sales: stats?.sales ?? 0,
@@ -332,12 +342,20 @@ export default function OverviewTab({
       {showAccountActions && (
         <Section title="Account" compact>
           <Pressable style={styles.actionRow} onPress={onOpenSettings}>
-            <Text style={styles.actionText}>App Settings</Text>
-            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+            <Text style={styles.actionText}>App/Account Settings</Text>
+            <Ionicons
+              name="chevron-forward"
+              size={16}
+              color={COLORS.textMuted}
+            />
           </Pressable>
           <Pressable style={styles.actionRow} onPress={onLogout}>
             <Text style={styles.actionText}>Log out</Text>
-            <Ionicons name="log-out-outline" size={16} color={COLORS.textMuted} />
+            <Ionicons
+              name="log-out-outline"
+              size={16}
+              color={COLORS.textMuted}
+            />
           </Pressable>
         </Section>
       )}
@@ -346,9 +364,18 @@ export default function OverviewTab({
 }
 
 /* --- Section wrapper --- */
-function Section({ title, subtitle, children, showEdit, onEdit, compact = false }) {
+function Section({
+  title,
+  subtitle,
+  children,
+  showEdit,
+  onEdit,
+  compact = false,
+}) {
   return (
-    <View style={[styles.card, compact && { paddingTop: 10, paddingBottom: 10 }]}>
+    <View
+      style={[styles.card, compact && { paddingTop: 10, paddingBottom: 10 }]}
+    >
       <View style={styles.cardHeader}>
         <View style={{ flex: 1 }}>
           <Text style={styles.cardTitle}>{title}</Text>
@@ -357,13 +384,16 @@ function Section({ title, subtitle, children, showEdit, onEdit, compact = false 
         {showEdit && (
           <Pressable
             onPress={onEdit}
-            style={({ pressed }) => [styles.editBtn, pressed && { opacity: 0.9 }]}
+            style={({ pressed }) => [
+              styles.editBtn,
+              pressed && { opacity: 0.9 },
+            ]}
             accessibilityRole="button"
             accessibilityLabel={`Edit ${title}`}
             hitSlop={6}
           >
-          <Ionicons name="create-outline" size={14} color={COLORS.accent} />
-          <Text style={styles.editText}>Edit</Text>
+            <Ionicons name="create-outline" size={14} color={COLORS.accent} />
+            <Text style={styles.editText}>Edit</Text>
           </Pressable>
         )}
       </View>
