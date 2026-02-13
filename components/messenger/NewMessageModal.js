@@ -1,31 +1,58 @@
 // components/messages/NewMessageModal.js
 //
-// UPDATED (2026-02-12)
+// UPDATED (2026-02-13)
 //
 // CHANGES:
-// - ADD real profile image rendering
-// - KEEP avatar fallback (initial if no image)
-// - MATCH search logic from UserSearchCard
+// - FIX: Always use the *users table id* (User.id UUID) when selecting a user.
+//        Previously we preferred `u.id`, which can be a wrapper/search-row id and
+//        causes backend `user_not_found` when loading threads.
+// - CHANGE: Rename avatarUrl -> avatar (prop + mapping + Avatar component).
+// - IMPROVE: More robust mapping for different possible search result shapes
+//            (u.user.id, u.userId, u.id, etc).
+// - KEEP: UI + debounce + recents behavior unchanged.
 //
 
 import { Ionicons } from "@expo/vector-icons";
 import { useSearchUsersLazyQuery } from "@sixbyfive/tcg-binder/react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    FlatList,
-    Image,
-    Modal,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  FlatList,
+  Image,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { COLORS } from "../../theme/colors";
 
 function safeString(v) {
   return String(v ?? "").trim();
+}
+
+// Basic UUID check to avoid navigating with non-user ids
+function isUuid(v) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(v || ""),
+  );
+}
+
+/**
+ * ✅ Pick the real users table id (User.id).
+ * We strongly prefer u.user.id because search results often wrap User inside `user`.
+ */
+function pickUsersTableId(u) {
+  const candidates = [
+    u?.user?.id, // ✅ preferred: actual User.id
+    u?.userId, // sometimes direct
+    u?.user_id, // snake case
+    u?.id, // last resort (may be wrapper id)
+  ].filter(Boolean);
+
+  const uuid = candidates.find((c) => isUuid(c));
+  return uuid ? String(uuid) : null;
 }
 
 export default function NewMessageModal({
@@ -45,14 +72,26 @@ export default function NewMessageModal({
     fetchPolicy: "cache-first",
   });
 
-  // ✅ Map search results (include avatarUrl)
+  // ✅ Map search results (ALWAYS include users.id + username + avatar)
   const results = useMemo(() => {
     const list = data?.searchUsers ?? [];
-    return list.map((u) => ({
-      id: u.id ?? u.userId ?? String(u.user?.id ?? ""),
-      username: u.user?.username ?? "",
-      avatarUrl: u.user?.avatar || u.avatar || undefined,
-    }));
+
+    return list
+      .map((u) => {
+        const id = pickUsersTableId(u);
+        const username = safeString(u?.user?.username ?? u?.username ?? "");
+        const avatar = safeString(u?.user?.avatar ?? u?.avatar ?? "");
+
+        // If we can't resolve a real users.id, skip this item to prevent bad navigation.
+        if (!id) return null;
+
+        return {
+          id, // ✅ users.id UUID
+          username,
+          avatar: avatar || undefined, // ✅ renamed from avatarUrl
+        };
+      })
+      .filter(Boolean);
   }, [data]);
 
   // Debounce search
@@ -89,7 +128,8 @@ export default function NewMessageModal({
   };
 
   const pick = (u) => {
-    if (!u?.id) return;
+    // ✅ Ensure we only ever select a real users.id
+    if (!u?.id || !isUuid(u.id)) return;
     onSelectUser?.(u);
     setQuery("");
   };
@@ -167,7 +207,7 @@ export default function NewMessageModal({
                   { opacity: pressed ? 0.85 : 1 },
                 ]}
               >
-                <Avatar username={item.username} avatarUrl={item.avatarUrl} />
+                <Avatar username={item.username} avatar={item.avatar} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.name}>{item.username}</Text>
                   <Text style={styles.preview}>
@@ -197,7 +237,7 @@ export default function NewMessageModal({
                   { opacity: pressed ? 0.85 : 1 },
                 ]}
               >
-                <Avatar username={item.username} avatarUrl={item.avatarUrl} />
+                <Avatar username={item.username} avatar={item.avatar} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.name}>{item.username}</Text>
                   <Text style={styles.preview}>Tap to start chatting</Text>
@@ -222,13 +262,13 @@ export default function NewMessageModal({
 }
 
 /* Avatar with image fallback */
-function Avatar({ username, avatarUrl }) {
+function Avatar({ username, avatar }) {
   const initial = safeString(username).slice(0, 1).toUpperCase();
 
-  if (avatarUrl) {
+  if (avatar) {
     return (
       <Image
-        source={{ uri: avatarUrl }}
+        source={{ uri: avatar }}
         style={styles.avatarImage}
         resizeMode="cover"
       />

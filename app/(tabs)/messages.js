@@ -1,16 +1,22 @@
 // app/(tabs)/messages.js
 //
-// UPDATED (2026-02-12)
+// UPDATED (2026-02-13)
 //
 // CHANGES:
-// - REMOVED: Hard-coded MOCK_NOTIFS_INITIAL defaults (no fake system notifications)
-// - CHANGED: System notifications state now starts as an empty array []
-// - ADDED: Safe empty state UI for System tab when there are no notifications
-// - CHANGED: "Mark all read" is disabled when System tab is empty
-// - GUARDED: toggleRead/clearNotif so they safely no-op if an id is missing
-// - KEPT: System tab segment, SwipeRow, and the UI structure (ready for real backend data later)
+// - FIX: Ensure we ALWAYS navigate using the *users table id* (UUID) for threads.
+//        This prevents FK failures and "user_not_found" when sending/fetching.
+// - ADD: UUID validation + strict picker (pickUsersTableId) used everywhere we navigate.
+// - CHANGE: DM list row navigation now uses router.push (instead of <Link>) so we can
+//          pass username/avatarUrl params reliably to the thread header.
+// - CHANGE: NewMessageModal selection now uses pickUsersTableId(user) (not user.id blindly).
+// - ADD: Extra debug logs to prove what id we are using (can remove later once stable).
+//
+// NOTE:
+// - If your NewMessageModal returns a user shape that doesn't include the DB users.id,
+//   you MUST update the modal query to return User { id username avatarUrl }.
+//   This file now refuses to navigate unless it can find a valid UUID to use.
 
-import { Link, useNavigation, useRouter } from "expo-router";
+import { useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FlatList,
@@ -45,7 +51,33 @@ function shortPreview(text) {
   return t.replace(/\s+/g, " ");
 }
 
+// ✅ NEW: basic UUID v4-ish validation (enough to catch obvious wrong ids)
+function isUuid(v) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(v || ""),
+  );
+}
+
+/**
+ * ✅ NEW: pick the *users table id* from various possible shapes.
+ * We DO NOT navigate unless we can find a valid UUID.
+ */
+function pickUsersTableId(obj) {
+  const candidates = [
+    obj?.id, // ideal: User.id
+    obj?.user?.id, // if wrapped
+    obj?.userId, // some list shapes
+    obj?.user_id, // snake case
+    obj?.profile?.userId,
+    obj?.profile?.user_id,
+  ].filter(Boolean);
+
+  const uuid = candidates.find((c) => isUuid(c));
+  return uuid ? String(uuid) : null;
+}
+
 function getRowUserId(row) {
+  // ChatSummary row: { user: User!, ... }
   return row?.user?.id || row?.userId || row?.id || null;
 }
 
@@ -54,7 +86,13 @@ function getRowUsername(row) {
 }
 
 function getRowAvatarUrl(row) {
-  return row?.user?.avatar || row?.avatar || row?.user?.avatarUrl || null;
+  return (
+    row?.user?.avatarUrl ||
+    row?.user?.avatar ||
+    row?.avatarUrl ||
+    row?.avatar ||
+    null
+  );
 }
 
 function getRowPreview(row) {
@@ -73,7 +111,6 @@ export default function MessagesTab() {
   const [segment, setSegment] = useState("dms");
   const [query, setQuery] = useState("");
 
-  // ✅ Start empty — no hard-coded defaults
   const [notifs, setNotifs] = useState([]);
 
   const [refreshing, setRefreshing] = useState(false);
@@ -125,13 +162,13 @@ export default function MessagesTab() {
   const markAllSystemRead = useCallback(() => {
     setNotifs((prev) => {
       const list = Array.isArray(prev) ? prev : [];
-      if (!list.length) return list; // ✅ safe no-op when empty
+      if (!list.length) return list;
       return list.map((n) => ({ ...n, unread: false }));
     });
   }, []);
 
   const toggleRead = useCallback((id) => {
-    if (!id) return; // ✅ safe guard
+    if (!id) return;
     setNotifs((prev) => {
       const list = Array.isArray(prev) ? prev : [];
       return list.map((n) => (n?.id === id ? { ...n, unread: !n.unread } : n));
@@ -139,7 +176,7 @@ export default function MessagesTab() {
   }, []);
 
   const clearNotif = useCallback((id) => {
-    if (!id) return; // ✅ safe guard
+    if (!id) return;
     setNotifs((prev) => {
       const list = Array.isArray(prev) ? prev : [];
       return list.filter((n) => n?.id !== id);
@@ -169,10 +206,11 @@ export default function MessagesTab() {
 
     const mapped = list
       .map((row) => {
-        const id = getRowUserId(row);
+        const id = pickUsersTableId(row?.user || row); // ✅ CHANGED: prefer the actual User object
         if (!id) return null;
+
         return {
-          id: String(id),
+          id: String(id), // ✅ ensure modal gets the *users.id*
           username: getRowUsername(row),
           avatarUrl: getRowAvatarUrl(row) || undefined,
           preview: getRowPreview(row),
@@ -201,27 +239,84 @@ export default function MessagesTab() {
     setNewModalOpen(false);
   }, []);
 
-  const handleSelectUser = useCallback(
-    (user) => {
-      const id = user?.id ? String(user.id) : null;
-      if (!id) return;
+  /**
+   * ✅ NEW: single place to navigate to a thread (always passes params)
+   */
+  const goToThread = useCallback(
+    ({ receiverId, username, avatarUrl }) => {
+      const id =
+        pickUsersTableId({ id: receiverId }) ||
+        (isUuid(receiverId) ? String(receiverId) : null);
 
-      console.log("[messages] start chat with:", {
-        id,
-        username: user?.username,
+      console.log("[messages] goToThread input =>", {
+        receiverId,
+        username,
+        avatarUrl,
       });
+      console.log("[messages] goToThread resolved id =>", id);
 
-      setNewModalOpen(false);
+      if (!id) {
+        console.log(
+          "[messages] goToThread aborted: receiverId is missing/invalid (must be users.id UUID)",
+        );
+        return;
+      }
 
       router.push({
         pathname: `/messages/${id}`,
         params: {
-          username: user?.username || "",
-          avatarUrl: user?.avatarUrl || "",
+          username: safeString(username),
+          avatarUrl: safeString(avatarUrl),
         },
       });
     },
     [router],
+  );
+
+  const handleSelectUser = useCallback(
+    (user) => {
+      // ✅ CHANGED: never trust user.id blindly; pick a valid users.id UUID
+      const id = pickUsersTableId(user);
+
+      console.log("[messages] start chat raw user =>", user);
+      console.log("[messages] start chat picked receiverId =>", id);
+
+      if (!id) {
+        console.log(
+          "[messages] start chat aborted: could not determine users.id for selected user",
+        );
+        return;
+      }
+
+      setNewModalOpen(false);
+
+      goToThread({
+        receiverId: id,
+        username: user?.username || user?.user?.username || "",
+        avatarUrl:
+          user?.avatar || user?.user?.avatarUrl || user?.user?.avatar || "",
+      });
+    },
+    [goToThread],
+  );
+
+  const onPressChatRow = useCallback(
+    (row) => {
+      const receiverId = pickUsersTableId(row?.user || row);
+
+      // ✅ extra safety: chats should always have row.user.id
+      if (!receiverId) {
+        console.log("[messages] onPressChatRow aborted: missing users.id", row);
+        return;
+      }
+
+      goToThread({
+        receiverId,
+        username: getRowUsername(row),
+        avatarUrl: getRowAvatarUrl(row) || "",
+      });
+    },
+    [goToThread],
   );
 
   return (
@@ -309,7 +404,7 @@ export default function MessagesTab() {
             data={data}
             keyExtractor={(i, idx) =>
               segment === "dms"
-                ? String(getRowUserId(i) ?? idx)
+                ? String(pickUsersTableId(i?.user || i) ?? idx)
                 : String(i?.id ?? idx)
             }
             contentContainerStyle={{
@@ -328,28 +423,30 @@ export default function MessagesTab() {
             ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
             renderItem={({ item }) =>
               segment === "dms" ? (
-                <Link href={`/messages/${getRowUserId(item)}`} asChild>
-                  <Pressable style={styles.dmRow}>
-                    <View style={styles.avatar} />
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.dmName} numberOfLines={1}>
-                        {getRowUsername(item)}
-                      </Text>
-                      <Text style={styles.dmPreview} numberOfLines={1}>
-                        {shortPreview(getRowPreview(item))}
+                // ✅ CHANGED: use router.push so we can pass username/avatarUrl
+                <Pressable
+                  style={styles.dmRow}
+                  onPress={() => onPressChatRow(item)}
+                >
+                  <View style={styles.avatar} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.dmName} numberOfLines={1}>
+                      {getRowUsername(item)}
+                    </Text>
+                    <Text style={styles.dmPreview} numberOfLines={1}>
+                      {shortPreview(getRowPreview(item))}
+                    </Text>
+                  </View>
+                  {getRowUnread(item) > 0 ? (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>
+                        {getRowUnread(item) > 99
+                          ? "99+"
+                          : String(getRowUnread(item))}
                       </Text>
                     </View>
-                    {getRowUnread(item) > 0 ? (
-                      <View style={styles.badge}>
-                        <Text style={styles.badgeText}>
-                          {getRowUnread(item) > 99
-                            ? "99+"
-                            : String(getRowUnread(item))}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </Pressable>
-                </Link>
+                  ) : null}
+                </Pressable>
               ) : (
                 <SwipeRow
                   rightActions={[

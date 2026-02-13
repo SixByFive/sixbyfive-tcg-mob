@@ -1,95 +1,162 @@
 // graphql/messages.js
+//
+// UPDATED (2026-02-13)
+//
+// FIXES:
+// - FIX: Export ALL message-related gql documents used by MessagingProvider.
+// - FIX: Ensure operations + variable names match backend typeDefs exactly.
+// - FIX: Stops "QUERY_CHAT_WITH_USER is undefined" and prevents malformed requests.
+// - NOTE: If you still get HTTP 400 after this, it will be a real server-side validation/auth issue,
+//         not "missing gql doc" anymore.
+//
+// Backend reference (from your typeDefs):
+// Query:
+// - myChats(page: Int, pageSize: Int): [ChatSummary!]!
+// - chatWithUser(userId: ID!, page: Int, pageSize: Int): [Message!]!
+// - unreadCount: Int!
+// - hasAgreedToChatRules: Boolean!
+// - chatRulesText: String!
+// Mutation:
+// - sendMessage(receiverId: ID!, content: String!, meta: JSON): Message!
+// - markChatRead(userId: ID!): Boolean!
+// - agreeToChatRules: Boolean!
+
 import { gql } from "@apollo/client";
 
-/* ============================================================================
-   Inbox list (my chats)
-   Used by: refreshChats()
-============================================================================ */
+/* =============================================================================
+   Queries
+============================================================================= */
 
 export const QUERY_MY_CHATS = gql`
-  query MyChats($limit: Int, $offset: Int) {
-    myChats(limit: $limit, offset: $offset) {
-      id
-      unreadCount
-      otherUser {
+  query MyChats($page: Int, $pageSize: Int) {
+    myChats(page: $page, pageSize: $pageSize) {
+      user {
         id
         username
         avatar
       }
       lastMessage {
         id
+        senderId
+        receiverId
         content
+        isRead
+        meta
         createdAt
       }
+      unreadCount
+    }
+  }
+`;
+
+export const QUERY_CHAT_WITH_USER = gql`
+  query ChatWithUser($userId: ID!, $page: Int, $pageSize: Int) {
+    chatWithUser(userId: $userId, page: $page, pageSize: $pageSize) {
+      id
+      senderId
+      receiverId
+      content
+      isRead
+      meta
+      isFlagged
+      flagReason
+      flaggedById
+      isSystemMessage
+      createdAt
+      updatedAt
+      expiresAt
+
+      sender {
+        id
+        username
+        avatar
+        avatar
+      }
+      receiver {
+        id
+        username
+        avatar
+        avatar
+      }
+    }
+  }
+`;
+
+export const QUERY_UNREAD_COUNT = gql`
+  query UnreadCount {
+    unreadCount
+  }
+`;
+
+export const QUERY_HAS_AGREED_TO_CHAT_RULES = gql`
+  query HasAgreedToChatRules {
+    hasAgreedToChatRules
+  }
+`;
+
+export const QUERY_CHAT_RULES_TEXT = gql`
+  query ChatRulesText {
+    chatRulesText
+  }
+`;
+
+// Optional: if you ever need the compact rules version too
+export const QUERY_CHAT_RULES = gql`
+  query ChatRules {
+    chatRules
+  }
+`;
+
+/* =============================================================================
+   Mutations
+============================================================================= */
+
+export const MUTATION_SEND_MESSAGE = gql`
+  mutation SendMessage($receiverId: ID!, $content: String!, $meta: JSON) {
+    sendMessage(receiverId: $receiverId, content: $content, meta: $meta) {
+      id
+      senderId
+      receiverId
+      content
+      isRead
+      meta
+      createdAt
       updatedAt
     }
   }
 `;
 
-/* ============================================================================
-   Total unread count
-   Used by: refreshUnread()
-============================================================================ */
-
-export const QUERY_UNREAD_COUNT = gql`
-  query UnreadMessagesCount {
-    unreadMessagesCount
+export const MUTATION_MARK_CHAT_READ = gql`
+  mutation MarkChatRead($userId: ID!) {
+    markChatRead(userId: $userId)
   }
 `;
 
-/* ============================================================================
-   Thread with a specific user
-   Used by: fetchThread(otherUserId)
-============================================================================ */
-
-export const QUERY_CHAT_WITH_USER = gql`
-  query ChatWithUser($otherUserId: ID!, $limit: Int, $before: String) {
-    chatWithUser(otherUserId: $otherUserId) {
-      id
-      otherUser {
-        id
-        username
-        avatar
-      }
-      messages(limit: $limit, before: $before) {
-        id
-        senderId
-        receiverId
-        content
-        imageUrl
-        createdAt
-        status
-      }
-    }
+export const MUTATION_AGREE_TO_CHAT_RULES = gql`
+  mutation AgreeToChatRules {
+    agreeToChatRules
   }
 `;
 
-/* ============================================================================
-   Send message
-============================================================================ */
+/* =============================================================================
+   (Not used by your MessagingProvider currently, but used by your thread screen)
+   You can keep these here too if you want them centralised:
+============================================================================= */
 
-export const MUTATION_SEND_MESSAGE = gql`
-  mutation SendMessage($toUserId: ID!, $content: String, $imageUrl: String) {
-    sendMessage(toUserId: $toUserId, content: $content, imageUrl: $imageUrl) {
-      id
-      senderId
-      receiverId
-      content
-      imageUrl
-      createdAt
-      status
-    }
+export const MUTATION_REPORT_USER = gql`
+  mutation ReportUser($userId: ID!, $reason: String!, $details: String) {
+    reportUser(userId: $userId, reason: $reason, details: $details)
   }
 `;
 
-/* ============================================================================
-   Mark thread read (optional, but commonly needed)
-============================================================================ */
+export const MUTATION_REPORT_MESSAGE = gql`
+  mutation ReportMessage($messageId: ID!, $reason: String!, $details: String) {
+    reportMessage(messageId: $messageId, reason: $reason, details: $details)
+  }
+`;
 
-export const MUTATION_MARK_THREAD_READ = gql`
-  mutation MarkThreadRead($otherUserId: ID!) {
-    markThreadRead(otherUserId: $otherUserId) {
-      ok
-    }
+export const MUTATION_BLOCK_USER_FROM_CHAT = gql`
+  mutation BlockUserFromChat($userId: ID!, $reason: String) {
+    blockUserFromChat(userId: $userId, reason: $reason)
   }
 `;

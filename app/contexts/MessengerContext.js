@@ -1,15 +1,20 @@
 // app/_providers/MessagingContext.js
 //
-// UPDATED (2026-02-12)
-// CHANGES:
-// - FIX: Maximum update depth loop caused by unstable function identities.
-//        refreshChats/refreshUnread/loadChatRulesText/etc were recreated every render.
-//        MessagesTab useFocusEffect depends on them -> callback identity changed -> re-ran on every render.
-//        Solution: wrap all exported functions in useCallback + include them in value useMemo deps.
-// - ADD: Defensive guards for missing GraphQL documents (prevents Apollo "query option is required" spam).
-// - KEEP: Existing logic + socket wiring.
-// - NOTE: "query option is required" means QUERY_* is undefined/null from ../../graphql/messages.
-//         This update prevents infinite spam and surfaces a clear error in logs/lastError.
+// UPDATED (2026-02-13)
+//
+// CHANGES (THIS UPDATE):
+// - ADD: Better error extraction for Apollo 400 responses (GraphQL validation errors).
+//        When Apollo Server returns HTTP 400, the real GraphQL error is usually in:
+//        err.networkError.result.errors[0].message
+//        Your previous normalizeError() only looked at err.graphQLErrors[0],
+//        which is often empty for status-400 cases.
+// - CHANGE: normalizeError() now prefers:
+//        1) err.graphQLErrors[0] (resolver errors usually come back with HTTP 200)
+//        2) err.networkError.result.errors[0] (validation/operation errors come back with HTTP 400)
+//        3) err.networkError.bodyText (last resort)
+// - KEEP: Everything else the same (stable callbacks, guards, socket wiring, etc.)
+// - NOTE: After this change, your logs should show the REAL reason for the 400,
+//         e.g. "Cannot query field ...", "Unknown argument ...", "Variable ... was not provided", etc.
 
 import { useApolloClient } from "@apollo/client";
 import React, {
@@ -42,11 +47,13 @@ const MessagingContext = createContext(null);
    Error helpers
 ============================================================================= */
 
+// (unchanged) Pulls a GraphQL extensions code if present (only works when graphQLErrors is populated)
 function pickGqlCode(err) {
   const gqlErr = err?.graphQLErrors?.[0];
   return gqlErr?.extensions?.code || null;
 }
 
+// (unchanged) Best-effort status code extractor for network errors
 function pickStatusCode(err) {
   const ne = err?.networkError;
   if (!ne || typeof ne !== "object") return null;
@@ -59,14 +66,80 @@ function pickStatusCode(err) {
   );
 }
 
+/**
+ * NEW: Apollo sometimes returns HTTP 400 for GraphQL validation errors.
+ * In those cases, err.graphQLErrors is often empty, but the error payload is in:
+ *   err.networkError.result.errors[0]
+ */
+function pickNetworkGraphQLError(err) {
+  const ne = err?.networkError;
+  if (!ne || typeof ne !== "object") return null;
+
+  // Apollo ServerError often has `result` containing { errors: [...] }
+  const first = ne?.result?.errors?.[0] || null;
+  return first;
+}
+
+/**
+ * NEW: As a last resort, capture network body text (sometimes contains JSON string).
+ * This is intentionally conservative (we don't parse unless it's clearly JSON).
+ */
+function pickNetworkBodyText(err) {
+  const ne = err?.networkError;
+  if (!ne || typeof ne !== "object") return null;
+
+  const bodyText = ne?.bodyText;
+  if (typeof bodyText !== "string" || !bodyText.trim()) return null;
+
+  // Try to parse JSON-looking bodyText
+  const trimmed = bodyText.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return trimmed;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    // common shape: { errors: [{ message }], data: null }
+    const msg = parsed?.errors?.[0]?.message;
+    return msg || trimmed;
+  } catch (_) {
+    return trimmed;
+  }
+}
+
+/**
+ * CHANGED: normalizeError now correctly handles 400 validation errors by
+ * pulling first error from networkError.result.errors[0] when graphQLErrors is empty.
+ */
 function normalizeError(err) {
   const code = pickGqlCode(err);
   const statusCode = pickStatusCode(err);
 
-  const firstError = err?.graphQLErrors?.[0] || null;
-  const msg = firstError?.message || err?.message || "Something went wrong";
+  // Prefer normal graphQLErrors (HTTP 200 with errors)
+  const graphFirst = err?.graphQLErrors?.[0] || null;
 
-  return { code, statusCode, firstError, message: msg, raw: err };
+  // For HTTP 400 validation errors, use networkError.result.errors[0]
+  const networkFirst = pickNetworkGraphQLError(err);
+
+  // Try to derive a human message from bodyText if needed
+  const bodyMsg = pickNetworkBodyText(err);
+
+  const firstError = graphFirst || networkFirst || null;
+
+  const msg =
+    firstError?.message || bodyMsg || err?.message || "Something went wrong";
+
+  // If no code from graphQLErrors, sometimes code exists under networkFirst.extensions
+  const networkCode =
+    networkFirst?.extensions?.code ||
+    networkFirst?.extensions?.exception?.code ||
+    null;
+
+  return {
+    code: code || networkCode || null,
+    statusCode,
+    firstError,
+    message: msg,
+    raw: err,
+  };
 }
 
 function missingDocError(name) {
@@ -103,7 +176,7 @@ export function MessagingProvider({ children }) {
   const socketRef = useRef(null);
 
   /* =============================================================================
-     Core refreshers (FIXED: useCallback for stable identities)
+     Core refreshers (stable identities via useCallback)
   ============================================================================= */
 
   const refreshChats = useCallback(async () => {
@@ -133,7 +206,7 @@ export function MessagingProvider({ children }) {
       if (ne.code === "CHAT_AGREEMENT_REQUIRED") setNeedsChatAgreement(true);
       if (ne.code === "CHAT_BANNED") setChatBanned(true);
 
-      console.log("[messaging] refreshChats error", ne);
+      console.log("[messaging] refreshChats error", ne, ne?.firstError);
     }
   }, [apollo]);
 
@@ -158,7 +231,7 @@ export function MessagingProvider({ children }) {
       if (ne.code === "CHAT_AGREEMENT_REQUIRED") setNeedsChatAgreement(true);
       if (ne.code === "CHAT_BANNED") setChatBanned(true);
 
-      console.log("[messaging] refreshUnread error", ne);
+      console.log("[messaging] refreshUnread error", ne, ne?.firstError);
     }
   }, [apollo]);
 
@@ -190,7 +263,7 @@ export function MessagingProvider({ children }) {
         if (ne.code === "CHAT_AGREEMENT_REQUIRED") setNeedsChatAgreement(true);
         if (ne.code === "CHAT_BANNED") setChatBanned(true);
 
-        console.log("[messaging] fetchThread error", ne);
+        console.log("[messaging] fetchThread error", ne, ne?.firstError);
         throw ne;
       }
     },
@@ -221,7 +294,7 @@ export function MessagingProvider({ children }) {
         const ne = normalizeError(e);
         setLastError(ne);
 
-        console.log("[messaging] sendMessage error", ne);
+        console.log("[messaging] sendMessage error", ne, ne?.firstError);
         throw ne;
       }
     },
@@ -247,7 +320,9 @@ export function MessagingProvider({ children }) {
         refreshChats();
         return true;
       } catch (e) {
-        console.log("[messaging] markChatRead error", e?.message || e);
+        const ne = normalizeError(e);
+        setLastError(ne);
+        console.log("[messaging] markChatRead error", ne, ne?.firstError);
         return false;
       }
     },
@@ -255,7 +330,7 @@ export function MessagingProvider({ children }) {
   );
 
   /* =============================================================================
-     ✅ Chat rules helpers (FIXED: useCallback)
+     Chat rules helpers (stable identities)
   ============================================================================= */
 
   const loadChatRulesText = useCallback(async () => {
@@ -293,8 +368,8 @@ export function MessagingProvider({ children }) {
     } catch (e) {
       const ne = normalizeError(e);
       setLastError(ne);
-      console.log("[messaging] loadChatRulesText error", ne);
-      return null; // UI can show fallback rules
+      console.log("[messaging] loadChatRulesText error", ne, ne?.firstError);
+      return null;
     }
   }, [apollo]);
 
@@ -312,7 +387,6 @@ export function MessagingProvider({ children }) {
       });
 
       const ok = !!data?.agreeToChatRules;
-
       console.log("[messaging] agreeToChatRules result =>", ok);
 
       if (ok) {
@@ -329,7 +403,7 @@ export function MessagingProvider({ children }) {
       const ne = normalizeError(e);
       setLastError(ne);
 
-      console.log("[messaging] agreeToChatRules error", ne);
+      console.log("[messaging] agreeToChatRules error", ne, ne?.firstError);
       throw ne;
     }
   }, [apollo, refreshChats, refreshUnread]);
@@ -461,7 +535,6 @@ export function MessagingProvider({ children }) {
       chatRulesText,
       hasAgreedToChatRules,
 
-      // ✅ IMPORTANT: include functions so memo value updates correctly if they ever change
       loadChatRulesText,
       agreeToChatRules,
       refreshChats,
