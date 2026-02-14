@@ -1,15 +1,4 @@
 // app/messages/[userId].js
-//
-// UPDATED (2026-02-12)
-//
-// CHANGES (Profile navigation UX):
-// - CHANGE: Remove "View profile" from the ⋯ modal menu
-// - ADD: Make the header center (avatar + username) tappable to open /profile/[username]
-// - ADD: Visual tap affordance (slight pressed opacity + optional subtle underline)
-//
-// NOTES:
-// - Profile route requires username: /profile/[username]
-// - If username isn't loaded yet, we show a toast instead of navigating.
 
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -43,6 +32,11 @@ import { useMessaging } from "../contexts/MessengerContext";
 import { gql, useApolloClient } from "@apollo/client";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import Avatar from "../../components/common/Avatar";
+
+const ASSET_BASE_URL =
+  process.env.EXPO_PUBLIC_ASSET_BASE_URL || "https://backendtcg.sixbyfive.com";
+
 /* =============================================================================
    GraphQL
 ============================================================================= */
@@ -73,6 +67,27 @@ function safeString(v) {
   return String(v ?? "").trim();
 }
 
+function normalizeAvatarInput(v) {
+  if (!v) return "";
+  if (typeof v === "string") return v.trim();
+
+  if (typeof v === "object") {
+    const maybe =
+      v.url ||
+      v.uri ||
+      v.path ||
+      v.avatar ||
+      v.avatarUrl ||
+      v.avatarURL ||
+      v.src ||
+      v.href ||
+      "";
+    return typeof maybe === "string" ? maybe.trim() : "";
+  }
+
+  return "";
+}
+
 function isSameDay(aTs, bTs) {
   const a = new Date(aTs);
   const b = new Date(bTs);
@@ -101,13 +116,11 @@ function getRowUsername(row) {
 }
 
 function getRowAvatar(row) {
-  return (
-    row?.user?.avatar ||
-    row?.user?.avatarUrl ||
-    row?.avatar ||
-    row?.avatarUrl ||
-    null
-  );
+  return row?.user?.profile?.avatar || row?.user?.avatar || row?.avatar || null;
+}
+
+function getRowLastMessageId(row) {
+  return row?.lastMessage?.id || row?.lastMessageId || null;
 }
 
 /**
@@ -180,7 +193,7 @@ const REPORT_REASONS = [
 ];
 
 /* =============================================================================
-   Header (clean username bar)
+   Header
 ============================================================================= */
 
 function ThreadHeader({
@@ -189,11 +202,9 @@ function ThreadHeader({
   avatar,
   onBack,
   onOpenMenu,
-  onPressTitle, // ✅ NEW: tap username area to view profile
+  onPressTitle,
   insetsTop = 0,
 }) {
-  const hasAvatar = !!safeString(avatar);
-
   return (
     <View style={[styles.headerWrap, { paddingTop: Math.max(insetsTop, 10) }]}>
       <View style={styles.headerRow}>
@@ -210,7 +221,6 @@ function ThreadHeader({
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </Pressable>
 
-        {/* ✅ CHANGE: Center becomes a tappable "view profile" target */}
         <Pressable
           onPress={onPressTitle}
           disabled={!onPressTitle}
@@ -222,13 +232,12 @@ function ThreadHeader({
           accessibilityLabel="View profile"
         >
           <View style={styles.headerAvatarRing}>
-            {hasAvatar ? (
-              <Image source={{ uri: avatar }} style={styles.headerAvatar} />
-            ) : (
-              <View
-                style={[styles.headerAvatar, { backgroundColor: COLORS.alt }]}
-              />
-            )}
+            <Avatar
+              name={title}
+              src={avatar}
+              baseUrl={ASSET_BASE_URL}
+              size={36}
+            />
           </View>
 
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -246,7 +255,6 @@ function ThreadHeader({
             </Text>
           </View>
 
-          {/* tiny affordance */}
           {onPressTitle ? (
             <Ionicons
               name="chevron-forward"
@@ -279,7 +287,7 @@ function ThreadHeader({
 }
 
 /* =============================================================================
-   Reusable Report Modal
+   Report / Block Modals (unchanged)
 ============================================================================= */
 
 function ReportModal({
@@ -299,13 +307,9 @@ function ReportModal({
     setDetails("");
   }, [visible]);
 
-  const close = () => {
-    onClose?.();
-  };
-
-  const submit = () => {
+  const close = () => onClose?.();
+  const submit = () =>
     onSubmit?.({ reason, details: safeString(details) || null });
-  };
 
   return (
     <Modal
@@ -429,7 +433,6 @@ function BlockModal({
   }, [visible]);
 
   const close = () => onClose?.();
-
   const submit = () => {
     const d = safeString(details);
     const combined = d ? `${reason}: ${d}` : reason;
@@ -553,10 +556,12 @@ export default function Thread() {
     () => safeString(params?.username),
     [params?.username],
   );
-  const avatarUrlParam = useMemo(
-    () => safeString(params?.avatarUrl),
-    [params?.avatarUrl],
-  );
+
+  // ✅ CHANGED: support BOTH param names (Messages list uses avatarUrl)
+  const avatarParam = useMemo(() => {
+    const v = params?.avatar ?? params?.avatarUrl ?? "";
+    return normalizeAvatarInput(v);
+  }, [params?.avatar, params?.avatarUrl]);
 
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
@@ -578,7 +583,13 @@ export default function Thread() {
   const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
   const me = meData?.me || null;
 
-  const { chats, fetchThread, sendMessage, markChatRead } = useMessaging();
+  const { chats, fetchThread, sendMessage, markChatRead, typingByUser } =
+    useMessaging();
+
+  useEffect(() => {
+    const isTyping = !!typingByUser?.[String(otherUserId)];
+    setTyping(isTyping);
+  }, [typingByUser, otherUserId]);
 
   const partnerRow = useMemo(() => {
     const list = Array.isArray(chats) ? chats : [];
@@ -603,22 +614,19 @@ export default function Thread() {
   const subtitle = typing ? "Typing…" : "Direct message";
 
   const avatar = useMemo(() => {
-    const fromChats = partnerRow ? safeString(getRowAvatar(partnerRow)) : "";
+    const fromChats = partnerRow
+      ? normalizeAvatarInput(getRowAvatar(partnerRow))
+      : "";
     if (fromChats) return fromChats;
-    if (avatarUrlParam) return avatarUrlParam;
-
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(
-      title || "User",
-    )}&background=2963FF&color=fff`;
-  }, [partnerRow, avatarUrlParam, title]);
+    if (avatarParam) return avatarParam;
+    return ""; // let Avatar fallback to initials if truly missing
+  }, [partnerRow, avatarParam]);
 
   const scrollToEnd = useCallback(() => {
     requestAnimationFrame(() => {
       flatRef.current?.scrollToEnd({ animated: true });
     });
   }, []);
-
-  /* ---------------- Load thread (real) ---------------- */
 
   const fetchThreadRef = useRef(fetchThread);
   const markChatReadRef = useRef(markChatRead);
@@ -636,7 +644,13 @@ export default function Thread() {
       if (!otherUserId) return;
 
       try {
-        console.log("[thread] loadThread", { source, otherUserId });
+        if (__DEV__) {
+          console.log("[thread] loadThread()", {
+            source,
+            otherUserId,
+            meId: me?.id || null,
+          });
+        }
 
         const list = await fetchThreadRef.current?.(otherUserId, {
           page: 1,
@@ -682,7 +696,57 @@ export default function Thread() {
     });
   }, [loadThread]);
 
-  /* ---------------- Sending (real) ---------------- */
+  /**
+   * ✅ NEW: Live update when the chat list reports a new lastMessage.
+   * This is the simplest reliable "socket-driven" refresh without wiring socket.io here.
+   */
+  const lastSeenPartnerMsgIdRef = useRef(null);
+  const liveReloadTimerRef = useRef(null);
+
+  const partnerLastMessageId = useMemo(
+    () => (partnerRow ? String(getRowLastMessageId(partnerRow) || "") : ""),
+    [partnerRow],
+  );
+
+  useEffect(() => {
+    if (!otherUserId) return;
+
+    const next = partnerLastMessageId;
+    if (!next) return;
+
+    const prev = lastSeenPartnerMsgIdRef.current;
+
+    // First time we see it, just store it (don’t spam fetch on mount)
+    if (!prev) {
+      lastSeenPartnerMsgIdRef.current = next;
+      if (__DEV__) {
+        console.log("[thread] init lastSeenPartnerMsgId", { next });
+      }
+      return;
+    }
+
+    if (prev === next) return;
+
+    lastSeenPartnerMsgIdRef.current = next;
+
+    // Debounce (fast bursts of chat events)
+    if (liveReloadTimerRef.current) clearTimeout(liveReloadTimerRef.current);
+
+    liveReloadTimerRef.current = setTimeout(() => {
+      if (__DEV__) {
+        console.log("[thread] live update triggered", {
+          otherUserId,
+          prevLastMessageId: prev,
+          nextLastMessageId: next,
+        });
+      }
+      loadThread("partnerRow_lastMessage_changed");
+    }, 120);
+
+    return () => {
+      if (liveReloadTimerRef.current) clearTimeout(liveReloadTimerRef.current);
+    };
+  }, [otherUserId, partnerLastMessageId, loadThread]);
 
   const onSend = useCallback(async () => {
     const content = safeString(input);
@@ -717,8 +781,6 @@ export default function Thread() {
     }
   }, [input, otherUserId, sendMessage, loadThread, scrollToEnd]);
 
-  /* ---------------- With day separators ---------------- */
-
   const withSeparators = useMemo(() => {
     const out = [];
     let lastTs = null;
@@ -733,8 +795,6 @@ export default function Thread() {
 
     return out;
   }, [msgs]);
-
-  /* ---------------- Message actions ---------------- */
 
   const handleLongPress = (msg) => {
     setSelectedMsg(msg);
@@ -826,8 +886,6 @@ export default function Thread() {
     [client, reportTarget],
   );
 
-  /* ---------------- Block user ---------------- */
-
   const [blockOpen, setBlockOpen] = useState(false);
   const [blockSubmitting, setBlockSubmitting] = useState(false);
 
@@ -876,20 +934,14 @@ export default function Thread() {
     [client, otherUserId, username, router],
   );
 
-  /* ---------------- View profile (header tap) ---------------- */
-
   const goToProfileFromHeader = useCallback(() => {
-    // ✅ NOTE: no modal to close; this is direct from header tap
     if (!username) {
       setReportToast("Profile unavailable until username is loaded.");
       setTimeout(() => setReportToast(""), 2000);
       return;
     }
-
     router.push(`/profile/${encodeURIComponent(username)}`);
   }, [router, username]);
-
-  /* ---------------- Render ---------------- */
 
   const renderItem = ({ item }) => {
     if (item._sep) {
@@ -902,7 +954,6 @@ export default function Thread() {
 
     const mine = item.author === "me";
     const bubbleStyle = [styles.bubble, mine ? styles.right : styles.left];
-
     const textStyle = [styles.msg, mine ? styles.msgMine : styles.msgTheirs];
     const metaStyle = [styles.meta, mine ? styles.metaMine : styles.metaTheirs];
 
@@ -927,7 +978,7 @@ export default function Thread() {
               })}
             </Text>
 
-            {mine && <StatusTicks status={item.status} />}
+            {/* ✅ No diamonds/ticks */}
           </View>
         </View>
       </Pressable>
@@ -943,7 +994,7 @@ export default function Thread() {
         insetsTop={insets.top}
         onBack={() => router.back()}
         onOpenMenu={() => setThreadMenuOpen(true)}
-        onPressTitle={goToProfileFromHeader} // ✅ NEW
+        onPressTitle={goToProfileFromHeader}
       />
 
       {!!reportToast && (
@@ -956,8 +1007,8 @@ export default function Thread() {
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={0}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Math.max(insets.top + 54, 64)}
       >
         {typing && (
           <View style={styles.typingWrap}>
@@ -995,8 +1046,8 @@ export default function Thread() {
               </Text>
             </View>
           }
-          onContentSizeChange={scrollToEnd}
-          onLayout={scrollToEnd}
+          onContentSizeChange={() => scrollToEnd()}
+          onLayout={() => scrollToEnd()}
         />
 
         <View style={styles.inputRow}>
@@ -1074,7 +1125,7 @@ export default function Thread() {
         </View>
       </Modal>
 
-      {/* Thread Menu (no "View profile" here anymore) */}
+      {/* Thread Menu */}
       <Modal
         visible={threadMenuOpen}
         transparent
@@ -1166,55 +1217,10 @@ export default function Thread() {
 }
 
 /* =============================================================================
-   Status ticks
-============================================================================= */
-
-function StatusTicks({ status }) {
-  const s = status || "sent";
-  const isDelivered = s === "delivered" || s === "read";
-  const isRead = s === "read";
-
-  if (s === "failed") {
-    return (
-      <Ionicons
-        name="alert-circle-outline"
-        size={14}
-        color={COLORS.error || "#ff6b6b"}
-        style={{ marginLeft: 6 }}
-      />
-    );
-  }
-
-  return (
-    <View style={styles.ticks}>
-      <View
-        style={[
-          styles.tick,
-          styles.tickOn,
-          isRead
-            ? { backgroundColor: "transparent", borderColor: COLORS.accent }
-            : null,
-        ]}
-      />
-      <View
-        style={[
-          styles.tick,
-          isDelivered ? styles.tickOn : styles.tickOff,
-          isRead
-            ? { backgroundColor: "transparent", borderColor: COLORS.accent }
-            : null,
-        ]}
-      />
-    </View>
-  );
-}
-
-/* =============================================================================
    Styles
 ============================================================================= */
 
 const styles = StyleSheet.create({
-  /* ---------- Header ---------- */
   headerWrap: {
     backgroundColor: COLORS.surface,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -1239,7 +1245,6 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
 
-  // ✅ header center is now a Pressable
   headerCenter: {
     flex: 1,
     flexDirection: "row",
@@ -1262,12 +1267,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  headerAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.alt,
-  },
+
   headerTitle: {
     color: COLORS.text,
     fontWeight: "900",
@@ -1285,7 +1285,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  /* ---------- Toast ---------- */
   toast: {
     position: "absolute",
     top: 92,
@@ -1301,7 +1300,6 @@ const styles = StyleSheet.create({
   },
   toastText: { color: COLORS.text, fontWeight: "800", textAlign: "center" },
 
-  /* ---------- Bubbles ---------- */
   bubble: { maxWidth: "78%", padding: 10, borderRadius: 12 },
   left: { backgroundColor: COLORS.surface, alignSelf: "flex-start" },
   right: { backgroundColor: COLORS.accent, alignSelf: "flex-end" },
@@ -1318,24 +1316,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#00000022",
   },
 
-  metaRow: { flexDirection: "row", alignItems: "center", marginTop: 4, gap: 6 },
+  metaRow: { flexDirection: "row", alignItems: "center", marginTop: 4 },
   meta: { fontSize: 10, fontWeight: "800" },
   metaMine: { color: "#e0e0e0aa" },
   metaTheirs: { color: COLORS.textMuted },
 
-  ticks: { flexDirection: "row", gap: 3 },
-  tick: {
-    width: 8,
-    height: 8,
-    borderRadius: 1,
-    transform: [{ rotate: "45deg" }],
-    borderWidth: 1,
-    borderColor: "#ffffff88",
-  },
-  tickOn: { backgroundColor: "#ffffffdd" },
-  tickOff: { backgroundColor: "transparent" },
-
-  /* ---------- Separators ---------- */
   sepWrap: { alignItems: "center", marginVertical: 6 },
   sepText: {
     color: COLORS.textMuted,
@@ -1348,7 +1333,6 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
 
-  /* ---------- Typing ---------- */
   typingWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -1365,7 +1349,6 @@ const styles = StyleSheet.create({
   },
   typingText: { color: COLORS.textMuted, fontSize: 12 },
 
-  /* ---------- Composer ---------- */
   inputRow: {
     flexDirection: "row",
     gap: 8,
@@ -1390,7 +1373,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
 
-  /* ---------- Sheets ---------- */
   sheetBackdrop: { flex: 1, backgroundColor: "#00000088" },
   sheetCard: {
     position: "absolute",
@@ -1434,7 +1416,6 @@ const styles = StyleSheet.create({
   },
   sheetCancelText: { color: COLORS.text, fontWeight: "800" },
 
-  /* ---------- Report / Block modal ---------- */
   reportCard: {
     position: "absolute",
     left: 12,

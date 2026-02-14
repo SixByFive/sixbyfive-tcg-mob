@@ -3,18 +3,16 @@
 // UPDATED (2026-02-13)
 //
 // CHANGES:
-// - FIX: Ensure we ALWAYS navigate using the *users table id* (UUID) for threads.
-//        This prevents FK failures and "user_not_found" when sending/fetching.
-// - ADD: UUID validation + strict picker (pickUsersTableId) used everywhere we navigate.
-// - CHANGE: DM list row navigation now uses router.push (instead of <Link>) so we can
-//          pass username/avatarUrl params reliably to the thread header.
-// - CHANGE: NewMessageModal selection now uses pickUsersTableId(user) (not user.id blindly).
-// - ADD: Extra debug logs to prove what id we are using (can remove later once stable).
+// - REMOVE: Placeholder <View style={styles.avatar} />
+// - ADD: Use shared <Avatar /> component so profile images load like ProfileTopCard.
+// - ADD: Debug log for row avatar + resolved avatar URL.
+// - KEEP: Existing routing + params (avatarUrl still passed as param here; we can rename later).
 //
 // NOTE:
-// - If your NewMessageModal returns a user shape that doesn't include the DB users.id,
-//   you MUST update the modal query to return User { id username avatarUrl }.
-//   This file now refuses to navigate unless it can find a valid UUID to use.
+// - Your backend must return ChatSummary.user.avatar as either:
+//   - "/uploads/avatars/....png"   (recommended)
+//   - OR full https URL
+// - Avatar component will normalize based on EXPO_PUBLIC_ASSET_BASE_URL
 
 import { useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -36,6 +34,13 @@ import { useFocusEffect } from "@react-navigation/native";
 import ChatSafetyGate from "../../components/messenger/ChatSafetyGate";
 import NewMessageModal from "../../components/messenger/NewMessageModal";
 import { useMessaging } from "../contexts/MessengerContext";
+
+// ✅ NEW: use shared Avatar component (same as profile)
+import Avatar from "../../components/common/Avatar";
+
+// ✅ NEW: base URL for resolving "/uploads/..."
+const ASSET_BASE_URL =
+  process.env.EXPO_PUBLIC_ASSET_BASE_URL || "https://backendtcg.sixbyfive.com";
 
 /* -------------------------
    Helpers
@@ -85,12 +90,19 @@ function getRowUsername(row) {
   return row?.user?.username || row?.username || "User";
 }
 
+/**
+ * ✅ IMPORTANT:
+ * Your backend returns `user.avatar` (and your profile table stores avatar).
+ * So we prefer `row.user.avatar`.
+ * We keep older fallbacks for safety.
+ */
 function getRowAvatarUrl(row) {
   return (
-    row?.user?.avatarUrl ||
+    row?.user?.profile?.avatar ||
     row?.user?.avatar ||
-    row?.avatarUrl ||
+    row?.user?.avatarUrl ||
     row?.avatar ||
+    row?.avatarUrl ||
     null
   );
 }
@@ -206,11 +218,11 @@ export default function MessagesTab() {
 
     const mapped = list
       .map((row) => {
-        const id = pickUsersTableId(row?.user || row); // ✅ CHANGED: prefer the actual User object
+        const id = pickUsersTableId(row?.user || row);
         if (!id) return null;
 
         return {
-          id: String(id), // ✅ ensure modal gets the *users.id*
+          id: String(id),
           username: getRowUsername(row),
           avatarUrl: getRowAvatarUrl(row) || undefined,
           preview: getRowPreview(row),
@@ -240,7 +252,7 @@ export default function MessagesTab() {
   }, []);
 
   /**
-   * ✅ NEW: single place to navigate to a thread (always passes params)
+   * ✅ single place to navigate to a thread (always passes params)
    */
   const goToThread = useCallback(
     ({ receiverId, username, avatarUrl }) => {
@@ -266,7 +278,7 @@ export default function MessagesTab() {
         pathname: `/messages/${id}`,
         params: {
           username: safeString(username),
-          avatarUrl: safeString(avatarUrl),
+          avatarUrl: safeString(avatarUrl), // keep for now (thread file can accept both)
         },
       });
     },
@@ -275,7 +287,6 @@ export default function MessagesTab() {
 
   const handleSelectUser = useCallback(
     (user) => {
-      // ✅ CHANGED: never trust user.id blindly; pick a valid users.id UUID
       const id = pickUsersTableId(user);
 
       console.log("[messages] start chat raw user =>", user);
@@ -294,7 +305,7 @@ export default function MessagesTab() {
         receiverId: id,
         username: user?.username || user?.user?.username || "",
         avatarUrl:
-          user?.avatar || user?.user?.avatarUrl || user?.user?.avatar || "",
+          user?.avatar || user?.user?.avatar || user?.user?.avatarUrl || "",
       });
     },
     [goToThread],
@@ -303,17 +314,27 @@ export default function MessagesTab() {
   const onPressChatRow = useCallback(
     (row) => {
       const receiverId = pickUsersTableId(row?.user || row);
-
-      // ✅ extra safety: chats should always have row.user.id
       if (!receiverId) {
         console.log("[messages] onPressChatRow aborted: missing users.id", row);
         return;
       }
 
+      const username = getRowUsername(row);
+      const avatarUrl = getRowAvatarUrl(row) || "";
+
+      // ✅ NEW: debug log (this is what you asked for)
+      console.log("========== CHAT ROW DEBUG ==========");
+      console.log("Full row:", row);
+      console.log("row.user:", row?.user);
+      console.log("Raw avatar value:", row?.user?.avatar);
+      console.log("Normalized avatar:", avatarUrl);
+      console.log("Resolved receiverId:", receiverId);
+      console.log("====================================");
+
       goToThread({
         receiverId,
-        username: getRowUsername(row),
-        avatarUrl: getRowAvatarUrl(row) || "",
+        username,
+        avatarUrl,
       });
     },
     [goToThread],
@@ -423,12 +444,18 @@ export default function MessagesTab() {
             ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
             renderItem={({ item }) =>
               segment === "dms" ? (
-                // ✅ CHANGED: use router.push so we can pass username/avatarUrl
                 <Pressable
                   style={styles.dmRow}
                   onPress={() => onPressChatRow(item)}
                 >
-                  <View style={styles.avatar} />
+                  {/* ✅ CHANGED: real avatar */}
+                  <Avatar
+                    name={getRowUsername(item)}
+                    src={getRowAvatarUrl(item)}
+                    baseUrl={ASSET_BASE_URL}
+                    size={44}
+                  />
+
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.dmName} numberOfLines={1}>
                       {getRowUsername(item)}
@@ -437,6 +464,7 @@ export default function MessagesTab() {
                       {shortPreview(getRowPreview(item))}
                     </Text>
                   </View>
+
                   {getRowUnread(item) > 0 ? (
                     <View style={styles.badge}>
                       <Text style={styles.badgeText}>
@@ -551,12 +579,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     gap: 12,
   },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: COLORS.alt,
-  },
+
   dmName: { color: COLORS.text, fontWeight: "900" },
   dmPreview: { color: COLORS.textSecondary, marginTop: 3 },
 

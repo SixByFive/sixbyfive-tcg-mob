@@ -1,20 +1,4 @@
 // app/_providers/MessagingContext.js
-//
-// UPDATED (2026-02-13)
-//
-// CHANGES (THIS UPDATE):
-// - ADD: Better error extraction for Apollo 400 responses (GraphQL validation errors).
-//        When Apollo Server returns HTTP 400, the real GraphQL error is usually in:
-//        err.networkError.result.errors[0].message
-//        Your previous normalizeError() only looked at err.graphQLErrors[0],
-//        which is often empty for status-400 cases.
-// - CHANGE: normalizeError() now prefers:
-//        1) err.graphQLErrors[0] (resolver errors usually come back with HTTP 200)
-//        2) err.networkError.result.errors[0] (validation/operation errors come back with HTTP 400)
-//        3) err.networkError.bodyText (last resort)
-// - KEEP: Everything else the same (stable callbacks, guards, socket wiring, etc.)
-// - NOTE: After this change, your logs should show the REAL reason for the 400,
-//         e.g. "Cannot query field ...", "Unknown argument ...", "Variable ... was not provided", etc.
 
 import { useApolloClient } from "@apollo/client";
 import React, {
@@ -67,7 +51,7 @@ function pickStatusCode(err) {
 }
 
 /**
- * NEW: Apollo sometimes returns HTTP 400 for GraphQL validation errors.
+ * Apollo sometimes returns HTTP 400 for GraphQL validation errors.
  * In those cases, err.graphQLErrors is often empty, but the error payload is in:
  *   err.networkError.result.errors[0]
  */
@@ -81,7 +65,7 @@ function pickNetworkGraphQLError(err) {
 }
 
 /**
- * NEW: As a last resort, capture network body text (sometimes contains JSON string).
+ * As a last resort, capture network body text (sometimes contains JSON string).
  * This is intentionally conservative (we don't parse unless it's clearly JSON).
  */
 function pickNetworkBodyText(err) {
@@ -174,6 +158,36 @@ export function MessagingProvider({ children }) {
   const [hasAgreedToChatRules, setHasAgreedToChatRules] = useState(false);
 
   const socketRef = useRef(null);
+
+  /* =============================================================================
+     NEW: "newMessage" subscribers (for open thread live updates)
+  ============================================================================= */
+
+  // Each subscriber receives the raw socket payload: e.g. { from: "<uuid>" }
+  // (or null/undefined if backend emits no payload)
+  const newMessageSubscribersRef = useRef(new Set());
+
+  /**
+   * Subscribe to socket "newMessage" events.
+   * Returns an unsubscribe function.
+   */
+  const subscribeToNewMessages = useCallback((cb) => {
+    if (typeof cb !== "function") return () => {};
+    newMessageSubscribersRef.current.add(cb);
+    return () => {
+      newMessageSubscribersRef.current.delete(cb);
+    };
+  }, []);
+
+  const emitNewMessageToSubscribers = useCallback((payload) => {
+    for (const cb of newMessageSubscribersRef.current) {
+      try {
+        cb(payload);
+      } catch (e) {
+        console.log("[messaging] newMessage subscriber error", e?.message || e);
+      }
+    }
+  }, []);
 
   /* =============================================================================
      Core refreshers (stable identities via useCallback)
@@ -470,8 +484,17 @@ export function MessagingProvider({ children }) {
 
       socketRef.current = s;
 
-      s.on("newMessage", () => {
-        console.log("[socket] newMessage");
+      // ✅ CHANGED: forward payload to subscribers so open thread can react
+      // Backend may emit either:
+      //   newMessage()                         (no payload)
+      //   newMessage({ from: "<uuid>", ... })  (payload)
+      s.on("newMessage", (payload) => {
+        console.log("[socket] newMessage", payload);
+
+        // notify open screens (thread) first
+        emitNewMessageToSubscribers(payload || null);
+
+        // keep existing behavior
         refreshChats();
         refreshUnread();
       });
@@ -493,8 +516,11 @@ export function MessagingProvider({ children }) {
 
       for (const t of typingTimeoutsRef.current.values()) clearTimeout(t);
       typingTimeoutsRef.current.clear();
+
+      // NOTE: Do not clear newMessageSubscribersRef here.
+      // Screens unsubscribe on unmount; keeping it avoids edge-case races.
     };
-  }, [refreshChats, refreshUnread, setTyping]);
+  }, [emitNewMessageToSubscribers, refreshChats, refreshUnread, setTyping]);
 
   // Initial data load (stable callbacks)
   useEffect(() => {
@@ -524,6 +550,9 @@ export function MessagingProvider({ children }) {
       fetchThread,
       sendMessage,
       markChatRead,
+
+      // ✅ NEW:
+      subscribeToNewMessages,
     }),
     [
       chats,
@@ -542,6 +571,8 @@ export function MessagingProvider({ children }) {
       fetchThread,
       sendMessage,
       markChatRead,
+
+      subscribeToNewMessages,
     ],
   );
 

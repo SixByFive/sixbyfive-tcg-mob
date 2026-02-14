@@ -1,16 +1,4 @@
 // components/messages/NewMessageModal.js
-//
-// UPDATED (2026-02-13)
-//
-// CHANGES:
-// - FIX: Always use the *users table id* (User.id UUID) when selecting a user.
-//        Previously we preferred `u.id`, which can be a wrapper/search-row id and
-//        causes backend `user_not_found` when loading threads.
-// - CHANGE: Rename avatarUrl -> avatar (prop + mapping + Avatar component).
-// - IMPROVE: More robust mapping for different possible search result shapes
-//            (u.user.id, u.userId, u.id, etc).
-// - KEEP: UI + debounce + recents behavior unchanged.
-//
 
 import { Ionicons } from "@expo/vector-icons";
 import { useSearchUsersLazyQuery } from "@sixbyfive/tcg-binder/react";
@@ -86,9 +74,9 @@ export default function NewMessageModal({
         if (!id) return null;
 
         return {
-          id, // ✅ users.id UUID
+          id,
           username,
-          avatar: avatar || undefined, // ✅ renamed from avatarUrl
+          avatar: avatar || undefined,
         };
       })
       .filter(Boolean);

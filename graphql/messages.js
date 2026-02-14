@@ -1,25 +1,4 @@
 // graphql/messages.js
-//
-// UPDATED (2026-02-13)
-//
-// FIXES:
-// - FIX: Export ALL message-related gql documents used by MessagingProvider.
-// - FIX: Ensure operations + variable names match backend typeDefs exactly.
-// - FIX: Stops "QUERY_CHAT_WITH_USER is undefined" and prevents malformed requests.
-// - NOTE: If you still get HTTP 400 after this, it will be a real server-side validation/auth issue,
-//         not "missing gql doc" anymore.
-//
-// Backend reference (from your typeDefs):
-// Query:
-// - myChats(page: Int, pageSize: Int): [ChatSummary!]!
-// - chatWithUser(userId: ID!, page: Int, pageSize: Int): [Message!]!
-// - unreadCount: Int!
-// - hasAgreedToChatRules: Boolean!
-// - chatRulesText: String!
-// Mutation:
-// - sendMessage(receiverId: ID!, content: String!, meta: JSON): Message!
-// - markChatRead(userId: ID!): Boolean!
-// - agreeToChatRules: Boolean!
 
 import { gql } from "@apollo/client";
 
@@ -34,6 +13,9 @@ export const QUERY_MY_CHATS = gql`
         id
         username
         avatar
+        profile {
+          avatar
+        }
       }
       lastMessage {
         id
