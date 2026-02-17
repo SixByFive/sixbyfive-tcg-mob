@@ -1,4 +1,19 @@
 // app/_providers/MessagingContext.js
+//
+// UPDATED (2026-02-15)
+//
+// PUSH NOTIFICATIONS (FRONTEND-ONLY FOR NOW)
+// - ADD: Register push permissions + Expo push token when the user is logged in (token exists)
+// - ADD: Store Expo push token locally in SecureStore so we can use it later when backend resumes
+// - ADD: Expose `expoPushToken` + `pushPermissionStatus` in context for debugging/UI if needed
+// - ADD: Small retry/backoff so it doesn't spam on transient failures
+//
+// NOTES:
+// - This does NOT send the token to backend yet (backend paused). It only logs + stores locally.
+// - It runs when auth token exists (getToken()) which matches your socket boot guard.
+// - Requires packages already discussed: expo-notifications/expo-device/expo-constants and expo-secure-store
+//   (push.js handles notifications channel + permissions; this file just uses it).
+//
 
 import { useApolloClient } from "@apollo/client";
 import React, {
@@ -25,7 +40,44 @@ import {
 import { getToken } from "../../lib/auth";
 import { connectSocket, disconnectSocket } from "../../lib/realtime";
 
+// ADD: Push helpers (frontend-only token registration + local storage)
+import * as SecureStore from "expo-secure-store";
+import {
+  ensurePushPermissionsAsync,
+  getExpoPushTokenAsync,
+} from "../../lib/push";
+
 const MessagingContext = createContext(null);
+
+/* =============================================================================
+   Push token local storage helpers (frontend-only)
+============================================================================= */
+
+const PUSH_TOKEN_STORE_KEY = "sbf_expo_push_token_v1";
+
+async function saveExpoPushTokenLocal(payload) {
+  try {
+    // payload shape: { token, savedAt, permissionStatus }
+    await SecureStore.setItemAsync(
+      PUSH_TOKEN_STORE_KEY,
+      JSON.stringify(payload),
+    );
+    return true;
+  } catch (e) {
+    console.log("[push] saveExpoPushTokenLocal error", e?.message || e);
+    return false;
+  }
+}
+
+async function loadExpoPushTokenLocal() {
+  try {
+    const raw = await SecureStore.getItemAsync(PUSH_TOKEN_STORE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
 
 /* =============================================================================
    Error helpers
@@ -158,6 +210,10 @@ export function MessagingProvider({ children }) {
   const [hasAgreedToChatRules, setHasAgreedToChatRules] = useState(false);
 
   const socketRef = useRef(null);
+
+  // ADD: Push debug state (frontend-only)
+  const [expoPushToken, setExpoPushToken] = useState("");
+  const [pushPermissionStatus, setPushPermissionStatus] = useState("unknown");
 
   /* =============================================================================
      NEW: "newMessage" subscribers (for open thread live updates)
@@ -458,6 +514,83 @@ export function MessagingProvider({ children }) {
   );
 
   /* =============================================================================
+     NEW: Push boot (frontend-only)
+  ============================================================================= */
+
+  useEffect(() => {
+    let alive = true;
+    let retryTimer = null;
+    let attempt = 0;
+
+    async function bootPush() {
+      try {
+        const token = await getToken();
+        if (!alive) return;
+
+        // Only register push when user is "logged in" (same rule as socket boot)
+        if (!token) return;
+
+        // Load previously saved token to avoid re-registering every launch
+        const cached = await loadExpoPushTokenLocal();
+        if (!alive) return;
+
+        if (cached?.token) {
+          setExpoPushToken(String(cached.token));
+          setPushPermissionStatus(String(cached.permissionStatus || "unknown"));
+          if (__DEV__) console.log("[push] using cached expo token");
+          return;
+        }
+
+        const perm = await ensurePushPermissionsAsync();
+        if (!alive) return;
+
+        setPushPermissionStatus(String(perm?.status || "unknown"));
+
+        if (!perm?.granted) {
+          console.log("[push] permission not granted:", perm?.status);
+          return;
+        }
+
+        const expoToken = await getExpoPushTokenAsync();
+        if (!alive) return;
+
+        if (!expoToken) {
+          throw new Error("Could not obtain Expo push token");
+        }
+
+        setExpoPushToken(String(expoToken));
+
+        await saveExpoPushTokenLocal({
+          token: String(expoToken),
+          savedAt: Date.now(),
+          permissionStatus: String(perm?.status || "unknown"),
+        });
+
+        console.log("[push] expo token ready:", expoToken);
+
+        // Backend paused:
+        // Later: send this token to backend via mutation (upsertPushToken)
+      } catch (e) {
+        console.log("[push] bootPush error", e?.message || e);
+
+        // Very small retry/backoff (helps with transient native readiness)
+        attempt += 1;
+        if (attempt <= 2 && alive) {
+          const delay = attempt === 1 ? 800 : 1800;
+          retryTimer = setTimeout(bootPush, delay);
+        }
+      }
+    }
+
+    bootPush();
+
+    return () => {
+      alive = false;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, []);
+
+  /* =============================================================================
      Socket boot (uses stable refreshers)
   ============================================================================= */
 
@@ -484,7 +617,6 @@ export function MessagingProvider({ children }) {
 
       socketRef.current = s;
 
-      // ✅ CHANGED: forward payload to subscribers so open thread can react
       // Backend may emit either:
       //   newMessage()                         (no payload)
       //   newMessage({ from: "<uuid>", ... })  (payload)
@@ -550,9 +682,11 @@ export function MessagingProvider({ children }) {
       fetchThread,
       sendMessage,
       markChatRead,
-
-      // ✅ NEW:
       subscribeToNewMessages,
+
+      // ADD: push debug values (useful for testing while backend paused)
+      expoPushToken,
+      pushPermissionStatus,
     }),
     [
       chats,
@@ -573,6 +707,9 @@ export function MessagingProvider({ children }) {
       markChatRead,
 
       subscribeToNewMessages,
+
+      expoPushToken,
+      pushPermissionStatus,
     ],
   );
 

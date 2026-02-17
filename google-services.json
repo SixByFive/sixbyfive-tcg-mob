@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "698086711191",
+    "project_id": "sixbyfive-tcg",
+    "storage_bucket": "sixbyfive-tcg.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:698086711191:android:d0204d0f70b5f2f3716ed2",
+        "android_client_info": {
+          "package_name": "com.sixbyfive.sbftcgmobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAHEr74XONs6yKzdMOPjGPsmj7q12_c4lE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

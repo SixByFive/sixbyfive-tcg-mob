@@ -1,4 +1,14 @@
 // app/messages/[userId].js
+//
+// UPDATED (2026-02-17)
+//
+// CHANGES:
+// - FIX: UI-only delete now persists across refresh using expo-secure-store (works in Expo Go / Hermes)
+// - REMOVE: AsyncStorage usage (NativeModule null in Expo Go / no native build)
+// - ADD: SecureStore chunked tombstone storage per thread (size-limit safe)
+// - FIX: Keyboard "extra space" issue by removing KeyboardAvoidingView and using Keyboard events + manual offsets
+// - CHANGE: FlatList paddingBottom accounts for composer height + safe-area + iOS keyboard height
+// - CHANGE: Composer lifts on iOS only (Android should use resize mode; avoids double-compensation)
 
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -12,7 +22,7 @@ import React, {
 import {
   FlatList,
   Image,
-  KeyboardAvoidingView,
+  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -30,6 +40,8 @@ import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 import { useMessaging } from "../contexts/MessengerContext";
 
 import { gql, useApolloClient } from "@apollo/client";
+import * as Notifications from "expo-notifications";
+import * as SecureStore from "expo-secure-store";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Avatar from "../../components/common/Avatar";
@@ -193,6 +205,84 @@ const REPORT_REASONS = [
 ];
 
 /* =============================================================================
+   ✅ NEW: UI-only deletion persistence (SecureStore, chunked)
+============================================================================= */
+
+function threadKey(otherUserId) {
+  return `wf_hidden_${String(otherUserId || "")}`;
+}
+
+function idxKey(otherUserId) {
+  return `wf_hidden_idx_${String(otherUserId || "")}`;
+}
+
+const MAX_IDS_TOTAL = 500; // keep bounded
+const IDS_PER_CHUNK = 150; // safe chunk size for SecureStore
+
+async function readJson(key) {
+  try {
+    const raw = await SecureStore.getItemAsync(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    if (__DEV__) console.log("[thread] readJson error", key, e?.message || e);
+    return null;
+  }
+}
+
+async function writeJson(key, value) {
+  try {
+    await SecureStore.setItemAsync(key, JSON.stringify(value));
+  } catch (e) {
+    if (__DEV__) console.log("[thread] writeJson error", key, e?.message || e);
+  }
+}
+
+async function deleteKey(key) {
+  try {
+    await SecureStore.deleteItemAsync(key);
+  } catch (_) {}
+}
+
+async function loadHiddenSet(otherUserId) {
+  const idx = await readJson(idxKey(otherUserId));
+  const chunks = Math.max(0, Number(idx?.chunks || 0));
+
+  const all = [];
+  for (let i = 0; i < chunks; i++) {
+    const arr = await readJson(`${threadKey(otherUserId)}_${i}`);
+    if (Array.isArray(arr)) all.push(...arr);
+  }
+
+  return new Set(all.map(String));
+}
+
+async function saveHiddenSet(otherUserId, set) {
+  const ids = Array.from(set).map(String).slice(-MAX_IDS_TOTAL);
+
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += IDS_PER_CHUNK) {
+    chunks.push(ids.slice(i, i + IDS_PER_CHUNK));
+  }
+
+  // Delete old chunks if new set is smaller
+  const prevIdx = await readJson(idxKey(otherUserId));
+  const prevChunks = Math.max(0, Number(prevIdx?.chunks || 0));
+  for (let i = chunks.length; i < prevChunks; i++) {
+    await deleteKey(`${threadKey(otherUserId)}_${i}`);
+  }
+
+  for (let i = 0; i < chunks.length; i++) {
+    await writeJson(`${threadKey(otherUserId)}_${i}`, chunks[i]);
+  }
+
+  await writeJson(idxKey(otherUserId), {
+    chunks: chunks.length,
+    updatedAt: Date.now(),
+  });
+}
+
+/* =============================================================================
    Header
 ============================================================================= */
 
@@ -287,7 +377,7 @@ function ThreadHeader({
 }
 
 /* =============================================================================
-   Report / Block Modals (unchanged)
+   Report / Block Modals
 ============================================================================= */
 
 function ReportModal({
@@ -557,7 +647,7 @@ export default function Thread() {
     [params?.username],
   );
 
-  // ✅ CHANGED: support BOTH param names (Messages list uses avatarUrl)
+  // ✅ support BOTH param names (Messages list uses avatarUrl)
   const avatarParam = useMemo(() => {
     const v = params?.avatar ?? params?.avatarUrl ?? "";
     return normalizeAvatarInput(v);
@@ -580,6 +670,83 @@ export default function Thread() {
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportToast, setReportToast] = useState("");
 
+  const [blockOpen, setBlockOpen] = useState(false);
+  const [blockSubmitting, setBlockSubmitting] = useState(false);
+
+  // ✅ keyboard tracking (prevents phantom padding bugs)
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const keyboardHeightRef = useRef(0);
+
+  useEffect(() => {
+    const onShow = (e) => {
+      const h = e?.endCoordinates?.height || 0;
+      keyboardHeightRef.current = h;
+      setKeyboardHeight(h);
+    };
+
+    const onHide = () => {
+      keyboardHeightRef.current = 0;
+      setKeyboardHeight(0);
+    };
+
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const subShow = Keyboard.addListener(showEvt, onShow);
+    const subHide = Keyboard.addListener(hideEvt, onHide);
+
+    return () => {
+      subShow?.remove?.();
+      subHide?.remove?.();
+    };
+  }, []);
+
+  // ✅ hidden/tombstoned messages state
+  const [hiddenIds, setHiddenIds] = useState(() => new Set());
+  const hiddenIdsRef = useRef(new Set());
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!otherUserId) return;
+      const set = await loadHiddenSet(otherUserId);
+      if (!alive) return;
+      hiddenIdsRef.current = set;
+      setHiddenIds(set);
+      if (__DEV__) {
+        console.log("[thread] loaded hidden ids", {
+          otherUserId,
+          count: set.size,
+        });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [otherUserId]);
+
+  const hideMessageId = useCallback(
+    async (messageId) => {
+      const id = String(messageId || "");
+      if (!id || !otherUserId) return;
+
+      // Don’t persist local optimistic ids
+      if (id.startsWith("local-")) return;
+
+      const next = new Set(hiddenIdsRef.current);
+      if (next.has(id)) return;
+
+      next.add(id);
+      hiddenIdsRef.current = next;
+      setHiddenIds(next);
+
+      await saveHiddenSet(otherUserId, next);
+    },
+    [otherUserId],
+  );
+
   const { data: meData } = useMeQuery({ fetchPolicy: "cache-first" });
   const me = meData?.me || null;
 
@@ -590,6 +757,20 @@ export default function Thread() {
     const isTyping = !!typingByUser?.[String(otherUserId)];
     setTyping(isTyping);
   }, [typingByUser, otherUserId]);
+
+  const testLocalNotification = useCallback(async () => {
+    if (!otherUserId) return;
+
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Test DM",
+        body: "Tap me to open the DM thread",
+        data: { type: "dm", userId: String(otherUserId) }, // matches your _layout routing
+        sound: "default",
+      },
+      trigger: null,
+    });
+  }, [otherUserId]);
 
   const partnerRow = useMemo(() => {
     const list = Array.isArray(chats) ? chats : [];
@@ -619,7 +800,7 @@ export default function Thread() {
       : "";
     if (fromChats) return fromChats;
     if (avatarParam) return avatarParam;
-    return ""; // let Avatar fallback to initials if truly missing
+    return "";
   }, [partnerRow, avatarParam]);
 
   const scrollToEnd = useCallback(() => {
@@ -657,10 +838,13 @@ export default function Thread() {
           pageSize: 80,
         });
 
+        const hidden = hiddenIdsRef.current || new Set();
+
         const arr = Array.isArray(list) ? list : [];
         const mapped = arr
           .map((m) => normalizeMessage(m, me?.id))
           .filter((m) => m && m.id)
+          .filter((m) => !hidden.has(String(m.id))) // ✅ filter tombstoned
           .sort((a, b) => a.ts - b.ts);
 
         setMsgs(mapped);
@@ -697,8 +881,7 @@ export default function Thread() {
   }, [loadThread]);
 
   /**
-   * ✅ NEW: Live update when the chat list reports a new lastMessage.
-   * This is the simplest reliable "socket-driven" refresh without wiring socket.io here.
+   * Live update when the chat list reports a new lastMessage.
    */
   const lastSeenPartnerMsgIdRef = useRef(null);
   const liveReloadTimerRef = useRef(null);
@@ -716,12 +899,10 @@ export default function Thread() {
 
     const prev = lastSeenPartnerMsgIdRef.current;
 
-    // First time we see it, just store it (don’t spam fetch on mount)
+    // First time we see it, just store it
     if (!prev) {
       lastSeenPartnerMsgIdRef.current = next;
-      if (__DEV__) {
-        console.log("[thread] init lastSeenPartnerMsgId", { next });
-      }
+      if (__DEV__) console.log("[thread] init lastSeenPartnerMsgId", { next });
       return;
     }
 
@@ -729,7 +910,6 @@ export default function Thread() {
 
     lastSeenPartnerMsgIdRef.current = next;
 
-    // Debounce (fast bursts of chat events)
     if (liveReloadTimerRef.current) clearTimeout(liveReloadTimerRef.current);
 
     liveReloadTimerRef.current = setTimeout(() => {
@@ -806,11 +986,22 @@ export default function Thread() {
     // TODO: expo-clipboard
   };
 
-  const onDelete = () => {
+  // ✅ UI-only delete that persists across refresh
+  const onDelete = useCallback(async () => {
     setSheetOpen(false);
-    if (!selectedMsg) return;
-    setMsgs((prev) => prev.filter((m) => m.id !== selectedMsg.id));
-  };
+    if (!selectedMsg?.id) return;
+
+    const id = String(selectedMsg.id);
+
+    // Remove immediately from UI
+    setMsgs((prev) => prev.filter((m) => String(m.id) !== id));
+
+    // Persist the hide
+    await hideMessageId(id);
+
+    setReportToast("Message removed on this device.");
+    setTimeout(() => setReportToast(""), 1600);
+  }, [selectedMsg, hideMessageId]);
 
   const openReportUser = useCallback(() => {
     setThreadMenuOpen(false);
@@ -885,9 +1076,6 @@ export default function Thread() {
     },
     [client, reportTarget],
   );
-
-  const [blockOpen, setBlockOpen] = useState(false);
-  const [blockSubmitting, setBlockSubmitting] = useState(false);
 
   const openBlockUser = useCallback(() => {
     setThreadMenuOpen(false);
@@ -977,13 +1165,22 @@ export default function Thread() {
                 minute: "2-digit",
               })}
             </Text>
-
-            {/* ✅ No diamonds/ticks */}
           </View>
         </View>
       </Pressable>
     );
   };
+
+  // ✅ composer sizing + keyboard offset (iOS only)
+  const COMPOSER_HEIGHT = 44;
+  const COMPOSER_VERTICAL_PADDING = 12; // top and bottom padding in inputRow container
+  const composerTotalHeight = COMPOSER_HEIGHT + COMPOSER_VERTICAL_PADDING * 2;
+  const safeBottom = Math.max(insets.bottom, 0);
+
+  // IMPORTANT:
+  // - iOS: lift composer by keyboard height
+  // - Android: rely on `softwareKeyboardLayoutMode: "resize"` (avoid double spacing)
+  const composerKeyboardOffset = Platform.OS === "ios" ? keyboardHeight : 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
@@ -997,6 +1194,11 @@ export default function Thread() {
         onPressTitle={goToProfileFromHeader}
       />
 
+      <Pressable style={styles.sheetBtn} onPress={testLocalNotification}>
+        <Ionicons name="notifications-outline" size={18} color={COLORS.text} />
+        <Text style={styles.sheetBtnText}>Test notification</Text>
+      </Pressable>
+
       {!!reportToast && (
         <View style={styles.toast}>
           <Text style={styles.toastText} numberOfLines={2}>
@@ -1005,67 +1207,75 @@ export default function Thread() {
         </View>
       )}
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Math.max(insets.top + 54, 64)}
-      >
-        {typing && (
-          <View style={styles.typingWrap}>
-            <View style={styles.dot} />
-            <View style={styles.dot} />
-            <View style={styles.dot} />
-            <Text style={styles.typingText}> {title} is typing…</Text>
-          </View>
-        )}
+      {typing && (
+        <View style={styles.typingWrap}>
+          <View style={styles.dot} />
+          <View style={styles.dot} />
+          <View style={styles.dot} />
+          <Text style={styles.typingText}> {title} is typing…</Text>
+        </View>
+      )}
 
-        <FlatList
-          ref={flatRef}
-          style={{ flex: 1, paddingHorizontal: 16 }}
-          contentContainerStyle={{ paddingTop: 10, paddingBottom: 12 }}
-          data={withSeparators}
-          keyExtractor={(m) => m.id}
-          renderItem={renderItem}
-          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={COLORS.textMuted}
-              colors={[COLORS.accent]}
-              progressBackgroundColor={COLORS.surface}
-            />
-          }
-          ListEmptyComponent={
-            <View style={{ paddingTop: 30, alignItems: "center" }}>
-              <Text style={{ color: COLORS.textMuted, fontWeight: "800" }}>
-                No messages yet
-              </Text>
-              <Text style={{ color: COLORS.textMuted, marginTop: 6 }}>
-                Say hello to start the conversation.
-              </Text>
-            </View>
-          }
-          onContentSizeChange={() => scrollToEnd()}
-          onLayout={() => scrollToEnd()}
+      <FlatList
+        ref={flatRef}
+        style={{ flex: 1, paddingHorizontal: 16 }}
+        contentContainerStyle={{
+          paddingTop: 10,
+          paddingBottom:
+            12 + composerTotalHeight + safeBottom + composerKeyboardOffset,
+        }}
+        data={withSeparators}
+        keyExtractor={(m) => m.id}
+        renderItem={renderItem}
+        ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.textMuted}
+            colors={[COLORS.accent]}
+            progressBackgroundColor={COLORS.surface}
+          />
+        }
+        ListEmptyComponent={
+          <View style={{ paddingTop: 30, alignItems: "center" }}>
+            <Text style={{ color: COLORS.textMuted, fontWeight: "800" }}>
+              No messages yet
+            </Text>
+            <Text style={{ color: COLORS.textMuted, marginTop: 6 }}>
+              Say hello to start the conversation.
+            </Text>
+          </View>
+        }
+        onContentSizeChange={() => scrollToEnd()}
+        onLayout={() => scrollToEnd()}
+        keyboardShouldPersistTaps="handled"
+      />
+
+      {/* Composer pinned to bottom, lifted by iOS keyboard via marginBottom */}
+      <View
+        style={[
+          styles.inputRow,
+          {
+            paddingBottom: 12 + safeBottom,
+            marginBottom: composerKeyboardOffset,
+          },
+        ]}
+      >
+        <TextInput
+          value={input}
+          onChangeText={setInput}
+          placeholder="Type a message"
+          placeholderTextColor={COLORS.textMuted}
+          style={[styles.input, { height: COMPOSER_HEIGHT }]}
+          returnKeyType="send"
+          onSubmitEditing={onSend}
         />
 
-        <View style={styles.inputRow}>
-          <TextInput
-            value={input}
-            onChangeText={setInput}
-            placeholder="Type a message"
-            placeholderTextColor={COLORS.textMuted}
-            style={styles.input}
-            returnKeyType="send"
-            onSubmitEditing={onSend}
-          />
-
-          <Pressable style={styles.send} onPress={onSend}>
-            <Text style={{ color: "#fff", fontWeight: "800" }}>Send</Text>
-          </Pressable>
-        </View>
-      </KeyboardAvoidingView>
+        <Pressable style={styles.send} onPress={onSend}>
+          <Text style={{ color: "#fff", fontWeight: "800" }}>Send</Text>
+        </Pressable>
+      </View>
 
       {/* Message ActionSheet */}
       <Modal
@@ -1352,7 +1562,8 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: "row",
     gap: 8,
-    padding: 12,
+    paddingTop: 12,
+    paddingHorizontal: 12,
     borderTopColor: COLORS.border,
     borderTopWidth: StyleSheet.hairlineWidth,
     backgroundColor: COLORS.surface,
@@ -1363,7 +1574,6 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     paddingHorizontal: 12,
     borderRadius: 10,
-    height: 44,
   },
   send: {
     backgroundColor: COLORS.accent,
@@ -1371,6 +1581,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     borderRadius: 10,
+    height: 44,
   },
 
   sheetBackdrop: { flex: 1, backgroundColor: "#00000088" },

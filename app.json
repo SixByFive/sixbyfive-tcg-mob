@@ -23,6 +23,7 @@
       "softwareKeyboardLayoutMode": "resize",
       "edgeToEdgeEnabled": true,
       "package": "com.sixbyfive.sbftcgmobile",
+      "permissions": ["NOTIFICATIONS"],
       "intentFilters": [
         {
           "action": "VIEW",
@@ -36,7 +37,8 @@
             }
           ]
         }
-      ]
+      ],
+      "googleServicesFile": "./google-services.json"
     },
 
     "web": {
@@ -47,6 +49,13 @@
 
     "plugins": [
       "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/logo.png",
+          "color": "#2963FF"
+        }
+      ],
       [
         "expo-splash-screen",
         {

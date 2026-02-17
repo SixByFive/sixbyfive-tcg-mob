@@ -1,13 +1,17 @@
 // app/settings.js
 //
-// UPDATED (2026-02-11)
+// UPDATED (2026-02-16)
 // CHANGES (this revision):
-// - ADD: Compact "single summary row" for Safety card when it's informational-only
-//        (DOB locked + no parent action required). Tap row to expand/collapse.
-// - KEEP: Full Safety UI when actions are required (parent email / verification) or when DOB is editable.
-// - KEEP: Backend DOB is the only source of truth for locking.
-// - KEEP: Fail-closed if ME_QUERY fails (read-only safety UI + error banner)
-// - KEEP: DOB input auto-format as DD/MM/YYYY + numeric keypad when unlocked
+// - CHANGE: Cleaner Notifications UX
+//   - Single compact summary row (master toggle + status pill)
+//   - Tap summary row to expand advanced options (Sound / Vibrate / System settings)
+//   - Do NOT request permission on load (only when enabling master)
+//   - Hide Expo token + noisy debug info unless __DEV__
+// - KEEP: Existing Safety, Account, 2FA, Help, App Info sections unchanged
+//
+// NOTE:
+// - Still uses ../lib/push helpers for local persistence + Android channel config.
+// - Uses expo-notifications ONLY for permission status reads (no prompts unless enabling).
 
 import { gql, useApolloClient } from "@apollo/client";
 import Constants from "expo-constants";
@@ -27,13 +31,25 @@ import {
   Platform,
   Pressable,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
 
+// ADD: permission status reads (no prompt unless you call requestPermissionsAsync)
+import * as Notifications from "expo-notifications";
+
 import PageHeaderBackSimple from "../components/common/PageHeaderBackSimple";
 import { COLORS } from "../theme/colors";
+
+// Notification prefs + permissions helpers
+import {
+  ensurePushPermissionsAsync,
+  getExpoPushTokenAsync,
+  getPushPrefsAsync,
+  setPushPrefsAsync,
+} from "../lib/push";
 
 /* ------------------------- Dev logging helpers ------------------------- */
 function devLog(...args) {
@@ -392,8 +408,187 @@ export default function Settings() {
   const [meLoading, setMeLoading] = useState(true);
   const [meError, setMeError] = useState(null);
 
-  // ADDED: Safety summary row open/close state
+  // Safety summary row open/close state
   const [safetyExpanded, setSafetyExpanded] = useState(false);
+
+  // =============================================================================
+  // Notifications (cleaner UX)
+  // =============================================================================
+
+  // CHANGED: compact row + expandable advanced options
+  const [notifExpanded, setNotifExpanded] = useState(false);
+
+  const [notifLoading, setNotifLoading] = useState(true);
+  const [notifStatus, setNotifStatus] = useState(null);
+
+  const [notifPrefs, setNotifPrefs] = useState({
+    enabled: true,
+    sound: true,
+    vibration: true,
+  });
+
+  const [notifPermission, setNotifPermission] = useState("unknown"); // granted | denied | undetermined | provisional | ...
+  const [expoTokenMask, setExpoTokenMask] = useState("");
+
+  const maskToken = (t) => {
+    const s = String(t || "");
+    if (!s) return "";
+    if (s.length <= 12) return s;
+    return `${s.slice(0, 6)}…${s.slice(-6)}`;
+  };
+
+  // CHANGED: read-only permission check (no prompt)
+  const refreshNotifStatus = useCallback(async () => {
+    try {
+      const perm = await Notifications.getPermissionsAsync();
+      setNotifPermission(String(perm?.status || "unknown"));
+    } catch (_) {
+      setNotifPermission("unknown");
+    }
+  }, []);
+
+  // CHANGED: load prefs + permission status without prompting
+  const loadNotifPrefs = useCallback(async () => {
+    setNotifLoading(true);
+    setNotifStatus(null);
+
+    try {
+      const prefs = await getPushPrefsAsync();
+      setNotifPrefs(prefs);
+
+      await refreshNotifStatus();
+
+      // DEV ONLY: keep token visibility out of user-facing UI
+      if (__DEV__) {
+        const token = await getExpoPushTokenAsync();
+        setExpoTokenMask(maskToken(token));
+      } else {
+        setExpoTokenMask("");
+      }
+
+      setNotifLoading(false);
+    } catch (e) {
+      setNotifLoading(false);
+      setNotifStatus({
+        type: "error",
+        message: e?.message || "Could not load notification settings.",
+      });
+    }
+  }, [refreshNotifStatus]);
+
+  useEffect(() => {
+    loadNotifPrefs();
+  }, [loadNotifPrefs]);
+
+  // CHANGED: open OS notification settings when blocked/denied
+  const openSystemNotificationSettings = useCallback(() => {
+    if (Platform.OS === "ios") {
+      Linking.openURL("app-settings:").catch(() => {});
+      return;
+    }
+    Linking.openSettings?.();
+  }, []);
+
+  // CHANGED: update prefs with cleaner logic
+  const updateNotifPref = useCallback(
+    async (patch) => {
+      setNotifStatus(null);
+
+      // Optimistic UI
+      setNotifPrefs((p) => ({ ...p, ...patch }));
+
+      try {
+        const next = await setPushPrefsAsync(patch);
+        setNotifPrefs(next);
+
+        // If they enabled notifications: request permissions NOW (only time we prompt)
+        if (patch?.enabled === true) {
+          const perm = await ensurePushPermissionsAsync();
+          const status = String(perm?.status || "unknown");
+          setNotifPermission(status);
+
+          if (perm?.granted) {
+            if (__DEV__) {
+              const token = await getExpoPushTokenAsync();
+              setExpoTokenMask(maskToken(token));
+            }
+          } else {
+            setNotifStatus({
+              type: "warning",
+              message:
+                "Notifications are enabled in-app, but permission is not granted. Enable notifications in your phone settings.",
+            });
+          }
+        }
+
+        // If they disabled master, collapse advanced to keep it tidy
+        if (patch?.enabled === false) {
+          setNotifExpanded(false);
+        }
+
+        // If vibration toggled, re-ensure channel config (Android)
+        if (typeof patch?.vibration === "boolean") {
+          // This helper may configure Android channels; keep as best-effort.
+          await ensurePushPermissionsAsync();
+        }
+
+        // Refresh read-only status after changes
+        await refreshNotifStatus();
+      } catch (e) {
+        // Revert by reloading from storage
+        await loadNotifPrefs();
+        setNotifStatus({
+          type: "error",
+          message: e?.message || "Could not update notification settings.",
+        });
+      }
+    },
+    [loadNotifPrefs, refreshNotifStatus],
+  );
+
+  // Derived UI: status pill + copy
+  const notifStatusMeta = useMemo(() => {
+    // If master is off, keep it simple
+    if (!notifPrefs.enabled) {
+      return { pill: "Off", type: "off", sub: "All alerts disabled in-app." };
+    }
+
+    const s = String(notifPermission || "unknown").toLowerCase();
+
+    if (s === "granted") {
+      return {
+        pill: "Allowed",
+        type: "ok",
+        sub: "System permission granted.",
+      };
+    }
+
+    if (s === "denied") {
+      return {
+        pill: "Blocked",
+        type: "bad",
+        sub: "Enable in system settings to receive notifications.",
+      };
+    }
+
+    if (s === "undetermined") {
+      return {
+        pill: "Not set",
+        type: "warn",
+        sub: "You’ll be asked when you enable notifications.",
+      };
+    }
+
+    return {
+      pill: "Unknown",
+      type: "warn",
+      sub: "Permission status could not be determined.",
+    };
+  }, [notifPrefs.enabled, notifPermission]);
+
+  // =============================================================================
+  // Me query / user
+  // =============================================================================
 
   const refetchMe = useCallback(async () => {
     setMeLoading(true);
@@ -496,12 +691,11 @@ export default function Settings() {
   const showParentEmail =
     !meLoading && !meError && hasDob && requiresParentApproval;
 
-  // CHANGED: Informational-only means: DOB locked, and NO parent approval action is needed.
-  // In this case, we show a single summary row (tap to expand).
+  // Informational-only means: DOB locked, and NO parent approval action is needed.
   const safetyIsInformationalOnly =
     dobIsLocked && !showParentEmail && !requiresParentApproval;
 
-  // ADDED: Auto-collapse when safety becomes informational-only (e.g. after DOB saved / refetch)
+  // Auto-collapse when safety becomes informational-only (e.g. after DOB saved / refetch)
   useEffect(() => {
     if (safetyIsInformationalOnly) setSafetyExpanded(false);
   }, [safetyIsInformationalOnly]);
@@ -902,6 +1096,156 @@ export default function Settings() {
       />
 
       {/* =========================
+          Notifications (clean)
+      ========================= */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Notifications</Text>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Push notifications</Text>
+          <Text style={styles.cardBody}>
+            Control alerts for messages and other updates.
+          </Text>
+
+          {/* CHANGED: single summary row (master + status) */}
+          <Pressable
+            onPress={() => setNotifExpanded((s) => !s)}
+            style={({ pressed }) => [
+              styles.notifSummaryRow,
+              pressed && { opacity: 0.92 },
+            ]}
+          >
+            <View style={{ flex: 1, gap: 4 }}>
+              <View style={styles.notifSummaryTop}>
+                <Text style={styles.notifSummaryTitle}>
+                  Enable notifications
+                </Text>
+
+                <View
+                  style={[
+                    styles.pill,
+                    notifStatusMeta.type === "ok"
+                      ? styles.pillOk
+                      : notifStatusMeta.type === "bad"
+                        ? styles.pillBad
+                        : notifStatusMeta.type === "off"
+                          ? styles.pillOff
+                          : styles.pillWarn,
+                  ]}
+                >
+                  <Text style={styles.pillText}>{notifStatusMeta.pill}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.notifSummarySub}>{notifStatusMeta.sub}</Text>
+            </View>
+
+            <Switch
+              value={!!notifPrefs.enabled}
+              onValueChange={(v) => updateNotifPref({ enabled: !!v })}
+            />
+
+            <Text style={styles.notifSummaryChevron}>
+              {notifExpanded ? "▲" : "▼"}
+            </Text>
+          </Pressable>
+
+          {/* Advanced options */}
+          <Collapsible open={notifExpanded}>
+            <View style={{ gap: 10 }}>
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleTitle}>Play sound</Text>
+                  <Text style={styles.toggleSub}>
+                    Sound for supported notifications.
+                  </Text>
+                </View>
+                <Switch
+                  value={!!notifPrefs.sound}
+                  onValueChange={(v) => updateNotifPref({ sound: !!v })}
+                  disabled={!notifPrefs.enabled}
+                />
+              </View>
+
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleTitle}>Vibrate</Text>
+                  <Text style={styles.toggleSub}>
+                    Android vibration channel for message notifications.
+                  </Text>
+                </View>
+                <Switch
+                  value={!!notifPrefs.vibration}
+                  onValueChange={(v) => updateNotifPref({ vibration: !!v })}
+                  disabled={!notifPrefs.enabled}
+                />
+              </View>
+
+              {/* If blocked/denied, show a clean "Open settings" action */}
+              {notifPrefs.enabled &&
+              String(notifPermission).toLowerCase() === "denied" ? (
+                <Pressable
+                  onPress={openSystemNotificationSettings}
+                  style={({ pressed }) => [
+                    styles.settingsLinkBtn,
+                    pressed && { opacity: 0.92 },
+                  ]}
+                >
+                  <Text style={styles.settingsLinkText}>
+                    Open system notification settings
+                  </Text>
+                </Pressable>
+              ) : null}
+
+              {/* DEV ONLY debug */}
+              {__DEV__ ? (
+                <View style={styles.infoBox}>
+                  <Text style={styles.helpText}>
+                    <Text style={{ fontWeight: "900", color: COLORS.text }}>
+                      Permission:
+                    </Text>{" "}
+                    {String(notifPermission || "unknown")}
+                  </Text>
+                  <Text style={styles.helpText}>
+                    <Text style={{ fontWeight: "900", color: COLORS.text }}>
+                      Expo token:
+                    </Text>{" "}
+                    {expoTokenMask ? expoTokenMask : "—"}
+                  </Text>
+                </View>
+              ) : null}
+
+              {notifStatus ? (
+                <View style={{ marginTop: 2 }}>
+                  <StatusBanner
+                    type={notifStatus.type}
+                    message={notifStatus.message}
+                    onClose={() => setNotifStatus(null)}
+                  />
+                </View>
+              ) : null}
+
+              {notifLoading ? (
+                <View style={{ marginTop: 2, flexDirection: "row", gap: 10 }}>
+                  <ActivityIndicator color={COLORS.accent} />
+                  <Text style={{ color: COLORS.textMuted, fontWeight: "800" }}>
+                    Loading notification settings…
+                  </Text>
+                </View>
+              ) : null}
+
+              {Platform.OS === "ios" ? (
+                <Text style={styles.helpText}>
+                  iOS vibration is controlled by the system. Sound/vibrate
+                  behaviour may depend on Focus / Silent mode.
+                </Text>
+              ) : null}
+            </View>
+          </Collapsible>
+        </View>
+      </View>
+
+      {/* =========================
           Safety & Parent Approval
       ========================= */}
       <View style={styles.section}>
@@ -910,7 +1254,6 @@ export default function Settings() {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Community feature access</Text>
 
-          {/* ADDED: Single summary row when informational-only */}
           {safetyIsInformationalOnly ? (
             <>
               <Pressable
@@ -934,7 +1277,6 @@ export default function Settings() {
               </Pressable>
 
               <Collapsible open={safetyExpanded}>
-                {/* Keep all the useful info but only when expanded */}
                 <View style={{ gap: 8 }}>
                   <View>
                     <Text style={styles.inputLabel}>
@@ -1010,7 +1352,6 @@ export default function Settings() {
                 accounts.
               </Text>
 
-              {/* Visible error if ME_QUERY fails */}
               {meError ? (
                 <View style={{ marginTop: 10 }}>
                   <StatusBanner
@@ -1043,7 +1384,6 @@ export default function Settings() {
                 ) : null}
               </View>
 
-              {/* DOB */}
               <View style={{ marginTop: 14 }}>
                 <Text style={styles.inputLabel}>
                   Date of birth {dobIsLocked ? "(locked)" : "(optional)"}
@@ -1096,7 +1436,6 @@ export default function Settings() {
                 ) : null}
               </View>
 
-              {/* Parent email (only show when required and ME_QUERY is ok) */}
               {showParentEmail ? (
                 <View style={{ marginTop: 10 }}>
                   <Text style={styles.inputLabel}>
@@ -1126,7 +1465,6 @@ export default function Settings() {
                 </Text>
               )}
 
-              {/* Buttons */}
               <View style={{ marginTop: 14, gap: 10 }}>
                 <Pressable
                   onPress={handleSaveSafetyProfile}
@@ -1205,7 +1543,6 @@ export default function Settings() {
                   </View>
                 ) : null}
 
-                {/* Capability preview */}
                 {capabilities ? (
                   <View style={{ marginTop: 6 }}>
                     <Text
@@ -1599,11 +1936,91 @@ const styles = StyleSheet.create({
   cardTitle: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
   cardBody: { color: COLORS.textMuted, marginTop: 6, lineHeight: 18 },
 
+  // CHANGED: Notifications summary row (compact)
+  notifSummaryRow: {
+    marginTop: 12,
+    backgroundColor: COLORS.alt,
+    borderColor: COLORS.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  notifSummaryTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  notifSummaryTitle: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 14,
+  },
+  notifSummarySub: {
+    color: COLORS.textMuted,
+    fontSize: 12,
+  },
+  notifSummaryChevron: {
+    color: COLORS.textMuted,
+    fontWeight: "900",
+    fontSize: 12,
+    paddingLeft: 4,
+  },
+
+  // NEW: Status pill
+  pill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  pillText: { fontSize: 11, fontWeight: "900", color: "white" },
+  pillOk: { backgroundColor: "#0f5132", borderColor: "#badbcc" },
+  pillBad: { backgroundColor: "#842029", borderColor: "#f5c2c7" },
+  pillWarn: { backgroundColor: "#664d03", borderColor: "#ffecb5" },
+  pillOff: { backgroundColor: COLORS.surface, borderColor: COLORS.border },
+
+  // Advanced toggle rows
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: COLORS.alt,
+    borderColor: COLORS.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+  },
+  toggleTitle: { color: COLORS.text, fontWeight: "900" },
+  toggleSub: { color: COLORS.textMuted, marginTop: 3, fontSize: 12 },
+
+  settingsLinkBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  settingsLinkText: { color: COLORS.accent, fontWeight: "900" },
+
+  infoBox: {
+    marginTop: 2,
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    padding: 12,
+  },
+
   smallLine: { color: COLORS.textSecondary, fontSize: 12 },
   smallMuted: { color: COLORS.textMuted },
   smallStrong: { color: COLORS.text, fontWeight: "800" },
 
-  // ADDED: Safety summary row styles (tap to expand)
   safetySummaryRow: {
     marginTop: 12,
     backgroundColor: COLORS.alt,
