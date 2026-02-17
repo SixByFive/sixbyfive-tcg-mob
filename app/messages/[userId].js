@@ -1,14 +1,4 @@
 // app/messages/[userId].js
-//
-// UPDATED (2026-02-17)
-//
-// CHANGES:
-// - FIX: UI-only delete now persists across refresh using expo-secure-store (works in Expo Go / Hermes)
-// - REMOVE: AsyncStorage usage (NativeModule null in Expo Go / no native build)
-// - ADD: SecureStore chunked tombstone storage per thread (size-limit safe)
-// - FIX: Keyboard "extra space" issue by removing KeyboardAvoidingView and using Keyboard events + manual offsets
-// - CHANGE: FlatList paddingBottom accounts for composer height + safe-area + iOS keyboard height
-// - CHANGE: Composer lifts on iOS only (Android should use resize mode; avoids double-compensation)
 
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -20,6 +10,7 @@ import React, {
   useState,
 } from "react";
 import {
+  Dimensions, // ✅ ADD
   FlatList,
   Image,
   Keyboard,
@@ -205,7 +196,7 @@ const REPORT_REASONS = [
 ];
 
 /* =============================================================================
-   ✅ NEW: UI-only deletion persistence (SecureStore, chunked)
+   ✅ UI-only deletion persistence (SecureStore, chunked)
 ============================================================================= */
 
 function threadKey(otherUserId) {
@@ -676,6 +667,24 @@ export default function Thread() {
   // ✅ keyboard tracking (prevents phantom padding bugs)
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const keyboardHeightRef = useRef(0);
+
+  // ✅ ADD: track window height so we can detect Android resize vs overlay
+  const [windowHeight, setWindowHeight] = useState(
+    Dimensions.get("window").height,
+  );
+  const baseWindowHeightRef = useRef(Dimensions.get("window").height);
+
+  useEffect(() => {
+    const sub = Dimensions.addEventListener("change", ({ window }) => {
+      if (!window?.height) return;
+      setWindowHeight(window.height);
+    });
+
+    return () => {
+      // RN versions differ: sometimes it's remove(), sometimes removeEventListener
+      sub?.remove?.();
+    };
+  }, []);
 
   useEffect(() => {
     const onShow = (e) => {
@@ -1171,16 +1180,33 @@ export default function Thread() {
     );
   };
 
-  // ✅ composer sizing + keyboard offset (iOS only)
+  // ✅ composer sizing + keyboard offset
   const COMPOSER_HEIGHT = 44;
   const COMPOSER_VERTICAL_PADDING = 12; // top and bottom padding in inputRow container
   const composerTotalHeight = COMPOSER_HEIGHT + COMPOSER_VERTICAL_PADDING * 2;
   const safeBottom = Math.max(insets.bottom, 0);
 
-  // IMPORTANT:
-  // - iOS: lift composer by keyboard height
-  // - Android: rely on `softwareKeyboardLayoutMode: "resize"` (avoid double spacing)
-  const composerKeyboardOffset = Platform.OS === "ios" ? keyboardHeight : 0;
+  /**
+   * ✅ NEW keyboard lift logic:
+   * - iOS: lift by (keyboardHeight - safeBottom) so the composer kisses the keyboard.
+   * - Android: if the window height shrinks while keyboard is open, the OS is already resizing.
+   *            In that case, lift=0 (prevents double-lift).
+   *            If NOT resizing (keyboard overlays), lift by keyboardHeight.
+   */
+  const baseH = baseWindowHeightRef.current || 0;
+  const isAndroid = Platform.OS === "android";
+  const androidIsResizing =
+    isAndroid && keyboardHeight > 0 && windowHeight < baseH - 40;
+
+  const keyboardLift = useMemo(() => {
+    if (Platform.OS === "ios") {
+      return Math.max(0, keyboardHeight - safeBottom);
+    }
+    if (isAndroid) {
+      return androidIsResizing ? 0 : Math.max(0, keyboardHeight);
+    }
+    return 0;
+  }, [keyboardHeight, safeBottom, isAndroid, androidIsResizing]);
 
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
@@ -1221,8 +1247,9 @@ export default function Thread() {
         style={{ flex: 1, paddingHorizontal: 16 }}
         contentContainerStyle={{
           paddingTop: 10,
-          paddingBottom:
-            12 + composerTotalHeight + safeBottom + composerKeyboardOffset,
+          // ✅ CHANGE: use keyboardLift (not raw keyboardHeight) so the list
+          // always ends above the composer + lifted area, with no phantom gap.
+          paddingBottom: 12 + composerTotalHeight + safeBottom + keyboardLift,
         }}
         data={withSeparators}
         keyExtractor={(m) => m.id}
@@ -1252,13 +1279,15 @@ export default function Thread() {
         keyboardShouldPersistTaps="handled"
       />
 
-      {/* Composer pinned to bottom, lifted by iOS keyboard via marginBottom */}
+      {/* ✅ Composer pinned to bottom (in normal layout), lifted by keyboardLift */}
       <View
         style={[
           styles.inputRow,
           {
-            paddingBottom: 12 + safeBottom,
-            marginBottom: composerKeyboardOffset,
+            // ✅ CHANGE: slightly tighter bottom padding for “minimal space”
+            paddingBottom: 8 + safeBottom,
+            // ✅ CHANGE: lift on iOS AND on Android only when needed (overlay mode)
+            marginBottom: keyboardLift,
           },
         ]}
       >
