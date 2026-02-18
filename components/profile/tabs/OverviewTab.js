@@ -381,21 +381,6 @@ function Section({
           <Text style={styles.cardTitle}>{title}</Text>
           {!!subtitle && <Text style={styles.cardSub}>{subtitle}</Text>}
         </View>
-        {showEdit && (
-          <Pressable
-            onPress={onEdit}
-            style={({ pressed }) => [
-              styles.editBtn,
-              pressed && { opacity: 0.9 },
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel={`Edit ${title}`}
-            hitSlop={6}
-          >
-            <Ionicons name="create-outline" size={14} color={COLORS.accent} />
-            <Text style={styles.editText}>Edit</Text>
-          </Pressable>
-        )}
       </View>
       {children}
     </View>

@@ -10,7 +10,7 @@ import React, {
   useState,
 } from "react";
 import {
-  Dimensions, // ✅ ADD
+  Dimensions,
   FlatList,
   Image,
   Keyboard,
@@ -31,7 +31,6 @@ import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 import { useMessaging } from "../contexts/MessengerContext";
 
 import { gql, useApolloClient } from "@apollo/client";
-import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -638,7 +637,6 @@ export default function Thread() {
     [params?.username],
   );
 
-  // ✅ support BOTH param names (Messages list uses avatarUrl)
   const avatarParam = useMemo(() => {
     const v = params?.avatar ?? params?.avatarUrl ?? "";
     return normalizeAvatarInput(v);
@@ -664,11 +662,9 @@ export default function Thread() {
   const [blockOpen, setBlockOpen] = useState(false);
   const [blockSubmitting, setBlockSubmitting] = useState(false);
 
-  // ✅ keyboard tracking (prevents phantom padding bugs)
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const keyboardHeightRef = useRef(0);
 
-  // ✅ ADD: track window height so we can detect Android resize vs overlay
   const [windowHeight, setWindowHeight] = useState(
     Dimensions.get("window").height,
   );
@@ -712,7 +708,6 @@ export default function Thread() {
     };
   }, []);
 
-  // ✅ hidden/tombstoned messages state
   const [hiddenIds, setHiddenIds] = useState(() => new Set());
   const hiddenIdsRef = useRef(new Set());
 
@@ -767,19 +762,19 @@ export default function Thread() {
     setTyping(isTyping);
   }, [typingByUser, otherUserId]);
 
-  const testLocalNotification = useCallback(async () => {
-    if (!otherUserId) return;
+  // const testLocalNotification = useCallback(async () => {
+  //   if (!otherUserId) return;
 
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "Test DM",
-        body: "Tap me to open the DM thread",
-        data: { type: "dm", userId: String(otherUserId) }, // matches your _layout routing
-        sound: "default",
-      },
-      trigger: null,
-    });
-  }, [otherUserId]);
+  //   await Notifications.scheduleNotificationAsync({
+  //     content: {
+  //       title: "Test DM",
+  //       body: "Tap me to open the DM thread",
+  //       data: { type: "dm", userId: String(otherUserId) }, // matches your _layout routing
+  //       sound: "default",
+  //     },
+  //     trigger: null,
+  //   });
+  // }, [otherUserId]);
 
   const partnerRow = useMemo(() => {
     const list = Array.isArray(chats) ? chats : [];
@@ -853,7 +848,7 @@ export default function Thread() {
         const mapped = arr
           .map((m) => normalizeMessage(m, me?.id))
           .filter((m) => m && m.id)
-          .filter((m) => !hidden.has(String(m.id))) // ✅ filter tombstoned
+          .filter((m) => !hidden.has(String(m.id)))
           .sort((a, b) => a.ts - b.ts);
 
         setMsgs(mapped);
@@ -995,7 +990,6 @@ export default function Thread() {
     // TODO: expo-clipboard
   };
 
-  // ✅ UI-only delete that persists across refresh
   const onDelete = useCallback(async () => {
     setSheetOpen(false);
     if (!selectedMsg?.id) return;
@@ -1180,19 +1174,11 @@ export default function Thread() {
     );
   };
 
-  // ✅ composer sizing + keyboard offset
   const COMPOSER_HEIGHT = 44;
   const COMPOSER_VERTICAL_PADDING = 12; // top and bottom padding in inputRow container
   const composerTotalHeight = COMPOSER_HEIGHT + COMPOSER_VERTICAL_PADDING * 2;
   const safeBottom = Math.max(insets.bottom, 0);
 
-  /**
-   * ✅ NEW keyboard lift logic:
-   * - iOS: lift by (keyboardHeight - safeBottom) so the composer kisses the keyboard.
-   * - Android: if the window height shrinks while keyboard is open, the OS is already resizing.
-   *            In that case, lift=0 (prevents double-lift).
-   *            If NOT resizing (keyboard overlays), lift by keyboardHeight.
-   */
   const baseH = baseWindowHeightRef.current || 0;
   const isAndroid = Platform.OS === "android";
   const androidIsResizing =
@@ -1219,11 +1205,6 @@ export default function Thread() {
         onOpenMenu={() => setThreadMenuOpen(true)}
         onPressTitle={goToProfileFromHeader}
       />
-
-      <Pressable style={styles.sheetBtn} onPress={testLocalNotification}>
-        <Ionicons name="notifications-outline" size={18} color={COLORS.text} />
-        <Text style={styles.sheetBtnText}>Test notification</Text>
-      </Pressable>
 
       {!!reportToast && (
         <View style={styles.toast}>

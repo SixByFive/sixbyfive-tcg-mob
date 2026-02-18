@@ -1,20 +1,16 @@
 // app/(profile)/[username].js
 //
-// BULLETPROOF UPDATE:
+// UPDATED (2026-02-18)
 //
-// - Achievements are NOT a field on Profile in GraphQL. Never query userProfile.achievements.
-// - Achievements are fetched via userAchievements(userId) ONLY.
-// - Bulletproof tab handling: SegmentTabs sometimes emits label/value inconsistently.
-// - Bulletproof userId resolution: prefer user.id, then userId, then id.
-// - Bulletproof AchievementsTab integration: pass BOTH shapes:
-//    1) userAchievements (schema-native UserAchievement[])
-//    2) items (flattened Achievement-like array, with earnedAt/meta)
-// - Clear dev-only logs for "why isn't it fetching" scenarios.
-// - Graceful empty state (no achievements yet).
+// CHANGES:
+// - ADD: Persist LAST profile route to SecureStore for Home Hub -> Continue
+// - KEEP: Bulletproof achievements fetching via userAchievements(userId) only
+// - KEEP: SegmentTabs normalization + resilient userId resolution
 
 import { gql, useQuery } from "@apollo/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import * as SecureStore from "expo-secure-store"; // ADD
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -35,9 +31,30 @@ import OverviewTab from "../../components/profile/tabs/OverviewTab";
 import WishlistTab from "../../components/profile/tabs/WishlistTab";
 import { COLORS } from "../../theme/colors";
 
+/* ---------- Home Hub persistence key (must match home.js strings) ---------- */
+const LAST_PROFILE_ROUTE_KEY = "sbf_last_profile_route_v1"; // SAME as Home
+
+function cleanString(v) {
+  const s = String(v ?? "").trim();
+  return s.length ? s : "";
+}
+
+async function setRouteKey(key, route) {
+  const next = cleanString(route);
+  if (!next) return;
+  try {
+    const prev = await SecureStore.getItemAsync(key);
+    if (prev === next) return;
+    await SecureStore.setItemAsync(key, next);
+  } catch {
+    // Non-fatal
+  }
+}
+/* ------------------------------------------------------------------------- */
+
 const avatarPlaceholder = (name) =>
   `https://ui-avatars.com/api/?name=${encodeURIComponent(
-    name || "User"
+    name || "User",
   )}&background=2963FF&color=fff`;
 
 const fmtDate = (d) => {
@@ -121,7 +138,6 @@ function normalizeTabValue(value) {
   const v = String(value || "").trim();
   const lower = v.toLowerCase();
 
-  // If we already have a canonical key, keep it.
   if (
     lower === "overview" ||
     lower === "cards" ||
@@ -132,14 +148,12 @@ function normalizeTabValue(value) {
     return lower;
   }
 
-  // Map common label variants -> keys
   if (lower.includes("overview")) return "overview";
   if (lower.includes("card")) return "cards";
   if (lower.includes("binder")) return "binders";
   if (lower.includes("wish")) return "wishlist";
   if (lower.includes("achieve")) return "achievements";
 
-  // Fallback (safe default)
   return "overview";
 }
 
@@ -155,17 +169,27 @@ export default function PublicProfile() {
   const meUsername = meData?.me?.username || "";
   const isOwner = meUsername.toLowerCase() === username.toLowerCase();
 
-  const {
-    data,
-    loading,
-    error,
-    refetch,
-    networkStatus,
-  } = useQuery(USER_PROFILE_PUBLIC, {
-    variables: { username },
-    notifyOnNetworkStatusChange: true,
-    fetchPolicy: "cache-and-network",
-  });
+  // ADD: Persist last profile route for Home Hub -> Continue
+  useEffect(() => {
+    const u = cleanString(username);
+    if (!u) return;
+
+    // IMPORTANT: route groups like (profile) are not part of the URL
+    // so this is the correct public path:
+    const route = `/profile/${encodeURIComponent(u)}`;
+
+    setRouteKey(LAST_PROFILE_ROUTE_KEY, route);
+  }, [username]);
+
+  const { data, loading, error, refetch, networkStatus } = useQuery(
+    USER_PROFILE_PUBLIC,
+    {
+      variables: { username },
+      notifyOnNetworkStatusChange: true,
+      fetchPolicy: "cache-and-network",
+      skip: !cleanString(username),
+    },
+  );
 
   const vm = useMemo(() => {
     const p = data?.userProfile;
@@ -221,7 +245,6 @@ export default function PublicProfile() {
   }, [data, username]);
 
   // Achievements are lazy-loaded ONLY when the Achievements tab is active.
-  // Bulletproof: we normalize `tab` so this condition can't get stuck due to label/key mismatch.
   const activeTab = useMemo(() => normalizeTabValue(tab), [tab]);
   const shouldLoadAchievements = activeTab === "achievements" && !!vm?.id;
 
@@ -238,13 +261,11 @@ export default function PublicProfile() {
     fetchPolicy: "cache-and-network",
   });
 
-  // Schema-native rows (UserAchievement[])
   const userAchievementsRows = useMemo(() => {
     const rows = achData?.userAchievements;
     return Array.isArray(rows) ? rows : [];
   }, [achData]);
 
-  // Flattened view model (Achievement + earnedAt/meta) for UIs that expect a single object.
   const achievementsVm = useMemo(() => {
     if (!userAchievementsRows.length) return [];
 
@@ -267,7 +288,6 @@ export default function PublicProfile() {
       }));
   }, [userAchievementsRows]);
 
-  // Dev-only logging to explain "why isn't it fetching"
   useEffect(() => {
     if (!__DEV__) return;
 
@@ -311,7 +331,9 @@ export default function PublicProfile() {
 
   if (error) {
     return (
-      <View style={[styles.container, styles.center, { paddingHorizontal: 24 }]}>
+      <View
+        style={[styles.container, styles.center, { paddingHorizontal: 24 }]}
+      >
         <Text
           style={{
             color: COLORS.error,
@@ -348,7 +370,6 @@ export default function PublicProfile() {
     );
   }
 
-  // Canonical tabs (keys are canonical; SegmentTabs may emit label -> we normalize above)
   const tabs = [
     { key: "overview", label: "Overview" },
     { key: "cards", label: "Cards" },
@@ -376,10 +397,7 @@ export default function PublicProfile() {
             tintColor={COLORS.accent}
             refreshing={isRefreshing}
             onRefresh={() => {
-              // Refresh profile always
               refetch();
-
-              // Refresh achievements only if we are on the achievements tab
               if (normalizeTabValue(tab) === "achievements") {
                 refetchAchievements();
               }
@@ -458,7 +476,6 @@ export default function PublicProfile() {
 
         {activeTab === "achievements" && (
           <View>
-            {/* Error state */}
             {achError ? (
               <View style={{ paddingVertical: 14 }}>
                 <Text
@@ -482,7 +499,6 @@ export default function PublicProfile() {
                 </Text>
               </View>
             ) : achLoading && userAchievementsRows.length === 0 ? (
-              // Loading state
               <View style={{ paddingVertical: 18, alignItems: "center" }}>
                 <ActivityIndicator color={COLORS.accent} />
                 <Text style={{ color: COLORS.textMuted, marginTop: 10 }}>
@@ -490,7 +506,6 @@ export default function PublicProfile() {
                 </Text>
               </View>
             ) : userAchievementsRows.length === 0 ? (
-              // Empty state (prevents "blank tab looks broken")
               <View style={{ paddingVertical: 16 }}>
                 <Text style={{ color: COLORS.textMuted, textAlign: "center" }}>
                   No achievements yet.
@@ -502,17 +517,15 @@ export default function PublicProfile() {
                 ) : null}
               </View>
             ) : (
-              // Bulletproof: pass BOTH shapes so AchievementsTab can render either way
               <AchievementsTab
-  // UPDATED: pass schema-native items first (most likely what the component expects)
-  items={userAchievementsRows}
-  // ALSO pass flattened for components expecting that
-  flattenedItems={achievementsVm}
-  loading={achLoading}
-  refreshing={isAchRefreshing}
-  onRefresh={refetchAchievements}
-/>
-
+                // UPDATED: schema-native first
+                items={userAchievementsRows}
+                // ALSO pass flattened for UIs expecting this shape
+                flattenedItems={achievementsVm}
+                loading={achLoading}
+                refreshing={isAchRefreshing}
+                onRefresh={refetchAchievements}
+              />
             )}
           </View>
         )}
@@ -547,7 +560,10 @@ const styles = StyleSheet.create({
   },
   buttonPressed: { transform: [{ scale: 0.98 }], opacity: 0.95 },
   buttonPrimary: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
-  buttonSecondary: { backgroundColor: COLORS.surface, borderColor: COLORS.border },
+  buttonSecondary: {
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.border,
+  },
   buttonFollowing: {
     backgroundColor: "rgba(41,99,255,0.12)",
     borderColor: COLORS.accent,
@@ -571,7 +587,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.18)",
     borderColor: "rgba(255,255,255,0.22)",
   },
-  iconPillSecondary: { backgroundColor: COLORS.background, borderColor: COLORS.border },
+  iconPillSecondary: {
+    backgroundColor: COLORS.background,
+    borderColor: COLORS.border,
+  },
   iconPillFollowing: {
     backgroundColor: "rgba(41,99,255,0.12)",
     borderColor: COLORS.accent,

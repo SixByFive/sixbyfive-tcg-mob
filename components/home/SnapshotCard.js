@@ -1,8 +1,13 @@
 // components/home/SnapshotCard.js
-// Live counts from inline queries with graceful fallbacks/overrides.
-// Mirrors OverviewTab logic, but uses schema-safe inline docs to avoid 400s.
+//
+// UPDATED (2026-02-18)
+//
+// CHANGES:
+// - ADD: `onCounts` callback prop to expose computed {cards, binders, wishlist}
+//        so Home can use the same schema-safe logic for onboarding + hub UI.
+// - KEEP: Existing UI + inline, schema-safe queries (no breaking changes)
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 
@@ -65,6 +70,10 @@ export default function SnapshotCard({
   cardsCount,
   bindersCount,
   wishlistCount,
+
+  // NEW: optional callback that receives computed counts
+  // onCounts?.({ cards, binders, wishlist })
+  onCounts,
 }) {
   // Always query for the signed-in user on the home snapshot
   const { data: colData } = useQuery(MY_COLLECTION_MIN, {
@@ -72,11 +81,13 @@ export default function SnapshotCard({
     nextFetchPolicy: "cache-first",
     notifyOnNetworkStatusChange: true,
   });
+
   const { data: bindersData } = useQuery(MY_BINDERS_DOC, {
     fetchPolicy: "cache-and-network",
     nextFetchPolicy: "cache-first",
     notifyOnNetworkStatusChange: true,
   });
+
   const { data: wlData } = useQuery(MY_WISHLIST_MIN, {
     variables: { page: 1, pageSize: 1 }, // we only need total; tiny page for safety
     fetchPolicy: "cache-and-network",
@@ -120,7 +131,21 @@ export default function SnapshotCard({
         (hasNum(wishlistFromQ) ? wishlistFromQ : undefined) ??
         wishlistFromUser,
     };
-  }, [cardsCount, bindersCount, wishlistCount, user, colData, bindersData, wlData]);
+  }, [
+    cardsCount,
+    bindersCount,
+    wishlistCount,
+    user,
+    colData,
+    bindersData,
+    wlData,
+  ]);
+
+  // NEW: notify parent with computed counts (for Hub / onboarding logic)
+  useEffect(() => {
+    if (typeof onCounts !== "function") return;
+    onCounts({ cards, binders, wishlist });
+  }, [cards, binders, wishlist, onCounts]);
 
   const fmt = (n) => {
     try {
@@ -132,13 +157,10 @@ export default function SnapshotCard({
   const show = (n) => (loading && !user ? "…" : fmt(n));
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.title}>Your snapshot</Text>
-      <View style={styles.row}>
-        <Stat label="Cards" value={show(cards)} />
-        <Stat label="Binders" value={show(binders)} />
-        <Stat label="Wishlist" value={show(wishlist)} />
-      </View>
+    <View style={styles.row}>
+      <Stat label="Cards" value={show(cards)} />
+      <Stat label="Binders" value={show(binders)} />
+      <Stat label="Wishlist" value={show(wishlist)} />
     </View>
   );
 }

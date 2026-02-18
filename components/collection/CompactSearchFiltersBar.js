@@ -259,6 +259,7 @@ export default function CompactSearchFiltersBar({
 const styles = StyleSheet.create({
   bar: {
     marginTop: 8,
+    marginBottom: 12,
     marginHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
@@ -283,7 +284,6 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
 
-  // NEW: Small inline sort state pill
   sortPill: {
     height: 40,
     maxWidth: 140, // keeps bar compact

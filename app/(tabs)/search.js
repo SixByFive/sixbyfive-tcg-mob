@@ -1,18 +1,16 @@
 // app/(tabs)/search.js
 //
-// UPDATED (2026-01-21):
-// - FIX: Search bar missing because the collapsible wrapper started at height: 0 on first render,
-//        so the inner content never got laid out -> onLayout never fired -> height stayed 0 forever.
-//        Solution: render a NON-animated wrapper until we measure the header once.
-// - FIX: Stop mutating shared values during render (can cause flicker / unexpected behavior).
-//        collapseDistanceSV is now synced inside a useEffect.
-// - KEEP: Reanimated-driven collapse (smooth on Android) with REAL layout height shrinking (no empty space).
-// - KEEP: No list translate tricks, so no growing bottom void.
+// UPDATED (2026-02-18)
 //
-// NOTE: This file assumes react-native-reanimated is correctly installed (Babel plugin enabled).
+// CHANGES:
+// - FIX: Missing closing brace in setRouteKey() (was breaking the entire file)
+// - ADD: buildSearchResumeRoute() helper (single source of truth for resume route)
+// - ADD: Persist LAST_SEARCH_ROUTE_KEY on search AND when opening a card
+// - KEEP: Hydrate search inputs from route params (Home -> Resume works)
+// - KEEP: Existing search, filtering, sorting, and UI behaviour
 
 import { useApolloClient, useLazyQuery, useMutation } from "@apollo/client";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, {
   useCallback,
   useEffect,
@@ -44,6 +42,7 @@ import {
   SearchCardsDocument,
 } from "@sixbyfive/tcg-binder/client";
 import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import * as SecureStore from "expo-secure-store";
 
 import EmptyState from "../../components/common/EmptyState";
 import CardTile from "../../components/search/CardTile";
@@ -59,6 +58,46 @@ import {
 // We now load everything in a single query (no paging)
 const CARDSEARCH_LIMIT = 1200;
 const GBP_SYMBOL = "\u00A3";
+
+/* -------------------------------------------------------------------------- */
+/*  "Continue where you left off" (Home -> Resume search)                      */
+/* -------------------------------------------------------------------------- */
+
+const LAST_SEARCH_ROUTE_KEY = "sbf_last_search_route_v1";
+
+function cleanString(v) {
+  const s = String(v ?? "").trim();
+  return s.length ? s : "";
+}
+
+async function setRouteKey(key, route) {
+  const next = cleanString(route);
+  if (!next) return;
+
+  try {
+    const prev = await SecureStore.getItemAsync(key);
+    if (prev === next) return; // no-op if unchanged
+    await SecureStore.setItemAsync(key, next);
+  } catch {
+    // Non-fatal
+  }
+} // ✅ FIX: this brace was missing in your pasted file
+
+function buildSearchResumeRoute({ name, setCode, number }) {
+  const qName = cleanString(name);
+  const qSet = cleanString(setCode);
+  const qNum = cleanString(number);
+
+  const qs = [
+    qName ? `name=${encodeURIComponent(qName)}` : null,
+    qSet ? `setCode=${encodeURIComponent(qSet)}` : null,
+    qNum ? `number=${encodeURIComponent(qNum)}` : null,
+  ]
+    .filter(Boolean)
+    .join("&");
+
+  return qs ? `/(tabs)/search?${qs}` : `/(tabs)/search`;
+}
 
 /* -------------------------------------------------------------------------- */
 /*  RARITY CONFIG                                                             */
@@ -574,8 +613,6 @@ function AdvancedFiltersMobile({
     onChange({ ...filters, rarities: Array.from(next) });
   };
 
-  const isGroupActive = (group) => currentRarities.has(group.id);
-
   const handleClear = () => {
     onChange({
       minPrice: "",
@@ -774,6 +811,9 @@ function AdvancedFiltersMobile({
 
 export default function SearchTab() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const didHydrateFromParamsRef = useRef(false);
+
   const toast = useToast();
   const apollo = useApolloClient();
 
@@ -781,7 +821,7 @@ export default function SearchTab() {
 
   // Measured once (JS state) + mirrored into a UI-thread shared value (for smooth animation)
   const [collapsibleHeightState, setCollapsibleHeightState] = useState(0);
-  const [hasMeasuredHeader, setHasMeasuredHeader] = useState(false); // FIX: gate animation until we have a height
+  const [hasMeasuredHeader, setHasMeasuredHeader] = useState(false); // gate animation until we have a height
   const headerHeight = useSharedValue(0);
 
   // Scroll shared value (UI thread)
@@ -796,7 +836,6 @@ export default function SearchTab() {
 
   const collapseDistanceSV = useSharedValue(140);
 
-  // FIX: sync shared value in an effect, not during render
   useEffect(() => {
     collapseDistanceSV.value = collapseDistance;
   }, [collapseDistance, collapseDistanceSV]);
@@ -807,7 +846,6 @@ export default function SearchTab() {
     },
   });
 
-  // CHANGED: real layout height shrinks on UI thread (smooth + no empty space)
   const collapsibleWrapAnimatedStyle = useAnimatedStyle(() => {
     const h = headerHeight.value;
     if (!h) return { height: 0 };
@@ -819,7 +857,6 @@ export default function SearchTab() {
     return { height: nextHeight };
   }, []);
 
-  // CHANGED: content slides/fades as it collapses (pure transform/opacity on UI thread)
   const collapsibleContentAnimatedStyle = useAnimatedStyle(() => {
     const h = headerHeight.value;
     if (!h) return { opacity: 1, transform: [{ translateY: 0 }] };
@@ -867,6 +904,23 @@ export default function SearchTab() {
   const [setCode, setSetCode] = useState("");
   const [number, setNumber] = useState("");
 
+  // NEW: hydrate inputs from route params once (Home -> Resume)
+  useEffect(() => {
+    if (didHydrateFromParamsRef.current) return;
+
+    const pName = cleanString(params?.name);
+    const pSet = cleanString(params?.setCode || params?.set);
+    const pNum = cleanString(params?.number);
+
+    if (!pName && !pSet && !pNum) return;
+
+    didHydrateFromParamsRef.current = true;
+
+    setName((prev) => (cleanString(prev) ? prev : pName));
+    setSetCode((prev) => (cleanString(prev) ? prev : pSet));
+    setNumber((prev) => (cleanString(prev) ? prev : pNum));
+  }, [params]);
+
   const [results, setResults] = useState([]);
 
   const [filters, setFilters] = useState({
@@ -897,17 +951,29 @@ export default function SearchTab() {
     [name, setCode, number],
   );
 
-  const onSearch = useCallback(() => {
+  const persistLastSearch = useCallback(async () => {
+    const resumeRoute = buildSearchResumeRoute({ name, setCode, number });
+    await setRouteKey(LAST_SEARCH_ROUTE_KEY, resumeRoute);
+  }, [name, setCode, number]);
+
+  const onSearch = useCallback(async () => {
     if (!canSearch) return;
+
+    // NEW: persist last search for Home -> Continue
+    await persistLastSearch();
+
+    const qName = cleanString(name);
+    const qSet = cleanString(setCode);
+    const qNum = cleanString(number);
 
     setResults([]);
 
     runSearch({
       variables: {
         input: {
-          name: name || undefined,
-          set: setCode || undefined,
-          number: number || undefined,
+          name: qName || undefined,
+          set: qSet || undefined,
+          number: qNum || undefined,
           limit: CARDSEARCH_LIMIT,
           offset: 0,
         },
@@ -915,11 +981,11 @@ export default function SearchTab() {
       onCompleted: (res) => {
         const payload = res?.searchCards;
         const items = mapCardsearchItems(payload?.items || []);
-        const filtered = filterOutPocket(items, !/pocket/i.test(setCode || ""));
+        const filtered = filterOutPocket(items, !/pocket/i.test(qSet || ""));
         setResults(filtered);
       },
     });
-  }, [canSearch, name, setCode, number, runSearch]);
+  }, [canSearch, name, setCode, number, runSearch, persistLastSearch]);
 
   const availableRarities = useMemo(() => {
     const set = new Set();
@@ -1063,7 +1129,6 @@ export default function SearchTab() {
 
   const showPlaceholders = !loading && results.length === 0;
 
-  // FIX: single place to measure header height (SearchForm + filters block)
   const handleHeaderLayout = useCallback(
     (e) => {
       if (hasMeasuredHeader) return;
@@ -1084,11 +1149,6 @@ export default function SearchTab() {
         subtitle="Search for any Pokémon card and add it to your collection"
       />
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Collapsible area: SearchForm + Filters                              */}
-      {/* ------------------------------------------------------------------ */}
-      {/* FIX: Before we measure height, DO NOT wrap in an Animated.View with height:0.
-              Render a normal View so layout happens and onLayout fires. */}
       {!hasMeasuredHeader ? (
         <View style={styles.collapsibleWrap} onLayout={handleHeaderLayout}>
           <SearchForm
@@ -1166,7 +1226,10 @@ export default function SearchTab() {
                 averagePriceFormatted={formatGBP(avg)}
                 onAddToWishlist={onAddToWishlist}
                 onAddToCollection={onAddToCollection}
-                onPress={() =>
+                onPress={async () => {
+                  // NEW: persist last search even if user didn't re-search
+                  await persistLastSearch();
+
                   router.push({
                     pathname: `/card/${item.id}`,
                     params: {
@@ -1178,8 +1241,8 @@ export default function SearchTab() {
                       prices: JSON.stringify(item?.prices || []),
                       pricing: JSON.stringify(item?.prices || []),
                     },
-                  })
-                }
+                  });
+                }}
               />
             );
           }}

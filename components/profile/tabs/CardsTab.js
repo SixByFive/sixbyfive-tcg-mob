@@ -374,7 +374,6 @@ function matchesQuery(card, q) {
   return hay.includes(query);
 }
 
-// ✅ UPDATED: variation is now multi-select array from CompactSearchFiltersBar
 function applyCardFilters(cards, { query, variations }) {
   const selected = Array.isArray(variations) ? variations : [];
   const hasVarFilter = selected.length > 0;
@@ -878,12 +877,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 12,
     paddingVertical: 12,
-    // ✅ CHANGED: remove horizontal padding so CompactSearchFiltersBar can manage its own margins cleanly
     paddingHorizontal: 0,
     marginTop: 12,
   },
   headerRow: {
-    // ✅ CHANGED: re-add horizontal padding just for header content
     paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
@@ -894,10 +891,10 @@ const styles = StyleSheet.create({
   viewAll: { color: COLORS.accent, fontWeight: "800" },
   bodyText: {
     color: COLORS.text,
-    paddingHorizontal: 12, // ✅ keep text aligned with header
+    paddingHorizontal: 12,
   },
 
-  gridList: { paddingBottom: 8, paddingHorizontal: 12 }, // ✅ align grid with header
+  gridList: { paddingBottom: 8, paddingHorizontal: 12 },
   gridRow: { justifyContent: "space-between", marginBottom: GAP },
   gridItem: { width: "48%" },
   gridThumb: {
