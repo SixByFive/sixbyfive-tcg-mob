@@ -1,17 +1,11 @@
 // components/binders/CardsAddDrawer.js
-//
-// CHANGES
-// - Collection fetch now uses the same inline query as app/(tabs)/collection.js (MY_COLLECTION_APP).
-// - Normalizes collection entries so item.id is ALWAYS the card code (e.g. "sv05-052").
-// - Images now use TCGdex→PokemonTCG fallbacks derived from the code.
-// - Search GQL resolution is robust (temp -> codegen -> inline fallback), so we never pass undefined.
-// - Layout spacing matches collection grid (gap and padding tweaks).
 
 import { gql, useLazyQuery, useQuery } from "@apollo/client";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
+  Dimensions,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -31,10 +25,17 @@ import SelectBar from "../common/SelectBar";
 
 const SEARCH_MIN_CHARS = 2;
 const SEARCH_DEBOUNCE_MS = 250;
+const SEARCH_LIMIT = 50;
+
+// Adaptive sizing
+const SHEET_MAX_HEIGHT_RATIO = 0.78; // was fixed 78%, now max 78%
+const SHEET_MIN_HEIGHT = 320; // keeps it usable even when tiny content
+const GRABBER_AREA_ESTIMATE = 24; // fallback if not measured precisely
 
 /* ----------------------- helpers ----------------------- */
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CODE_RE = /^[a-z]{2,4}\d{1,4}-[0-9a-z]{2,6}$/i; // e.g. sv05-052, swsh9-123
 function looksLikeCardCode(v) {
   if (typeof v !== "string") return false;
@@ -57,8 +58,10 @@ function extractCardCode(obj) {
     obj.cardCode,
     obj.cardId, // some backends return the code here
     obj.variant && obj.variant.code,
-    (obj.variant && looksLikeCardCode(obj.variant.id)) ? obj.variant.id : undefined,
-    (obj.card && looksLikeCardCode(obj.card.id)) ? obj.card.id : undefined,
+    obj.variant && looksLikeCardCode(obj.variant.id)
+      ? obj.variant.id
+      : undefined,
+    obj.card && looksLikeCardCode(obj.card.id) ? obj.card.id : undefined,
     looksLikeCardCode(obj.id) ? obj.id : undefined,
   ];
   for (let i = 0; i < candidates.length; i += 1) {
@@ -70,7 +73,8 @@ function extractCardCode(obj) {
 function toArray(input) {
   if (!input) return [];
   if (Array.isArray(input)) return input;
-  if (Array.isArray(input.edges)) return input.edges.map((e) => (e && (e.node || e))).filter(Boolean);
+  if (Array.isArray(input.edges))
+    return input.edges.map((e) => e && (e.node || e)).filter(Boolean);
   if (Array.isArray(input.nodes)) return input.nodes.filter(Boolean);
   if (Array.isArray(input.items)) return input.items.filter(Boolean);
   if (Array.isArray(input.results)) return input.results.filter(Boolean);
@@ -80,7 +84,8 @@ function toArray(input) {
     const v = input[keys[i]];
     if (Array.isArray(v)) return v.filter(Boolean);
     if (v && typeof v === "object") {
-      if (Array.isArray(v.edges)) return v.edges.map((e) => (e && (e.node || e))).filter(Boolean);
+      if (Array.isArray(v.edges))
+        return v.edges.map((e) => e && (e.node || e)).filter(Boolean);
       if (Array.isArray(v.nodes)) return v.nodes.filter(Boolean);
       if (Array.isArray(v.cards)) return v.cards.filter(Boolean);
     }
@@ -125,20 +130,21 @@ function pokemontcgFromParts(setCode, number, hires = true) {
 }
 function buildImageCandidatesFromCode(code, explicitImage) {
   const out = [];
-  if (explicitImage && isAbs(explicitImage)) out.push(forceHttps(explicitImage));
+  if (explicitImage && isAbs(explicitImage))
+    out.push(forceHttps(explicitImage));
 
   const { setCode, number } = parseCardCodeId(code);
   if (setCode && number) {
     const era = inferEraFromSetCode(setCode);
     const dHigh = tcgdexFromParts(setCode, number, era, "high");
-    const dLow  = tcgdexFromParts(setCode, number, era, "low");
+    const dLow = tcgdexFromParts(setCode, number, era, "low");
     if (dHigh) out.push(dHigh);
-    if (dLow)  out.push(dLow);
+    if (dLow) out.push(dLow);
 
     const pHires = pokemontcgFromParts(setCode, number, true);
-    const pStd   = pokemontcgFromParts(setCode, number, false);
+    const pStd = pokemontcgFromParts(setCode, number, false);
     if (pHires) out.push(pHires);
-    if (pStd)   out.push(pStd);
+    if (pStd) out.push(pStd);
   }
 
   const seen = new Set();
@@ -164,7 +170,12 @@ function normalizeCard(obj) {
   if (!code) return null;
 
   const name =
-    firstTruthy([obj.name, obj.card && obj.card.name, obj.title, obj.cardTitle]) || "";
+    firstTruthy([
+      obj.name,
+      obj.card && obj.card.name,
+      obj.title,
+      obj.cardTitle,
+    ]) || "";
 
   const rawImage =
     firstTruthy([
@@ -184,7 +195,7 @@ function normalizeCard(obj) {
   return { ...obj, id: code, name, image };
 }
 
-/* ----------------------- GraphQL: COLLECTION (inline, same as collection.js) ----------------------- */
+/* ----------------------- GraphQL: COLLECTION ----------------------- */
 
 const MY_COLLECTION_APP = gql`
   query MyCollectionApp {
@@ -207,9 +218,8 @@ const MY_COLLECTION_APP = gql`
   }
 `;
 
-/* ----------------------- GraphQL: SEARCH robust resolution ----------------------- */
+/* ----------------------- GraphQL: SEARCH (robust) ----------------------- */
 
-// Inline fallback for search (connection)
 const FALLBACK_SEARCH_CONNECTION = gql`
   query SearchCardsConnection_Safe($input: SearchCardsInput!) {
     searchCardsConnection(input: $input) {
@@ -249,17 +259,60 @@ const SEARCH_CONNECTION_DOC = resolveDoc(
     "SearchCardsDocument",
     "CardsSearchDocument",
   ],
-  FALLBACK_SEARCH_CONNECTION
+  FALLBACK_SEARCH_CONNECTION,
 );
 
-const HAS_SEARCH_GQL = !!(SEARCH_CONNECTION_DOC && SEARCH_CONNECTION_DOC.kind === "Document");
+const HAS_SEARCH_GQL = !!(
+  SEARCH_CONNECTION_DOC && SEARCH_CONNECTION_DOC.kind === "Document"
+);
 
 function normalizeSearch(data) {
   const root =
-    (data && (data.searchCardsConnection || data.searchCards || data.cardsSearch)) ||
+    (data &&
+      (data.searchCardsConnection || data.searchCards || data.cardsSearch)) ||
     data ||
     [];
   return toArray(root).map(normalizeCard).filter(Boolean);
+}
+
+/* ----------------------- search variable helpers ----------------------- */
+
+const SEARCH_KEY_CANDIDATES = ["name", "query", "term", "text"];
+const SEARCH_PAGE_KEY_CANDIDATES = ["limit", "first"]; // your backend uses limit, keep fallback
+
+function pickGqlErrorMessage(err) {
+  if (!err) return "";
+  const first = err?.graphQLErrors?.[0]?.message;
+  return String(first || err.message || "");
+}
+
+function isUnknownInputFieldError(message, fieldName) {
+  const m = (message || "").toLowerCase();
+  const f = String(fieldName || "").toLowerCase();
+  return (
+    m.includes(`field "${f}" is not defined`) ||
+    (m.includes("unknown field") && m.includes(`"${f}"`)) ||
+    (m.includes("input") && m.includes(`"${f}"`) && m.includes("not defined"))
+  );
+}
+
+function suggestsField(message, suggestedName) {
+  const m = (message || "").toLowerCase();
+  const s = String(suggestedName || "").toLowerCase();
+  return m.includes("did you mean") && m.includes(`"${s}"`);
+}
+
+function buildSearchVariables(q, searchKey, pageKey) {
+  const cleaned = String(q || "").trim();
+  const safeSearchKey = searchKey || "name";
+  const safePageKey = pageKey || "limit";
+
+  return {
+    input: {
+      [safeSearchKey]: cleaned,
+      [safePageKey]: SEARCH_LIMIT,
+    },
+  };
 }
 
 /* ------------------------------ component ------------------------------ */
@@ -271,17 +324,25 @@ export default function AddCardsDrawer({
   onChangeDestination,
   onConfirmAdd,
 
-  // Optional overrides (kept for backward-compat)
-  collection = undefined, // If undefined → will self-fetch via MY_COLLECTION_APP
-  search = undefined,     // If undefined → self-search (if SEARCH_CONNECTION_DOC exists)
-  ownedSet = undefined,   // If undefined → derive from fetched collection
+  collection = undefined,
+  search = undefined,
+  ownedSet = undefined,
 }) {
   const [tab, setTab] = useState("collection");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(new Set());
-  const [manual, setManual] = useState(""); // manual code input if search gql missing
+  const [manual, setManual] = useState("");
+
+  const [searchKeyIndex, setSearchKeyIndex] = useState(0);
+  const [pageKeyIndex, setPageKeyIndex] = useState(0);
 
   const insets = useSafeAreaInsets();
+
+  // ---- Adaptive sizing measurements ----
+  const [headerH, setHeaderH] = useState(0);
+  const [bodyH, setBodyH] = useState(0);
+  const screenH = Dimensions.get("window").height;
+  const maxSheetH = Math.floor(screenH * SHEET_MAX_HEIGHT_RATIO);
 
   // ---- Anim + Gesture ----
   const translateY = useRef(new Animated.Value(0)).current;
@@ -292,7 +353,11 @@ export default function AddCardsDrawer({
   useEffect(() => {
     if (visible) {
       translateY.setValue(40);
-      Animated.spring(translateY, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start();
+      Animated.spring(translateY, {
+        toValue: 0,
+        useNativeDriver: false,
+        bounciness: 6,
+      }).start();
     } else {
       translateY.setValue(0);
     }
@@ -305,22 +370,32 @@ export default function AddCardsDrawer({
       onPanResponderRelease: (_e, g) => {
         const dy = Math.max(0, g.dy);
         if (dy > THRESHOLD) {
-          Animated.timing(translateY, { toValue: SHEET_CLOSE_OFFSET, duration: 180, useNativeDriver: false }).start(
-            () => {
-              translateY.setValue(0);
-              handleCancel();
-            }
-          );
+          Animated.timing(translateY, {
+            toValue: SHEET_CLOSE_OFFSET,
+            duration: 180,
+            useNativeDriver: false,
+          }).start(() => {
+            translateY.setValue(0);
+            handleCancel();
+          });
         } else {
-          Animated.spring(translateY, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start();
+          Animated.spring(translateY, {
+            toValue: 0,
+            useNativeDriver: false,
+            bounciness: 6,
+          }).start();
         }
       },
       onPanResponderTerminate: () =>
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start(),
-    })
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: false,
+          bounciness: 6,
+        }).start(),
+    }),
   ).current;
 
-  /* ------------------------------ data: collection (inline query same as collection.js) ------------------------------ */
+  /* ------------------------------ data: collection ------------------------------ */
 
   const shouldFetchCollection = typeof collection === "undefined";
   const {
@@ -334,10 +409,12 @@ export default function AddCardsDrawer({
   });
 
   const myCollection = useMemo(() => {
-    if (!shouldFetchCollection) return Array.isArray(collection) ? collection : [];
-    const root = collData?.myCollection;
-    const rows = Array.isArray(root) ? root : toArray(root);
-    // Normalize: output items with id=card code + robust image derived from code
+    if (!shouldFetchCollection)
+      return Array.isArray(collection) ? collection : [];
+    const rows = Array.isArray(collData?.myCollection)
+      ? collData.myCollection
+      : toArray(collData?.myCollection);
+
     return rows
       .map((entry) => {
         const code = extractCardCode({ id: entry?.card?.id ?? entry?.cardId });
@@ -351,7 +428,6 @@ export default function AddCardsDrawer({
       .filter(Boolean);
   }, [shouldFetchCollection, collection, collData]);
 
-  // Owned set for "Not owned" pills on Search tab (uses codes)
   const derivedOwnedSet = useMemo(() => {
     if (ownedSet instanceof Set) return ownedSet;
     return new Set(myCollection.map((c) => String(c.id)));
@@ -360,32 +436,100 @@ export default function AddCardsDrawer({
   /* ------------------------------ data: search ------------------------------ */
 
   const shouldSelfSearch = typeof search === "undefined" && HAS_SEARCH_GQL;
+
   const [
     runSearch,
-    { data: searchData, loading: searchLoading, error: searchError, called, networkStatus },
+    {
+      data: searchData,
+      loading: searchLoading,
+      error: searchError,
+      called,
+      networkStatus,
+    },
   ] = useLazyQuery(SEARCH_CONNECTION_DOC, {
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
   });
 
   const lastFiredRef = useRef("");
+  const lastKeyIndexRef = useRef(0);
+  const lastPageKeyIndexRef = useRef(0);
+
   useEffect(() => {
     if (!visible || !shouldSelfSearch) return;
     if (tab !== "search") return;
+
     const q = (query || "").trim();
     if (q.length < SEARCH_MIN_CHARS) return;
 
     const t = setTimeout(() => {
-      if (lastFiredRef.current === q) return;
+      if (
+        lastFiredRef.current === q &&
+        lastKeyIndexRef.current === searchKeyIndex &&
+        lastPageKeyIndexRef.current === pageKeyIndex
+      ) {
+        return;
+      }
+
       lastFiredRef.current = q;
-      const variables = { input: { name: q, first: 50, budget: 8, trustUpstream: true } };
+      lastKeyIndexRef.current = searchKeyIndex;
+      lastPageKeyIndexRef.current = pageKeyIndex;
+
+      const searchKey = SEARCH_KEY_CANDIDATES[searchKeyIndex] || "name";
+      const pageKey = SEARCH_PAGE_KEY_CANDIDATES[pageKeyIndex] || "limit";
+      const variables = buildSearchVariables(q, searchKey, pageKey);
+
       runSearch({ variables });
     }, SEARCH_DEBOUNCE_MS);
+
     return () => clearTimeout(t);
-  }, [visible, tab, query, shouldSelfSearch, runSearch]);
+  }, [
+    visible,
+    tab,
+    query,
+    shouldSelfSearch,
+    runSearch,
+    searchKeyIndex,
+    pageKeyIndex,
+  ]);
+
+  useEffect(() => {
+    if (!searchError) return;
+    if (!visible || tab !== "search") return;
+
+    const message = pickGqlErrorMessage(searchError);
+
+    const currentSearchKey = SEARCH_KEY_CANDIDATES[searchKeyIndex] || "name";
+    const currentPageKey = SEARCH_PAGE_KEY_CANDIDATES[pageKeyIndex] || "limit";
+
+    if (isUnknownInputFieldError(message, currentSearchKey)) {
+      const next = searchKeyIndex + 1;
+      if (next < SEARCH_KEY_CANDIDATES.length) setSearchKeyIndex(next);
+      return;
+    }
+
+    if (isUnknownInputFieldError(message, currentPageKey)) {
+      if (suggestsField(message, "limit")) {
+        setPageKeyIndex(
+          Math.max(0, SEARCH_PAGE_KEY_CANDIDATES.indexOf("limit")),
+        );
+        return;
+      }
+      if (suggestsField(message, "first")) {
+        setPageKeyIndex(
+          Math.max(0, SEARCH_PAGE_KEY_CANDIDATES.indexOf("first")),
+        );
+        return;
+      }
+      const next = pageKeyIndex + 1;
+      if (next < SEARCH_PAGE_KEY_CANDIDATES.length) setPageKeyIndex(next);
+      return;
+    }
+  }, [searchError, visible, tab, searchKeyIndex, pageKeyIndex]);
 
   const searchResults = useMemo(() => {
-    if (typeof search !== "undefined") return Array.isArray(search) ? search : [];
+    if (typeof search !== "undefined")
+      return Array.isArray(search) ? search : [];
     if (!HAS_SEARCH_GQL) return [];
     if ((query || "").trim().length < SEARCH_MIN_CHARS) return [];
     return normalizeSearch(searchData);
@@ -394,7 +538,11 @@ export default function AddCardsDrawer({
   const searching =
     tab === "search" &&
     HAS_SEARCH_GQL &&
-    (searchLoading || (called && !searchError && !searchData && (query || "").trim().length >= SEARCH_MIN_CHARS));
+    (query || "").trim().length >= SEARCH_MIN_CHARS &&
+    (searchLoading ||
+      networkStatus === 1 ||
+      networkStatus === 2 ||
+      networkStatus === 4);
 
   /* ------------------------------ selection & list ------------------------------ */
 
@@ -407,18 +555,19 @@ export default function AddCardsDrawer({
   }, [manual]);
 
   const manualResultItems = useMemo(
-    () => manualIds.map((id) => {
-      const candidates = buildImageCandidatesFromCode(id, "");
-      const image = candidates[0] || "";
-      return { id, name: id, image };
-    }),
-    [manualIds]
+    () =>
+      manualIds.map((id) => {
+        const candidates = buildImageCandidatesFromCode(id, "");
+        const image = candidates[0] || "";
+        return { id, name: id, image };
+      }),
+    [manualIds],
   );
 
   const list = useMemo(() => {
     if (tab === "collection") return myCollection;
     if (HAS_SEARCH_GQL) return searchResults;
-    return manualResultItems; // manual fallback
+    return manualResultItems;
   }, [tab, myCollection, searchResults, manualResultItems]);
 
   const toggle = (id) => {
@@ -446,8 +595,49 @@ export default function AddCardsDrawer({
   const isLoading = tab === "collection" ? collLoading : searching;
   const showEmpty = !isLoading && list.length === 0;
 
+  const searchErrMsg = useMemo(
+    () => pickGqlErrorMessage(searchError),
+    [searchError],
+  );
+
+  // ---------------- Adaptive height calculation ----------------
+  // When we have a list (results), keep it tall (maxSheetH) so scrolling feels good.
+  // When empty/loading/min-chars, shrink to fit header + body + select bar.
+  const wantsCompactHeight = useMemo(() => {
+    // Compact when:
+    // - loading (spinner) OR
+    // - empty state (min chars / no results / error / etc)
+    // Only expand when we actually have items to show.
+    return isLoading || showEmpty;
+  }, [isLoading, showEmpty]);
+
+  const computedCompactHeight = useMemo(() => {
+    // Header is measured; body is measured (empty/loading view); select bar + bottom inset included.
+    const base =
+      GRABBER_AREA_ESTIMATE +
+      headerH +
+      bodyH +
+      SELECTION_BAR_HEIGHT +
+      Math.max(insets.bottom, 0) +
+      12;
+
+    // Clamp so it never becomes microscopic or exceed max.
+    const clamped = Math.max(
+      SHEET_MIN_HEIGHT,
+      Math.min(maxSheetH, Math.ceil(base)),
+    );
+    return clamped;
+  }, [headerH, bodyH, SELECTION_BAR_HEIGHT, insets.bottom, maxSheetH]);
+
+  const sheetHeight = wantsCompactHeight ? computedCompactHeight : maxSheetH;
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCancel}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={handleCancel}
+    >
       <View style={styles.backdrop}>
         <Pressable style={StyleSheet.absoluteFill} onPress={handleCancel} />
 
@@ -455,25 +645,42 @@ export default function AddCardsDrawer({
           style={[
             styles.sheet,
             {
+              // NEW: adaptive height
+              height: sheetHeight,
+              maxHeight: maxSheetH,
               paddingBottom: Math.max(insets.bottom, 0),
               transform: [{ translateY }],
             },
           ]}
         >
-          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
             {/* Grabber with gesture only here (avoids FlatList conflicts) */}
             <View style={styles.grabberHit} {...panResponder.panHandlers}>
               <View style={styles.grabber} />
             </View>
 
-            {/* Header */}
-            <View style={styles.header}>
-              <Pressable onPress={onChangeDestination} hitSlop={8} style={styles.destBtn}>
+            {/* Header (measured for adaptive height) */}
+            <View
+              style={styles.header}
+              onLayout={(e) => {
+                const h = e?.nativeEvent?.layout?.height ?? 0;
+                if (h && h !== headerH) setHeaderH(h);
+              }}
+            >
+              <Pressable
+                onPress={onChangeDestination}
+                hitSlop={8}
+                style={styles.destBtn}
+              >
                 <Text style={styles.destText} numberOfLines={1}>
                   Add to{" "}
                   {destination && destination.pageLabel
                     ? destination.pageLabel
-                    : "Page " + (((destination && destination.pageIndex) || 0) + 1)}
+                    : "Page " +
+                      (((destination && destination.pageIndex) || 0) + 1)}
                   {typeof (destination && destination.slotsLeft) === "number"
                     ? " • " + destination.slotsLeft + " slots left"
                     : ""}
@@ -481,8 +688,16 @@ export default function AddCardsDrawer({
               </Pressable>
 
               <View style={styles.tabs}>
-                <TabBtn label="Collection" active={tab === "collection"} onPress={() => setTab("collection")} />
-                <TabBtn label="Search" active={tab === "search"} onPress={() => setTab("search")} />
+                <TabBtn
+                  label="Collection"
+                  active={tab === "collection"}
+                  onPress={() => setTab("collection")}
+                />
+                <TabBtn
+                  label="Search"
+                  active={tab === "search"}
+                  onPress={() => setTab("search")}
+                />
               </View>
 
               {tab === "search" ? (
@@ -500,7 +715,9 @@ export default function AddCardsDrawer({
                   <TextInput
                     value={manual}
                     onChangeText={setManual}
-                    placeholder={"Search offline: paste codes (e.g. sv05-052, sv05-100)"}
+                    placeholder={
+                      "Search offline: paste codes (e.g. sv05-052, sv05-100)"
+                    }
                     placeholderTextColor={COLORS.textMuted}
                     style={styles.searchInput}
                     autoCorrect={false}
@@ -513,32 +730,62 @@ export default function AddCardsDrawer({
 
             {/* Content */}
             {isLoading ? (
-              <View style={styles.empty}>
+              <View
+                style={styles.empty}
+                onLayout={(e) => {
+                  const h = e?.nativeEvent?.layout?.height ?? 0;
+                  if (h && h !== bodyH) setBodyH(h);
+                }}
+              >
                 <ActivityIndicator color={COLORS.accent} />
-                <Text style={[styles.emptyText, { marginTop: 8 }]}>Loading…</Text>
+                <Text style={[styles.emptyText, { marginTop: 8 }]}>
+                  Loading…
+                </Text>
               </View>
             ) : showEmpty ? (
-              <View style={styles.empty}>
+              <View
+                style={styles.empty}
+                onLayout={(e) => {
+                  const h = e?.nativeEvent?.layout?.height ?? 0;
+                  if (h && h !== bodyH) setBodyH(h);
+                }}
+              >
                 {tab === "search" ? (
                   HAS_SEARCH_GQL ? (
-                    (query || "").trim().length < SEARCH_MIN_CHARS ? (
+                    searchError ? (
+                      <>
+                        <Text style={styles.emptyText}>Search failed.</Text>
+                        <Text style={[styles.emptyText, { marginTop: 6 }]}>
+                          {searchErrMsg || "Unknown error"}
+                        </Text>
+                      </>
+                    ) : (query || "").trim().length < SEARCH_MIN_CHARS ? (
                       <Text style={styles.emptyText}>
-                        {"Type at least " + SEARCH_MIN_CHARS + " characters to search."}
+                        {"Type at least " +
+                          SEARCH_MIN_CHARS +
+                          " characters to search."}
                       </Text>
                     ) : (
                       <Text style={styles.emptyText}>No results.</Text>
                     )
                   ) : manualIds.length === 0 ? (
                     <Text style={styles.emptyText}>
-                      Paste one or more codes (e.g. sv05-052) separated by spaces or commas.
+                      Paste one or more codes (e.g. sv05-052) separated by
+                      spaces or commas.
                     </Text>
                   ) : (
-                    <Text style={styles.emptyText}>No valid codes detected.</Text>
+                    <Text style={styles.emptyText}>
+                      No valid codes detected.
+                    </Text>
                   )
                 ) : collError ? (
-                  <Text style={styles.emptyText}>Failed to load your collection.</Text>
+                  <Text style={styles.emptyText}>
+                    Failed to load your collection.
+                  </Text>
                 ) : (
-                  <Text style={styles.emptyText}>No cards in your collection.</Text>
+                  <Text style={styles.emptyText}>
+                    No cards in your collection.
+                  </Text>
                 )}
               </View>
             ) : (
@@ -547,14 +794,15 @@ export default function AddCardsDrawer({
                 keyExtractor={(c) => String(c.id)}
                 numColumns={2}
                 contentContainerStyle={{
-                  paddingHorizontal: 6, // match collection grid
+                  paddingHorizontal: 6,
                   paddingBottom: SELECTION_BAR_HEIGHT + insets.bottom + 12,
                 }}
-                columnWrapperStyle={styles.column} // match collection grid gap
+                columnWrapperStyle={styles.column}
                 renderItem={({ item }) => {
-                  const id = String(item.id); // card code
+                  const id = String(item.id);
                   const isSelected = selected.has(id);
-                  const notOwned = tab === "search" ? !derivedOwnedSet.has(id) : false;
+                  const notOwned =
+                    tab === "search" ? !derivedOwnedSet.has(id) : false;
                   return (
                     <CardSelectableTile
                       card={item}
@@ -592,16 +840,24 @@ export default function AddCardsDrawer({
 
 function TabBtn({ label, active, onPress }) {
   return (
-    <Pressable onPress={onPress} style={[styles.tab, active && styles.tabActive]}>
-      <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
+    <Pressable
+      onPress={onPress}
+      style={[styles.tab, active && styles.tabActive]}
+    >
+      <Text style={[styles.tabText, active && styles.tabTextActive]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
 
-const SHEET_HEIGHT = "78%";
-
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "flex-end",
+  },
+
   sheet: {
     backgroundColor: COLORS.surface,
     borderTopLeftRadius: 16,
@@ -613,12 +869,16 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1,
     borderRightWidth: 1,
     borderBottomWidth: 0,
-    height: SHEET_HEIGHT,
     overflow: "hidden",
   },
 
   grabberHit: { paddingTop: 8, paddingBottom: 8, alignItems: "center" },
-  grabber: { width: 44, height: 5, borderRadius: 999, backgroundColor: COLORS.border },
+  grabber: {
+    width: 44,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: COLORS.border,
+  },
 
   header: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 10 },
   destBtn: {
@@ -656,12 +916,13 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 
-  // match collection grid spacing
   column: { gap: 4 },
 
   empty: { alignItems: "center", paddingVertical: 16, paddingHorizontal: 12 },
   emptyText: { color: COLORS.textMuted, textAlign: "center" },
 
-  // thin top border to visually anchor the bar to the sheet
-  selectBarOverride: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.border },
+  selectBarOverride: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+  },
 });
