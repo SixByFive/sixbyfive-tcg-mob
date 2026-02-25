@@ -1,12 +1,18 @@
 // app/(tabs)/home.js
 //
-// UPDATED (2026-02-18)
+// UPDATED (2026-02-23)
 //
 // CHANGES:
-// - ADD: Settings gear icon button in header (routes to /settings)
-// - REMOVE: "Settings" from Quick actions pills (moved to header icon)
-// - CHANGE: Header layout -> row (greeting left, gear right)
-// - KEEP: SnapshotCard inside Hub + onCounts onboarding logic + continue routes + recent search persistence
+// - [REMOVE] EvolvedSpotlightBanner import (single partner banner)
+// - [ADD] PartnersSpotlightSlider import (new slider)
+// - [ADD] Partner slider data with 2 partners (keeps Evolved as one)
+// - [ADD] Local fallback hero require for Evolved slide (optional but recommended)
+// - [CHG] Replaced <EvolvedSpotlightBanner /> usage with <PartnersSpotlightSlider partners={...} />
+//
+// NOTE:
+// - Second partner uses a placeholder URL + placeholder hero. Replace with real partner details when ready.
+// - Slider component expected at: ../../components/partners/PartnersSpotlightSlider
+//   (the file I gave you previously)
 
 import { useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
@@ -31,7 +37,17 @@ import GettingStartedCard from "../../components/home/GettingStartedCard";
 import SnapshotCard from "../../components/home/SnapshotCard";
 import UserSearchCard from "../../components/home/UserSearchCard";
 import VerificationBanner from "../../components/home/VerificationBanner";
-import EvolvedSpotlightBanner from "../../components/partners/EvolvedSpotlightBanner";
+
+// [REMOVED] Single partner banner
+// import EvolvedSpotlightBanner from "../../components/partners/EvolvedSpotlightBanner";
+
+// [ADDED] New slider
+import PartnersSpotlightSlider from "../../components/partners/PartnersSpotlightSlider";
+
+// [ADDED] Optional: local hero for Evolved slide
+// (Keeps you safe if remote image fails / and matches the old local fallback behaviour)
+const EVOLVED_HERO = require("../../assets/images/evolved.png");
+const LEO_HERO = require("../../assets/images/leos.png");
 
 const DISCORD_INVITE = "https://discord.gg/PRMbMbRE2H";
 
@@ -221,6 +237,50 @@ export default function Home() {
     return total <= 0 && !hasAnyContinue;
   }, [snapCounts, hasAnyContinue]);
 
+  // [ADDED] Partner slider data (2 partners)
+  // - Keeps Evolved as partner #1
+  // - Partner #2 is placeholder: replace when you have details
+  const partners = useMemo(
+    () => [
+      {
+        id: "evolved",
+        partnerName: "Evolved Protection",
+        // Keep your exact tagline formatting
+        tagline: (
+          <Text>
+            <Text style={{ fontStyle: "italic" }}>Evolve</Text> the way you
+            protect your cards
+          </Text>
+        ),
+        blurb: "Trusted sleeves, toploaders & shields for serious collectors.",
+        bullets: ["Sleeves that actually fit", "Toploaders you can trust"],
+        ctaLabel: "Shop Evolved",
+        ctaHref:
+          "https://evolvedcardprotection.co.uk?sca_ref=9820478.MfkcaLj4ToIM",
+        heroUri: EVOLVED_HERO, // local require() (safe + consistent)
+        partnershipPillText: "In partnership with SixByFive TCG",
+      },
+
+      // Partner #2 (placeholder)
+      // Replace: partnerName, tagline/blurb, ctaHref, heroUri when you have it.
+      {
+        id: "leo",
+        partnerName: "Leo's Poké Vault",
+        tagline: "",
+        blurb:
+          "Leo's Poké Vault, a family-run store built on a shared love of Pokémon and Trading Card Games!",
+        bullets: [""],
+        ctaLabel: "Shop Sealed",
+        ctaHref: "https://www.leospokevault.co.uk",
+        helper:
+          "We’re here to help you find the perfect cards, accessories, and supplies",
+        heroUri: LEO_HERO,
+        partnershipPillText: "In partnership with SixByFive TCG",
+      },
+    ],
+    [],
+  );
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: COLORS.background }}
@@ -403,18 +463,8 @@ export default function Home() {
       {/* Discord */}
       <DiscordCard inviteUrl={DISCORD_INVITE} />
 
-      {/* Partner spotlight */}
-      <EvolvedSpotlightBanner
-        tagline={
-          <Text>
-            <Text style={{ fontStyle: "italic" }}>Evolve</Text> the way you
-            protect your cards
-          </Text>
-        }
-        bullets={["Sleeves that actually fit", "Toploaders you can trust"]}
-        ctaLabel="Shop Evolved"
-        ctaHref="https://evolvedcardprotection.co.uk?sca_ref=9820478.MfkcaLj4ToIM"
-      />
+      {/* Partner spotlight (SLIDER) */}
+      <PartnersSpotlightSlider partners={partners} showDots autoplay={true} />
     </ScrollView>
   );
 }
