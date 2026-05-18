@@ -1,41 +1,36 @@
-// graphql/app-search-queries.js
+// graphql/app-search-queries.js — new backend uses searchCards (non-connection)
+
 import { gql } from "@apollo/client";
 
-/**
- * Search cards with Relay-style connection and include per-card prices.
- * - Matches your server's SearchCardsInput
- * - Adds a selectable `prices` block (guarded with @include, default true)
- */
 export const SEARCH_CARDS_CONN_WITH_PRICES = gql`
   query SearchCardsConnection(
-    $input: SearchCardsInput!
-    $includePrices: Boolean = true
+    $input: CardSearchInput!
   ) {
-    searchCardsConnection(input: $input) {
-      totalCount
-      edges {
-        cursor
-        node {
-          id
-          name
-          set
-          setName
-          number
-          image
-          rarity
-          prices @include(if: $includePrices) {
-            variation
-            gbp
-            tcgplayer
-            cardmarket
-            currency
-            updatedAt
-          }
+    searchCards(input: $input) {
+      total
+      limit
+      offset
+      items {
+        id
+        cardId
+        name
+        number
+        setCode
+        rarity
+        images { small large }
+        set { code name }
+        variants { key label default }
+        latestPrices {
+          variation
+          currency
+          gbp
+          market
+          mid
+          low
+          high
+          updatedAt
+          provider
         }
-      }
-      pageInfo {
-        hasNextPage
-        endCursor
       }
     }
   }

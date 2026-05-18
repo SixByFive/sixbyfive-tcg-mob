@@ -8,7 +8,7 @@
 // - KEEP: SegmentTabs normalization + resilient userId resolution
 
 import { gql, useQuery } from "@apollo/client";
-import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import { useMeQuery } from "../../hooks/useMeQuery";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as SecureStore from "expo-secure-store"; // ADD
 import React, { useEffect, useMemo, useState } from "react";
@@ -24,7 +24,6 @@ import {
 import PageHeaderBackSimple from "../../components/common/PageHeaderBackSimple";
 import SegmentTabs from "../../components/common/SegmentTabs";
 import ProfileTopCard from "../../components/profile/ProfileTopCard";
-import AchievementsTab from "../../components/profile/tabs/AchievementsTab";
 import BindersTab from "../../components/profile/tabs/BindersTab";
 import CardsTab from "../../components/profile/tabs/CardsTab";
 import OverviewTab from "../../components/profile/tabs/OverviewTab";
@@ -102,34 +101,6 @@ const USER_PROFILE_PUBLIC = gql`
 `;
 
 /**
- * Achievements query supported by backend schema:
- * userAchievements(userId: ID!) -> [UserAchievement!]!
- */
-const USER_ACHIEVEMENTS_BY_USER = gql`
-  query UserAchievementsByUser($userId: ID!) {
-    userAchievements(userId: $userId) {
-      id
-      userId
-      achievementId
-      earnedAt
-      meta
-      createdAt
-      achievement {
-        id
-        code
-        name
-        description
-        tier
-        iconUrl
-        points
-        isActive
-        isHidden
-      }
-    }
-  }
-`;
-
-/**
  * Normalize SegmentTabs output defensively.
  * Some tab components return label (e.g. "Achievements") instead of key ("achievements").
  * This ensures we always work with the canonical keys.
@@ -142,8 +113,7 @@ function normalizeTabValue(value) {
     lower === "overview" ||
     lower === "cards" ||
     lower === "binders" ||
-    lower === "wishlist" ||
-    lower === "achievements"
+    lower === "wishlist"
   ) {
     return lower;
   }
@@ -152,7 +122,6 @@ function normalizeTabValue(value) {
   if (lower.includes("card")) return "cards";
   if (lower.includes("binder")) return "binders";
   if (lower.includes("wish")) return "wishlist";
-  if (lower.includes("achieve")) return "achievements";
 
   return "overview";
 }
@@ -244,76 +213,7 @@ export default function PublicProfile() {
     return vmObj;
   }, [data, username]);
 
-  // Achievements are lazy-loaded ONLY when the Achievements tab is active.
   const activeTab = useMemo(() => normalizeTabValue(tab), [tab]);
-  const shouldLoadAchievements = activeTab === "achievements" && !!vm?.id;
-
-  const {
-    data: achData,
-    loading: achLoading,
-    error: achError,
-    refetch: refetchAchievements,
-    networkStatus: achNetworkStatus,
-  } = useQuery(USER_ACHIEVEMENTS_BY_USER, {
-    variables: { userId: vm?.id },
-    skip: !shouldLoadAchievements,
-    notifyOnNetworkStatusChange: true,
-    fetchPolicy: "cache-and-network",
-  });
-
-  const userAchievementsRows = useMemo(() => {
-    const rows = achData?.userAchievements;
-    return Array.isArray(rows) ? rows : [];
-  }, [achData]);
-
-  const achievementsVm = useMemo(() => {
-    if (!userAchievementsRows.length) return [];
-
-    return userAchievementsRows
-      .filter((ua) => ua?.achievement)
-      .map((ua) => ({
-        id: ua.achievement.id,
-        code: ua.achievement.code,
-        name: ua.achievement.name,
-        description: ua.achievement.description,
-        tier: ua.achievement.tier,
-        iconUrl: ua.achievement.iconUrl,
-        points: ua.achievement.points,
-        isHidden: ua.achievement.isHidden,
-        isActive: ua.achievement.isActive,
-
-        earnedAt: ua.earnedAt || ua.createdAt,
-        meta: ua.meta || null,
-        userAchievementId: ua.id,
-      }));
-  }, [userAchievementsRows]);
-
-  useEffect(() => {
-    if (!__DEV__) return;
-
-    // eslint-disable-next-line no-console
-    console.log("[Achievements debug]", {
-      tab,
-      activeTab,
-      userId: vm?.id,
-      shouldLoadAchievements,
-      achLoading,
-      achError: achError?.message,
-      rows: userAchievementsRows.length,
-      flattened: achievementsVm.length,
-      achNetworkStatus,
-    });
-  }, [
-    tab,
-    activeTab,
-    vm?.id,
-    shouldLoadAchievements,
-    achLoading,
-    achError,
-    userAchievementsRows.length,
-    achievementsVm.length,
-    achNetworkStatus,
-  ]);
 
   const [following, setFollowing] = useState(false);
   useEffect(() => {
@@ -375,11 +275,9 @@ export default function PublicProfile() {
     { key: "cards", label: "Cards" },
     { key: "binders", label: "Binders" },
     { key: "wishlist", label: "Wishlist" },
-    { key: "achievements", label: "Achievements" },
   ];
 
   const isRefreshing = networkStatus === 4;
-  const isAchRefreshing = achNetworkStatus === 4;
 
   return (
     <View style={styles.container}>
@@ -396,12 +294,7 @@ export default function PublicProfile() {
           <RefreshControl
             tintColor={COLORS.accent}
             refreshing={isRefreshing}
-            onRefresh={() => {
-              refetch();
-              if (normalizeTabValue(tab) === "achievements") {
-                refetchAchievements();
-              }
-            }}
+            onRefresh={() => refetch()}
           />
         }
       >
@@ -472,62 +365,6 @@ export default function PublicProfile() {
               })
             }
           />
-        )}
-
-        {activeTab === "achievements" && (
-          <View>
-            {achError ? (
-              <View style={{ paddingVertical: 14 }}>
-                <Text
-                  style={{
-                    color: COLORS.error,
-                    textAlign: "center",
-                    marginBottom: 10,
-                  }}
-                >
-                  {achError.message}
-                </Text>
-                <Text
-                  onPress={() => refetchAchievements()}
-                  style={{
-                    color: COLORS.accent,
-                    fontWeight: "800",
-                    textAlign: "center",
-                  }}
-                >
-                  Try again
-                </Text>
-              </View>
-            ) : achLoading && userAchievementsRows.length === 0 ? (
-              <View style={{ paddingVertical: 18, alignItems: "center" }}>
-                <ActivityIndicator color={COLORS.accent} />
-                <Text style={{ color: COLORS.textMuted, marginTop: 10 }}>
-                  Loading achievements…
-                </Text>
-              </View>
-            ) : userAchievementsRows.length === 0 ? (
-              <View style={{ paddingVertical: 16 }}>
-                <Text style={{ color: COLORS.textMuted, textAlign: "center" }}>
-                  No achievements yet.
-                </Text>
-                {isAchRefreshing ? (
-                  <View style={{ marginTop: 12, alignItems: "center" }}>
-                    <ActivityIndicator color={COLORS.accent} />
-                  </View>
-                ) : null}
-              </View>
-            ) : (
-              <AchievementsTab
-                // UPDATED: schema-native first
-                items={userAchievementsRows}
-                // ALSO pass flattened for UIs expecting this shape
-                flattenedItems={achievementsVm}
-                loading={achLoading}
-                refreshing={isAchRefreshing}
-                onRefresh={refetchAchievements}
-              />
-            )}
-          </View>
         )}
 
         <View style={{ height: 28 }} />

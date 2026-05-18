@@ -51,8 +51,11 @@ const USER_COLLECTION_MIN = gql`
         id
         name
         number
-        image
-        setName
+        setCode
+        images {
+          small
+          large
+        }
         set {
           code
           name
@@ -73,8 +76,11 @@ const MY_COLLECTION_MIN = gql`
         id
         name
         number
-        image
-        setName
+        setCode
+        images {
+          small
+          large
+        }
         set {
           code
           name
@@ -181,7 +187,8 @@ function pokemontcgFromParts(setCode, number, hires = true) {
 
 function buildImageCandidates(card) {
   const out = [];
-  if (card?.image && isAbs(card.image)) out.push(forceHttps(card.image));
+  const directImage = card?.images?.small ?? card?.images?.large ?? card?.image ?? null;
+  if (directImage && isAbs(directImage)) out.push(forceHttps(directImage));
 
   const id = card?.id ?? card?.cardId ?? null;
   const { setCode, number } = parseCardId(id);
@@ -303,10 +310,10 @@ function normalizeCard(item, pricesMap) {
     era: era || undefined,
     name: raw?.name ?? raw?.cardName ?? "Card",
     image:
-      raw?.image ??
-      raw?.imageUrl ??
       get(raw, "images.small") ??
       get(raw, "images.large") ??
+      raw?.image ??
+      raw?.imageUrl ??
       "",
     setName: resolveSetNameForCardlike(raw),
     number: raw?.number ?? raw?.collectorNumber ?? number ?? undefined,

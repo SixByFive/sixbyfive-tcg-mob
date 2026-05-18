@@ -6,7 +6,7 @@ import PageHeaderBackSimple from "../components/common/PageHeaderBackSimple";
 import { COLORS } from "../theme/colors";
 
 // CHANGED: import your existing generated document (adjust path if needed)
-import { ResetPasswordDocument } from "@sixbyfive/tcg-binder";
+import { ResetPasswordDocument } from "../graphql/documents";
 
 
 export default function ResetPassword() {

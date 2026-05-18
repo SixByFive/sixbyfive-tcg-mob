@@ -293,7 +293,7 @@ export function MessagingProvider({ children }) {
         query: QUERY_UNREAD_COUNT,
         fetchPolicy: "network-only",
       });
-      setUnreadCount(Number(data?.unreadCount || 0));
+      setUnreadCount(Number(data?.unreadMessageCount ?? data?.unreadCount ?? 0));
     } catch (e) {
       const ne = normalizeError(e);
       setLastError(ne);

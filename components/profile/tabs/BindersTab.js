@@ -13,8 +13,8 @@ import {
 
 import {
   MeDocument,
-  MyBindersDocument
-} from "@sixbyfive/tcg-binder/client";
+  MyBindersDocument,
+} from "../../../graphql/documents";
 import { COLORS } from "../../../theme/colors";
 
 // Same grid used in Collection tab → visual parity

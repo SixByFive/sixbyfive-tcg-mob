@@ -1,5 +1,4 @@
 // graphql/localCollectionDocuments.js
-// Local GraphQL documents that avoid problematic `cardId` selections inside cardsearch cards.
 
 import { parse } from "graphql";
 
@@ -17,11 +16,10 @@ export const MyCollectionAppDocument = parse(`
       updatedAt
       card {
         id
+        cardId
         name
-        setCode
-        setName
         number
-        image
+        setCode
         rarity
         images {
           small
@@ -30,12 +28,8 @@ export const MyCollectionAppDocument = parse(`
         set {
           code
           name
-          series
-          releasedAt
         }
         variants {
-          variant
-          displayName
           key
           label
           default

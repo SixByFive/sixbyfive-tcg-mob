@@ -33,6 +33,7 @@ export default function BinderOptionsModal({
   initialCover,
   onClose,
   onSave,
+  onDelete,
 }) {
   const [name, setName] = useState(initialName || "");
   const [layoutId, setLayoutId] = useState(initialLayoutId || DEFAULT_TEMPLATE_ID);
@@ -132,6 +133,12 @@ export default function BinderOptionsModal({
               <Text style={styles.btnPrimaryText}>Save</Text>
             </Pressable>
           </View>
+
+          {onDelete && (
+            <Pressable onPress={onDelete} style={styles.btnDelete}>
+              <Text style={styles.btnDeleteText}>Delete binder</Text>
+            </Pressable>
+          )}
         </View>
       </View>
     </Modal>
@@ -193,4 +200,6 @@ const styles = StyleSheet.create({
   btnGhostText: { color: COLORS.text, fontWeight: "800" },
   btnPrimary: { flex: 1, backgroundColor: COLORS.accent, borderRadius: 10, paddingVertical: 10, alignItems: "center" },
   btnPrimaryText: { color: "#fff", fontWeight: "900" },
+  btnDelete: { marginTop: 10, borderRadius: 10, paddingVertical: 10, alignItems: "center", borderColor: COLORS.error ?? "#e53e3e", borderWidth: 1 },
+  btnDeleteText: { color: COLORS.error ?? "#e53e3e", fontWeight: "800" },
 });

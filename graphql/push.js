@@ -1,7 +1,4 @@
-// app/graphql/push.js
-//
-// ADDED (2026-02-17)
-// - Frontend GraphQL documents for push module mutations
+// graphql/push.js — new backend returns Boolean! for push token mutations
 
 import { gql } from "@apollo/client";
 
@@ -17,18 +14,12 @@ export const REGISTER_EXPO_PUSH_TOKEN = gql`
       platform: $platform
       deviceName: $deviceName
       appVersion: $appVersion
-    ) {
-      ok
-      error
-    }
+    )
   }
 `;
 
 export const UNREGISTER_EXPO_PUSH_TOKEN = gql`
   mutation UnregisterExpoPushToken($expoPushToken: String!) {
-    unregisterExpoPushToken(expoPushToken: $expoPushToken) {
-      ok
-      error
-    }
+    unregisterExpoPushToken(expoPushToken: $expoPushToken)
   }
 `;

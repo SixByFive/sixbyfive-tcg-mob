@@ -138,10 +138,9 @@ export default function SegmentTabs({
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[
           styles.scrollContent,
-          canScroll && {
-            paddingLeft: BAR_W + EDGE_PAD,
-            paddingRight: BAR_W + EDGE_PAD,
-          },
+          canScroll
+            ? { paddingLeft: BAR_W + EDGE_PAD, paddingRight: BAR_W + EDGE_PAD }
+            : { flexGrow: 1, justifyContent: "center" },
         ]}
         onContentSizeChange={(w /*, h*/) => setContentW(w)}
         onScroll={(e) => setScrollX(e.nativeEvent.contentOffset.x)}
@@ -152,56 +151,60 @@ export default function SegmentTabs({
         {content}
       </ScrollView>
 
-      {/* Left/Right overlay bars with chevrons (visible, disabled at edges) */}
-      <View
-        pointerEvents={canScroll && !atStart ? "auto" : "none"}
-        style={[styles.bar, styles.barLeft]}
-      >
-        <Pressable
-          onPress={() => nudge("left")}
-          disabled={!canScroll || atStart}
-          style={({ pressed }) => [
-            styles.chevBtn,
-            (!canScroll || atStart) && styles.chevDisabled,
-            pressed && { opacity: 0.85 },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Scroll left"
-          accessibilityState={{ disabled: !canScroll || atStart }}
-          hitSlop={6}
+      {/* Left/Right overlay bars — only rendered when scrolling is actually needed */}
+      {canScroll && (
+        <View
+          pointerEvents={atStart ? "none" : "auto"}
+          style={[styles.bar, styles.barLeft]}
         >
-          <Ionicons
-            name="chevron-back"
-            size={16}
-            color={(!canScroll || atStart) ? COLORS.textMuted + "66" : COLORS.textMuted}
-          />
-        </Pressable>
-      </View>
+          <Pressable
+            onPress={() => nudge("left")}
+            disabled={atStart}
+            style={({ pressed }) => [
+              styles.chevBtn,
+              atStart && styles.chevDisabled,
+              pressed && { opacity: 0.85 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Scroll left"
+            accessibilityState={{ disabled: atStart }}
+            hitSlop={6}
+          >
+            <Ionicons
+              name="chevron-back"
+              size={16}
+              color={atStart ? COLORS.textMuted + "66" : COLORS.textMuted}
+            />
+          </Pressable>
+        </View>
+      )}
 
-      <View
-        pointerEvents={canScroll && !atEnd ? "auto" : "none"}
-        style={[styles.bar, styles.barRight]}
-      >
-        <Pressable
-          onPress={() => nudge("right")}
-          disabled={!canScroll || atEnd}
-          style={({ pressed }) => [
-            styles.chevBtn,
-            (!canScroll || atEnd) && styles.chevDisabled,
-            pressed && { opacity: 0.85 },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Scroll right"
-          accessibilityState={{ disabled: !canScroll || atEnd }}
-          hitSlop={6}
+      {canScroll && (
+        <View
+          pointerEvents={atEnd ? "none" : "auto"}
+          style={[styles.bar, styles.barRight]}
         >
-          <Ionicons
-            name="chevron-forward"
-            size={16}
-            color={(!canScroll || atEnd) ? COLORS.textMuted + "66" : COLORS.textMuted}
-          />
-        </Pressable>
-      </View>
+          <Pressable
+            onPress={() => nudge("right")}
+            disabled={atEnd}
+            style={({ pressed }) => [
+              styles.chevBtn,
+              atEnd && styles.chevDisabled,
+              pressed && { opacity: 0.85 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Scroll right"
+            accessibilityState={{ disabled: atEnd }}
+            hitSlop={6}
+          >
+            <Ionicons
+              name="chevron-forward"
+              size={16}
+              color={atEnd ? COLORS.textMuted + "66" : COLORS.textMuted}
+            />
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }

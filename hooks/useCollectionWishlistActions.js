@@ -38,7 +38,7 @@ export const MY_COLLECTION = gql`
       cardId
       variation
       quantity
-      card { id name number image setName __typename }
+      card { id name number setCode images { small large } __typename }
       __typename
     }
   }
@@ -51,7 +51,7 @@ export const MY_COLLECTION_APP = gql`
       cardId
       variation
       quantity
-      card { id name number image setName __typename }
+      card { id name number setCode images { small large } __typename }
       __typename
     }
   }
@@ -67,7 +67,7 @@ const ADD_TO_COLLECTION = gql`
       cardId
       variation
       quantity
-      card { id name number image setName __typename }
+      card { id name number setCode images { small large } __typename }
       __typename
     }
   }
@@ -94,13 +94,12 @@ const asVar = (v, fallback = "normal") => asStr(v || fallback);
 function buildMinimalCard(cardId) {
   const id = asStr(cardId);
   return {
-    __typename: "Card",
+    __typename: "CatalogCard",
     id,
-    // Include all fields your queries select to avoid Apollo “Missing field …” warnings
     name: null,
     number: null,
-    image: null,
-    setName: null,
+    setCode: null,
+    images: null,
   };
 }
 
@@ -207,14 +206,13 @@ export function useCollectionWishlistActions() {
           quantity: added.quantity ?? 1,
           echo: {
             ...added,
-            // Ensure echoed card contains full field set to satisfy readers
             card: {
-              __typename: "Card",
+              __typename: "CatalogCard",
               id: asStr(added.card?.id ?? added.cardId),
               name: added.card?.name ?? null,
               number: added.card?.number ?? null,
-              image: added.card?.image ?? null,
-              setName: added.card?.setName ?? null,
+              setCode: added.card?.setCode ?? null,
+              images: added.card?.images ?? null,
             },
           },
         });

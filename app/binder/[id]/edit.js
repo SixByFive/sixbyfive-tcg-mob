@@ -160,6 +160,7 @@ export default function BinderEditor() {
     removeSlot: removeSlotServer,
     savePages: savePagesServer,
     updateBinder: updateBinderServer,
+    deleteBinder: deleteBinderServer,
   } = useBinderActions();
 
   // Query binder — BINDER_QUERY is guaranteed to be a DocumentNode now
@@ -270,14 +271,16 @@ export default function BinderEditor() {
     let nextIdx = findNextEmpty(preferredStart);
     if (nextIdx === -1) nextIdx = findNextEmpty(0);
 
+    const currentPageId = currentPage?.rawId ?? null;
+
     for (const cardId of ids) {
       if (nextIdx === -1) break;
       try {
         await addCardServer({
-          binderId,
-          pageIndex: index,
-          slotIndex: nextIdx,      // 0-based; actions convert to 1-based
-          cardId,                  // e.g. "sv05-052"
+          ...(currentPageId
+            ? { pageId: currentPageId, position: nextIdx }
+            : { binderId, pageIndex: index, slotIndex: nextIdx }),
+          cardId,
         });
         // mark locally so subsequent picks skip this slot
         working[nextIdx] = { id: `local-${cardId}` };
@@ -407,6 +410,29 @@ export default function BinderEditor() {
     } finally {
       setOptionsOpen(false);
     }
+  };
+
+  const handleDelete = () => {
+    Alert.alert(
+      "Delete binder",
+      `Delete "${name}"? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setOptionsOpen(false);
+              await deleteBinderServer(binderId);
+              router.back();
+            } catch (e) {
+              Alert.alert("Delete failed", e?.message || "Could not delete binder.");
+            }
+          },
+        },
+      ]
+    );
   };
 
   const onMomentumEnd = (e) => {
@@ -557,6 +583,7 @@ export default function BinderEditor() {
         visible={optionsOpen}
         onClose={() => setOptionsOpen(false)}
         onSave={saveOptions}
+        onDelete={handleDelete}
         initialName={name}
         initialLayoutId={templateId}
       />

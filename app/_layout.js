@@ -61,10 +61,7 @@ const REGISTER_EXPO_PUSH_TOKEN = gql`
       platform: $platform
       deviceName: $deviceName
       appVersion: $appVersion
-    ) {
-      ok
-      error
-    }
+    )
   }
 `;
 
@@ -116,12 +113,9 @@ async function bootPushAndRegisterToken() {
       fetchPolicy: "no-cache",
     });
 
-    const payload = data?.registerExpoPushToken;
-    if (!payload?.ok) {
-      console.log(
-        "[push] registerExpoPushToken failed:",
-        payload?.error || "unknown error",
-      );
+    const ok = data?.registerExpoPushToken;
+    if (!ok) {
+      console.log("[push] registerExpoPushToken failed");
     } else {
       if (__DEV__)
         console.log("[push] token registered ✅", token.slice(0, 10) + "…");

@@ -1,26 +1,29 @@
-// graphql/cardQueries.js
+// graphql/cardQueries.js — new backend uses cardsearchCard
+
 import { gql } from "@apollo/client";
 
-/**
- * Backend field is `pricing`; we alias it to `prices` so the rest of the app
- * (InfoCard, getBestPrice, etc.) doesn’t need to change.
- */
 export const CARD_BY_ID = gql`
   query CardById($id: ID!) {
-    card(id: $id) {
+    cardsearchCard(id: $id) {
       id
+      cardId
       name
       number
-      set
-      setName
+      setCode
       rarity
-      image
-      variations
-      prices: pricing {
+      images { small large }
+      set { code name }
+      variants { key label default }
+      latestPrices {
         variation
-        tcgplayer
-        cardmarket
+        currency
+        gbp
+        market
+        mid
+        low
+        high
         updatedAt
+        provider
       }
     }
   }

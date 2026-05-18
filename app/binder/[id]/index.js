@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Dimensions, FlatList, StyleSheet, Text, View } from "react-native";
 
-import { BinderDocument } from "@sixbyfive/tcg-binder/client";
+import { BinderDocument } from "../../../graphql/documents";
 import BinderGrid from "../../../components/binders/BinderGrid";
 import PagePager from "../../../components/binders/PagePager";
 import PageHeaderBackSimple from "../../../components/common/PageHeaderBackSimple";

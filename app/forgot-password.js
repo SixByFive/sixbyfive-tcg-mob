@@ -5,7 +5,7 @@ import PageHeaderBackSimple from "../components/common/PageHeaderBackSimple";
 import { COLORS } from "../theme/colors";
 
 // CHANGED: import your existing generated document (adjust path if needed)
-import { RequestPasswordResetDocument } from "@sixbyfive/tcg-binder";
+import { RequestPasswordResetDocument } from "../graphql/documents";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");

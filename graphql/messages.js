@@ -1,10 +1,6 @@
-// graphql/messages.js
+// graphql/messages.js — new backend schema
 
 import { gql } from "@apollo/client";
-
-/* =============================================================================
-   Queries
-============================================================================= */
 
 export const QUERY_MY_CHATS = gql`
   query MyChats($page: Int, $pageSize: Int) {
@@ -13,9 +9,6 @@ export const QUERY_MY_CHATS = gql`
         id
         username
         avatar
-        profile {
-          avatar
-        }
       }
       lastMessage {
         id
@@ -39,34 +32,16 @@ export const QUERY_CHAT_WITH_USER = gql`
       receiverId
       content
       isRead
-      meta
-      isFlagged
-      flagReason
-      flaggedById
       isSystemMessage
+      meta
       createdAt
-      updatedAt
-      expiresAt
-
-      sender {
-        id
-        username
-        avatar
-        avatar
-      }
-      receiver {
-        id
-        username
-        avatar
-        avatar
-      }
     }
   }
 `;
 
 export const QUERY_UNREAD_COUNT = gql`
   query UnreadCount {
-    unreadCount
+    unreadMessageCount
   }
 `;
 
@@ -82,17 +57,6 @@ export const QUERY_CHAT_RULES_TEXT = gql`
   }
 `;
 
-// Optional: if you ever need the compact rules version too
-export const QUERY_CHAT_RULES = gql`
-  query ChatRules {
-    chatRules
-  }
-`;
-
-/* =============================================================================
-   Mutations
-============================================================================= */
-
 export const MUTATION_SEND_MESSAGE = gql`
   mutation SendMessage($receiverId: ID!, $content: String!, $meta: JSON) {
     sendMessage(receiverId: $receiverId, content: $content, meta: $meta) {
@@ -103,7 +67,6 @@ export const MUTATION_SEND_MESSAGE = gql`
       isRead
       meta
       createdAt
-      updatedAt
     }
   }
 `;
@@ -119,11 +82,6 @@ export const MUTATION_AGREE_TO_CHAT_RULES = gql`
     agreeToChatRules
   }
 `;
-
-/* =============================================================================
-   (Not used by your MessagingProvider currently, but used by your thread screen)
-   You can keep these here too if you want them centralised:
-============================================================================= */
 
 export const MUTATION_REPORT_USER = gql`
   mutation ReportUser($userId: ID!, $reason: String!, $details: String) {

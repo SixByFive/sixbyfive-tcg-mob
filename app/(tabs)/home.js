@@ -16,7 +16,7 @@
 
 import { useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
-import { MeDocument } from "@sixbyfive/tcg-binder";
+import { MeDocument } from "../../graphql/documents";
 import { router } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import React, { useCallback, useEffect, useMemo, useState } from "react";

@@ -1,7 +1,7 @@
 // components/home/UserSearchCard.js
 
 import { Ionicons } from "@expo/vector-icons";
-import { useSearchUsersLazyQuery } from "@sixbyfive/tcg-binder/react";
+import { useSearchUsersLazyQuery } from "../../hooks/useSearchUsersLazyQuery";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -74,7 +74,7 @@ export default function UserSearchCard({
         return;
       }
       if (normalized.length >= minLen || trimmed.length >= minLen) {
-        runSearch({ variables: { query: trimmed, limit: 20 } });
+        runSearch({ variables: { q: trimmed, limit: 20 } });
       }
     }, 300);
     return () => clearTimeout(debounceRef.current);
@@ -210,7 +210,7 @@ export default function UserSearchCard({
                     onSearchRef.current?.(term);
                     onUseRecent?.(term);
                   } else if (term.trim().length >= minLen) {
-                    runSearch({ variables: { query: term.trim(), limit: 20 } });
+                    runSearch({ variables: { q: term.trim(), limit: 20 } });
                   }
                 }}
               >

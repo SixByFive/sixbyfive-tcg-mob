@@ -4,27 +4,36 @@ import { gql } from "@apollo/client";
 
 export const COLLECTION_Q = gql`
   query CollectionTab {
-    me {
+    myCollection {
       id
-      username
-      stats {
-        cards
-        binders
-        wishlist
-      }
-      binders {
+      userId
+      cardId
+      quantity
+      condition
+      variation
+      wishlist
+      createdAt
+      updatedAt
+      card {
         id
+        cardId
         name
-        count
-        coverImage
-        updatedAt
-      }
-      recentBinders {
-        id
-        name
-        count
-        coverImage
-        updatedAt
+        number
+        setCode
+        rarity
+        images { small large }
+        set { code name }
+        variants { key label default }
+        latestPrices {
+          variation
+          currency
+          gbp
+          market
+          mid
+          low
+          high
+          updatedAt
+        }
       }
     }
   }

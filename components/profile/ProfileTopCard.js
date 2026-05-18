@@ -9,7 +9,8 @@
 // - ADD: Safe routing to /messages/[userId] only when a valid userId exists
 // - KEEP: Existing Add Cards / Edit Profile actions for owner-only flows
 
-import { useMeQuery, useUserProfileQuery } from "@sixbyfive/tcg-binder/react";
+import { useMeQuery } from "../../hooks/useMeQuery";
+import { useUserProfileQuery } from "../../hooks/useUserProfileQuery";
 import { useRouter } from "expo-router"; // ADD
 import React, { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";

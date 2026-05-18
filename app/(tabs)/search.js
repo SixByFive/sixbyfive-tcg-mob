@@ -40,8 +40,8 @@ import {
   AddToWishlistDocument,
   CardByIdDocument,
   SearchCardsDocument,
-} from "@sixbyfive/tcg-binder/client";
-import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+} from "../../graphql/documents";
+import { useMeQuery } from "../../hooks/useMeQuery";
 import * as SecureStore from "expo-secure-store";
 
 import EmptyState from "../../components/common/EmptyState";
@@ -819,26 +819,8 @@ export default function SearchTab() {
 
   const listRef = useRef(null);
 
-  // Measured once (JS state) + mirrored into a UI-thread shared value (for smooth animation)
-  const [collapsibleHeightState, setCollapsibleHeightState] = useState(0);
-  const [hasMeasuredHeader, setHasMeasuredHeader] = useState(false); // gate animation until we have a height
-  const headerHeight = useSharedValue(0);
-
   // Scroll shared value (UI thread)
   const scrollY = useSharedValue(0);
-
-  // Collapse distance is capped (prevents “long slide forever”)
-  const collapseDistance = useMemo(() => {
-    const h = collapsibleHeightState || 0;
-    if (!h) return 140;
-    return Math.max(80, Math.min(h, 180));
-  }, [collapsibleHeightState]);
-
-  const collapseDistanceSV = useSharedValue(140);
-
-  useEffect(() => {
-    collapseDistanceSV.value = collapseDistance;
-  }, [collapseDistance, collapseDistanceSV]);
 
   const onScroll = useAnimatedScrollHandler({
     onScroll: (e) => {
@@ -846,38 +828,12 @@ export default function SearchTab() {
     },
   });
 
-  const collapsibleWrapAnimatedStyle = useAnimatedStyle(() => {
-    const h = headerHeight.value;
-    if (!h) return { height: 0 };
-
-    const d = collapseDistanceSV.value;
-    const clamp = Math.min(Math.max(scrollY.value, 0), d);
-    const nextHeight = Math.max(h - clamp, 0);
-
-    return { height: nextHeight };
-  }, []);
-
+  // Fade the search form as it scrolls away inside the FlatList.
+  // translateY is omitted — the FlatList's own scroll physics move the header.
   const collapsibleContentAnimatedStyle = useAnimatedStyle(() => {
-    const h = headerHeight.value;
-    if (!h) return { opacity: 1, transform: [{ translateY: 0 }] };
-
-    const d = collapseDistanceSV.value;
-    const clamp = Math.min(Math.max(scrollY.value, 0), d);
-
-    const opacity = interpolate(
-      clamp,
-      [0, d * 0.6, d],
-      [1, 0.35, 0],
-      Extrapolate.CLAMP,
-    );
-    const translateY = interpolate(
-      clamp,
-      [0, d],
-      [0, -Math.min(h, 120)],
-      Extrapolate.CLAMP,
-    );
-
-    return { opacity, transform: [{ translateY }] };
+    const clamp = Math.min(Math.max(scrollY.value, 0), 150);
+    const opacity = interpolate(clamp, [0, 90, 150], [1, 0.35, 0], Extrapolate.CLAMP);
+    return { opacity };
   }, []);
 
   const backToTopAnimatedStyle = useAnimatedStyle(() => {
@@ -1129,19 +1085,6 @@ export default function SearchTab() {
 
   const showPlaceholders = !loading && results.length === 0;
 
-  const handleHeaderLayout = useCallback(
-    (e) => {
-      if (hasMeasuredHeader) return;
-      const h = e?.nativeEvent?.layout?.height ?? 0;
-      if (h > 0) {
-        setCollapsibleHeightState(h);
-        headerHeight.value = h;
-        setHasMeasuredHeader(true);
-      }
-    },
-    [hasMeasuredHeader, headerHeight],
-  );
-
   return (
     <View style={styles.container}>
       <SearchHeader
@@ -1149,32 +1092,31 @@ export default function SearchTab() {
         subtitle="Search for any Pokémon card and add it to your collection"
       />
 
-      {!hasMeasuredHeader ? (
-        <View style={styles.collapsibleWrap} onLayout={handleHeaderLayout}>
-          <SearchForm
-            name={name}
-            setName={setName}
-            setCode={setCode}
-            setSetCode={setSetCode}
-            number={number}
-            setNumber={setNumber}
-            canSearch={canSearch}
-            loading={loading}
-            onSearch={onSearch}
-            errorMessage={error?.message}
-          />
+      {/* Filters are sticky above the list — always in normal layout flow so
+          opening them pushes the list down rather than overlapping it. */}
+      <AdvancedFiltersMobile
+        filters={filters}
+        onChange={setFilters}
+        availableRarities={availableRarities}
+        availableVariations={availableVariations}
+      />
 
-          <AdvancedFiltersMobile
-            filters={filters}
-            onChange={setFilters}
-            availableRarities={availableRarities}
-            availableVariations={availableVariations}
-          />
-        </View>
-      ) : (
-        <Animated.View
-          style={[styles.collapsibleWrap, collapsibleWrapAnimatedStyle]}
-        >
+      <Animated.FlatList
+        ref={listRef}
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        data={filteredResults}
+        keyExtractor={(item, idx) => (item?.id ? String(item.id) : `${idx}`)}
+        numColumns={2}
+        columnWrapperStyle={styles.column}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        removeClippedSubviews
+        initialNumToRender={12}
+        maxToRenderPerBatch={12}
+        updateCellsBatchingPeriod={50}
+        windowSize={9}
+        ListHeaderComponent={
           <Animated.View style={collapsibleContentAnimatedStyle}>
             <SearchForm
               name={name}
@@ -1188,70 +1130,47 @@ export default function SearchTab() {
               onSearch={onSearch}
               errorMessage={error?.message}
             />
-
-            <AdvancedFiltersMobile
-              filters={filters}
-              onChange={setFilters}
-              availableRarities={availableRarities}
-              availableVariations={availableVariations}
-            />
           </Animated.View>
-        </Animated.View>
-      )}
+        }
+        ListEmptyComponent={
+          showPlaceholders ? (
+            <PlaceholderGrid shimmer={!called && !loading} rows={6} />
+          ) : (
+            <EmptyState message="No results found. Try different filters." />
+          )
+        }
+        renderItem={({ item }) => {
+          const best = getBestPrice(item?.prices || []);
+          const avg = computeAveragePrice(best);
 
-      {filteredResults.length > 0 ? (
-        <Animated.FlatList
-          ref={listRef}
-          contentContainerStyle={styles.listContent}
-          data={filteredResults}
-          keyExtractor={(item, idx) => (item?.id ? String(item.id) : `${idx}`)}
-          numColumns={2}
-          columnWrapperStyle={styles.column}
-          onScroll={onScroll}
-          scrollEventThrottle={16}
-          removeClippedSubviews
-          initialNumToRender={12}
-          maxToRenderPerBatch={12}
-          updateCellsBatchingPeriod={50}
-          windowSize={9}
-          renderItem={({ item }) => {
-            const best = getBestPrice(item?.prices || []);
-            const avg = computeAveragePrice(best);
+          return (
+            <CardTile
+              item={item}
+              bestPrice={best}
+              averagePrice={avg}
+              averagePriceFormatted={formatGBP(avg)}
+              onAddToWishlist={onAddToWishlist}
+              onAddToCollection={onAddToCollection}
+              onPress={async () => {
+                await persistLastSearch();
 
-            return (
-              <CardTile
-                item={item}
-                bestPrice={best}
-                averagePrice={avg}
-                averagePriceFormatted={formatGBP(avg)}
-                onAddToWishlist={onAddToWishlist}
-                onAddToCollection={onAddToCollection}
-                onPress={async () => {
-                  // NEW: persist last search even if user didn't re-search
-                  await persistLastSearch();
-
-                  router.push({
-                    pathname: `/card/${item.id}`,
-                    params: {
-                      id: String(item.id),
-                      name: item.name ?? "",
-                      number: String(item.number ?? ""),
-                      setName: item.setName ?? "",
-                      image: item.image ?? "",
-                      prices: JSON.stringify(item?.prices || []),
-                      pricing: JSON.stringify(item?.prices || []),
-                    },
-                  });
-                }}
-              />
-            );
-          }}
-        />
-      ) : showPlaceholders ? (
-        <PlaceholderGrid shimmer={!called && !loading} rows={6} />
-      ) : (
-        <EmptyState message="No results found. Try different filters." />
-      )}
+                router.push({
+                  pathname: `/card/${item.id}`,
+                  params: {
+                    id: String(item.id),
+                    name: item.name ?? "",
+                    number: String(item.number ?? ""),
+                    setName: item.setName ?? "",
+                    image: item.image ?? "",
+                    prices: JSON.stringify(item?.prices || []),
+                    pricing: JSON.stringify(item?.prices || []),
+                  },
+                });
+              }}
+            />
+          );
+        }}
+      />
 
       <Animated.View
         pointerEvents="box-none"
@@ -1310,13 +1229,9 @@ function PlaceholderTile({ shimmer = false }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
+  list: { flex: 1 },
   listContent: { paddingHorizontal: 6, paddingBottom: 20 },
   column: { gap: 4 },
-
-  // Collapsible wrapper MUST hide overflow while height is shrinking
-  collapsibleWrap: {
-    overflow: "hidden",
-  },
 
   placeholderWrap: {
     flexDirection: "row",
