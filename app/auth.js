@@ -1,6 +1,6 @@
 // app/auth.js
 import { useApolloClient, useMutation } from "@apollo/client";
-import { LoginDocument, RegisterDocument } from "@sixbyfive/tcg-binder";
+import { LoginDocument, RegisterDocument } from "../graphql/documents";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {

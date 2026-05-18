@@ -16,12 +16,12 @@ import {
   View,
 } from "react-native";
 
-import { CardByIdDocument as CARD_BY_ID } from "@sixbyfive/tcg-binder";
 import {
-  AddToCollectionDocument, // ← added fallback
-  AddToWishlistDocument, // fallback if hook doesn't expose addToWishlist
-} from "@sixbyfive/tcg-binder/client";
-import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+  AddToCollectionDocument,
+  AddToWishlistDocument,
+  CardByIdDocument as CARD_BY_ID,
+} from "../../graphql/documents";
+import { useMeQuery } from "../../hooks/useMeQuery";
 
 import useToast from "../../hooks/useToast";
 import { COLORS } from "../../theme/colors";

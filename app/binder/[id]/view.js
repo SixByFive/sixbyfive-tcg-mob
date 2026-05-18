@@ -27,7 +27,7 @@ import PageHeaderBackSimple from "../../../components/common/PageHeaderBackSimpl
 import { COLORS } from "../../../theme/colors";
 
 // GraphQL
-import { BinderDocument, MeDocument } from "@sixbyfive/tcg-binder/client";
+import { BinderDocument, MeDocument } from "../../../graphql/documents";
 
 /* ---------- Home Hub persistence keys (must match home.js strings) ---------- */
 const LAST_BINDER_ROUTE_KEY = "sbf_last_binder_route_v1"; // SAME as Home

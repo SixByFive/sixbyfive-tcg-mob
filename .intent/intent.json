@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "project": "SixByFive TCG Mobile",
+  "systems": ["sys-graphql-layer", "sys-backend", "sys-messaging", "sys-auth", "sys-collection"],
+  "created": "2026-05-08T15:14:30.768Z"
+}

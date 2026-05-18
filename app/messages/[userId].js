@@ -27,7 +27,7 @@ import {
 import { COLORS } from "../../theme/colors";
 
 import { useFocusEffect } from "@react-navigation/native";
-import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import { useMeQuery } from "../../hooks/useMeQuery";
 import { useMessaging } from "../contexts/MessengerContext";
 
 import { gql, useApolloClient } from "@apollo/client";

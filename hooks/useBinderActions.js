@@ -6,13 +6,13 @@ import {
   BrowseBindersDocument,
   CreateBinderDocument,
   DeleteBinderDocument,
-  MoveBinderSlotDocument,
   MyBindersDocument,
   MyCollectionDocument,
-  RemoveBinderSlotDocument,
   SaveBinderPagesAndSlotsDocument,
   UpdateBinderDocument,
-} from "@sixbyfive/tcg-binder/client";
+} from "../graphql/documents";
+// MoveBinderSlot / RemoveBinderSlot do not exist in the tcg-runtime gateway schema.
+// Both operations are implemented below using saveBinderPagesAndSlots (full bulk-save).
 import { useCallback } from "react";
 import useToast from "./useToast";
 
@@ -294,8 +294,6 @@ export default function useBinderActions() {
   const [deleteBinderMut] = useMutation(DeleteBinderDocument);
   const [savePagesMut] = useMutation(SaveBinderPagesAndSlotsDocument);
   const [addCardMut] = useMutation(AddCardToBinderDocument);
-  const [moveSlotMut] = useMutation(MoveBinderSlotDocument);
-  const [removeSlotMut] = useMutation(RemoveBinderSlotDocument);
 
   /** keep browse/my lists fresh after meta changes */
   function upsertBinderListCache(binder) {
@@ -594,8 +592,39 @@ export default function useBinderActions() {
 
     if (!pid) {
       if (!bId) throw new Error("addCard requires pageId or binderId");
-      const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id: bId } });
-      const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
+      // Try cache first, fall back to network fetch on miss
+      let binderData = apollo.readQuery({ query: BINDER_QUERY, variables: { id: bId } });
+      if (!binderData?.binder?.pages?.length) {
+        try {
+          const res = await apollo.query({ query: BINDER_QUERY, variables: { id: bId }, fetchPolicy: "network-only" });
+          binderData = res.data;
+        } catch (fetchErr) {
+          log("[Binder/addCard] binder fetch failed:", fetchErr?.message);
+        }
+      }
+      let pages = Array.isArray(binderData?.binder?.pages) ? binderData.binder.pages : [];
+
+      // Binder exists but has no pages yet — auto-create the first page
+      if (!pages.length) {
+        log("[Binder/addCard] no pages found, auto-creating first page");
+        try {
+          const defaultLayout = "pocket-9";
+          const { data: createData } = await savePagesMut({
+            variables: {
+              binderId: bId,
+              pages: [{ title: "Page 1", layout: defaultLayout, pageOrder: 0, slots: [] }],
+            },
+          });
+          const newBinder =
+            createData?.saveBinderPagesAndSlots ??
+            createData?.binder ??
+            null;
+          pages = Array.isArray(newBinder?.pages) ? newBinder.pages : [];
+        } catch (createErr) {
+          log("[Binder/addCard] auto-create page failed:", createErr?.message);
+        }
+      }
+
       const p = pages[Number(pageIndex) || 0];
       if (!p?.id) throw new Error("Unable to resolve pageId from binder cache");
       pid = sid(p.id);
@@ -688,58 +717,139 @@ export default function useBinderActions() {
   }
 
   /**
-   * Move a slot (within/between pages).
-   * Server: moveBinderSlot(id: ID!, pageId: ID!, position: Int!): BinderSlot!
+   * Move a slot (within/between pages) via full pages bulk-save.
+   * moveBinderSlot does not exist in the tcg-runtime schema; we reconstruct
+   * the complete pages payload with the slot removed from the source page and
+   * inserted at the destination page/position, then call saveBinderPagesAndSlots.
    */
   async function moveSlot({ binderId, fromPage, fromSlot, toPage, toSlot }) {
     const bId = sid(binderId);
     const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id: bId } });
     const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
 
-    const fromPg = pages[Number(fromPage) || 0];
-    const toPg = pages[Number(toPage) || 0];
+    const fromPgIdx   = Number(fromPage) || 0;
+    const toPgIdx     = Number(toPage)   || 0;
+    const fromSlotIdx = Number(fromSlot) || 0;
 
-    const slot = Array.isArray(fromPg?.slots) ? fromPg.slots[Number(fromSlot) || 0] : null;
-    const slotId = slot?.id ? sid(slot.id) : null;
-    const destPageId = toPg?.id ? sid(toPg.id) : null;
+    const fromPg = pages[fromPgIdx];
+    const toPg   = pages[toPgIdx];
+    if (!fromPg || !toPg) throw new Error("Unable to resolve source or destination page");
 
-    if (!slotId || !destPageId) throw new Error("Unable to resolve slotId or destination pageId");
+    const slotToMove = Array.isArray(fromPg?.slots) ? fromPg.slots[fromSlotIdx] : null;
+    if (!slotToMove) throw new Error("Unable to resolve source slot");
 
-    const vars = { id: slotId, pageId: destPageId, position: Number(toSlot) + 1 };
-    log("[Binder/moveSlot] vars:", vars);
+    const cardId = slotCardId(slotToMove);
+    if (!cardId) throw new Error("Source slot has no cardId");
+
+    const pagesPayload = pages
+      .slice()
+      .sort((a, b) => {
+        const ao = Number.isFinite(a?.pageOrder) ? Number(a.pageOrder) : 0;
+        const bo = Number.isFinite(b?.pageOrder) ? Number(b.pageOrder) : 0;
+        return ao - bo;
+      })
+      .map((p, idx) => {
+        const layout   = p?.layout || "pocket-9";
+        const capacity = CAPACITY[layout] ?? 9;
+        const isFrom   = idx === fromPgIdx;
+        const isTo     = idx === toPgIdx;
+
+        let slots = (Array.isArray(p?.slots) ? p.slots : [])
+          .filter(Boolean)
+          .filter((_, i) => !(isFrom && i === fromSlotIdx))
+          .map((s, i) => ({
+            ...(s?.id ? { id: sid(s.id) } : {}),
+            cardId: sid(slotCardId(s) || ""),
+            position: Number.isFinite(s?.position) && Number(s.position) > 0 ? Number(s.position) : i + 1,
+            quantity: isFiniteNum(s?.quantity) ? Number(s.quantity) : 1,
+            ...(s?.notes ? { notes: s.notes } : {}),
+          }));
+
+        if (isTo) {
+          slots.push({
+            cardId: sid(cardId),
+            position: Number(toSlot) + 1,
+            quantity: isFiniteNum(slotToMove?.quantity) ? Number(slotToMove.quantity) : 1,
+            ...(slotToMove?.notes ? { notes: slotToMove.notes } : {}),
+          });
+        }
+
+        return {
+          id: sid(p.id),
+          title: p?.title ?? `Page ${idx + 1}`,
+          layout,
+          pageOrder: Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx,
+          slots: normalizePositions(slots, capacity),
+        };
+      });
+
+    log("[Binder/moveSlot] payload summary:", summarizePagesPayload(pagesPayload));
     try {
-      await moveSlotMut({
-        variables: vars,
+      await savePagesMut({
+        variables: { binderId: bId, pages: pagesPayload },
         refetchQueries: [{ query: BINDER_QUERY, variables: { id: bId } }],
       });
       return true;
     } catch (e) {
-      logError("Binder/moveSlot", e, { vars });
+      logError("Binder/moveSlot", e, { binderId: bId, fromPage, fromSlot, toPage, toSlot });
       throw e;
     }
   }
 
-  /** Remove a slot (resolve id from page/slot index) */
+  /**
+   * Remove a slot via full pages bulk-save.
+   * removeBinderSlot does not exist in the tcg-runtime schema; we reconstruct
+   * the complete pages payload with the target slot omitted, then call saveBinderPagesAndSlots.
+   */
   async function removeSlot({ binderId, pageIndex, slotIndex }) {
-    const bId = sid(binderId);
+    const bId     = sid(binderId);
+    const pgIdx   = Number(pageIndex) || 0;
+    const slotIdx = Number(slotIndex) || 0;
+
     const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id: bId } });
-    const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
-    const page = pages[Number(pageIndex) || 0];
-    const slot = Array.isArray(page?.slots) ? page.slots[Number(slotIndex) || 0] : null;
+    const pages  = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
 
-    const slotId = slot?.id ? sid(slot.id) : null;
-    if (!slotId) throw new Error("Unable to resolve slotId from cache");
+    const pagesPayload = pages
+      .slice()
+      .sort((a, b) => {
+        const ao = Number.isFinite(a?.pageOrder) ? Number(a.pageOrder) : 0;
+        const bo = Number.isFinite(b?.pageOrder) ? Number(b.pageOrder) : 0;
+        return ao - bo;
+      })
+      .map((p, idx) => {
+        const layout   = p?.layout || "pocket-9";
+        const capacity = CAPACITY[layout] ?? 9;
+        const isTarget = idx === pgIdx;
 
-    const vars = { id: slotId };
-    log("[Binder/removeSlot] vars:", vars);
+        const slots = (Array.isArray(p?.slots) ? p.slots : [])
+          .filter(Boolean)
+          .filter((_, i) => !(isTarget && i === slotIdx))
+          .map((s, i) => ({
+            ...(s?.id ? { id: sid(s.id) } : {}),
+            cardId: sid(slotCardId(s) || ""),
+            position: Number.isFinite(s?.position) && Number(s.position) > 0 ? Number(s.position) : i + 1,
+            quantity: isFiniteNum(s?.quantity) ? Number(s.quantity) : 1,
+            ...(s?.notes ? { notes: s.notes } : {}),
+          }));
+
+        return {
+          id: sid(p.id),
+          title: p?.title ?? `Page ${idx + 1}`,
+          layout,
+          pageOrder: Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx,
+          slots: normalizePositions(slots, capacity),
+        };
+      });
+
+    log("[Binder/removeSlot] payload summary:", summarizePagesPayload(pagesPayload));
     try {
-      await removeSlotMut({
-        variables: vars,
+      await savePagesMut({
+        variables: { binderId: bId, pages: pagesPayload },
         refetchQueries: [{ query: BINDER_QUERY, variables: { id: bId } }],
       });
       return true;
     } catch (e) {
-      logError("Binder/removeSlot", e, { vars });
+      logError("Binder/removeSlot", e, { binderId: bId, pageIndex, slotIndex });
       throw e;
     }
   }

@@ -1,7 +1,7 @@
 // components/messages/NewMessageModal.js
 
 import { Ionicons } from "@expo/vector-icons";
-import { useSearchUsersLazyQuery } from "@sixbyfive/tcg-binder/react";
+import { useSearchUsersLazyQuery } from "../../hooks/useSearchUsersLazyQuery";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -89,7 +89,7 @@ export default function NewMessageModal({
 
     debounceRef.current = setTimeout(() => {
       if (normalized.length >= minLen) {
-        runSearch({ variables: { query: normalized, limit: 20 } });
+        runSearch({ variables: { q: normalized, limit: 20 } });
       }
     }, 300);
 

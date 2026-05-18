@@ -1,7 +1,7 @@
 import { useMutation } from "@apollo/client";
 import { useFocusEffect } from "@react-navigation/native";
-import { MeDocument, UpdateProfileDocument } from "@sixbyfive/tcg-binder/client";
-import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import { MeDocument, UpdateProfileDocument } from "../../graphql/documents";
+import { useMeQuery } from "../../hooks/useMeQuery";
 import { AppState } from "react-native";
 
 import { useRouter } from "expo-router";
@@ -21,7 +21,6 @@ import PageHeader from "../../components/common/PageHeader";
 import SegmentTabs from "../../components/common/SegmentTabs";
 import ProfileEditForm from "../../components/profile/ProfileEditForm";
 import ProfileTopCard from "../../components/profile/ProfileTopCard";
-import AchievementsTab from "../../components/profile/tabs/AchievementsTab";
 import BindersTab from "../../components/profile/tabs/BindersTab";
 import CardsTab from "../../components/profile/tabs/CardsTab";
 import OverviewTab from "../../components/profile/tabs/OverviewTab";
@@ -93,7 +92,6 @@ export default function ProfileTab() {
       { key: "wishlist", label: "Wishlist" },
       // { key: "forSale", label: "For Sale" },
       // { key: "forTrade", label: "For Trade" },
-      { key: "achievements", label: "Achievements" },
     ],
     []
   );
@@ -156,8 +154,6 @@ export default function ProfileTab() {
   const cardsPreview = Array.isArray(me?.cardsPreview) ? me.cardsPreview : [];
   const forSalePreview = Array.isArray(me?.forSalePreview) ? me.forSalePreview : [];
   const forTradePreview = Array.isArray(me?.forTradePreview) ? me.forTradePreview : [];
-  const achievements = Array.isArray(me?.achievements) ? me.achievements : [];
-
   // Upload helper (no-op placeholder; replace with your real endpoint when ready)
   const uploadAvatarIfNeeded = useCallback(async (uri) => {
     if (!uri || typeof uri !== "string") return uri;
@@ -367,10 +363,6 @@ export default function ProfileTab() {
               router.push({ pathname: "/card/[id]", params: { id: String(c.id) } })
             }
           />
-        )}
-
-        {tab === "achievements" && (
-          <AchievementsTab userId={me?.id} />
         )}
 
         <View style={{ height: 28 }} />

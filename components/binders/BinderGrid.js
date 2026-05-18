@@ -11,7 +11,7 @@
 
 import { useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
-import { MyCollectionDocument } from "@sixbyfive/tcg-binder/client";
+import { MyCollectionDocument } from "../../graphql/documents";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   findNodeHandle,

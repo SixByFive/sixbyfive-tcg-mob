@@ -28,7 +28,7 @@ import {
 } from "react-native";
 
 import { useFocusEffect } from "@react-navigation/native";
-import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import { useMeQuery } from "../../hooks/useMeQuery";
 import { useMessaging } from "../../app/contexts/MessengerContext";
 import { COLORS } from "../../theme/colors";
 

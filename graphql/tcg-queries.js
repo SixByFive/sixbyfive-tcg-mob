@@ -2,8 +2,6 @@
 // Source: @sixbyfive/tcg-binder/client
 // Excludes: /^(admin)/i
 
-export { AchievementDocument } from "@sixbyfive/tcg-binder/client";
-export { AchievementsDocument } from "@sixbyfive/tcg-binder/client";
 export { AllRaritiesDocument } from "@sixbyfive/tcg-binder/client";
 export { AllUsersDocument } from "@sixbyfive/tcg-binder/client";
 export { AuditLogsDocument } from "@sixbyfive/tcg-binder/client";
@@ -18,7 +16,6 @@ export { GetExchangeRatesDocument } from "@sixbyfive/tcg-binder/client";
 export { GetSetDocument } from "@sixbyfive/tcg-binder/client";
 export { HasAgreedToChatRulesDocument } from "@sixbyfive/tcg-binder/client";
 export { MarketplaceListingDocument } from "@sixbyfive/tcg-binder/client";
-export { MyAchievementsDocument } from "@sixbyfive/tcg-binder/client";
 export { MyChatsDocument } from "@sixbyfive/tcg-binder/client";
 export { MyNotificationsDocument } from "@sixbyfive/tcg-binder/client";
 export { MyRewardsDocument } from "@sixbyfive/tcg-binder/client";
@@ -34,7 +31,6 @@ export { TradeDisputesDocument } from "@sixbyfive/tcg-binder/client";
 export { TradeProofDocument } from "@sixbyfive/tcg-binder/client";
 export { UnreadCountDocument } from "@sixbyfive/tcg-binder/client";
 export { UnreadNotificationCountDocument } from "@sixbyfive/tcg-binder/client";
-export { UserAchievementsDocument } from "@sixbyfive/tcg-binder/client";
 export { UserByIdDocument } from "@sixbyfive/tcg-binder/client";
 export { UserRewardsDocument } from "@sixbyfive/tcg-binder/client";
 export { WishlistDocument } from "@sixbyfive/tcg-binder/client";

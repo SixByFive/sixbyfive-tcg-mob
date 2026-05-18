@@ -30,6 +30,7 @@ import {
   Linking,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -142,18 +143,23 @@ function checkPasswordStrength(pw) {
 function Collapsible({ open, children, duration = 220 }) {
   const [measured, setMeasured] = useState(false);
   const [contentH, setContentH] = useState(0);
+  const [fullyOpen, setFullyOpen] = useState(false);
   const hAnim = useRef(new Animated.Value(0)).current;
   const oAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (!measured) return;
 
+    if (!open) setFullyOpen(false);
+
     Animated.timing(hAnim, {
       toValue: open ? contentH : 0,
       duration,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
-    }).start();
+    }).start(({ finished }) => {
+      if (finished && open) setFullyOpen(true);
+    });
 
     Animated.timing(oAnim, {
       toValue: open ? 1 : 0,
@@ -180,7 +186,11 @@ function Collapsible({ open, children, duration = 220 }) {
 
       {measured ? (
         <Animated.View
-          style={{ height: hAnim, opacity: oAnim, overflow: "hidden" }}
+          style={
+            fullyOpen
+              ? { opacity: oAnim, overflow: "visible" }
+              : { height: hAnim, opacity: oAnim, overflow: "hidden" }
+          }
         >
           <View style={styles.dropdownCard}>{children}</View>
         </Animated.View>
@@ -1094,6 +1104,7 @@ export default function Settings() {
         title="Settings"
         subtitle="Account, Notifications & Preferences"
       />
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
 
       {/* =========================
           Notifications (clean)
@@ -1916,6 +1927,7 @@ export default function Settings() {
           <Text style={styles.value}>{appVersion}</Text>
         </View>
       </View>
+      </ScrollView>
     </View>
   );
 }

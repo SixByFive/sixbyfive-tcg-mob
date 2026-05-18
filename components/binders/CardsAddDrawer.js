@@ -210,9 +210,11 @@ const MY_COLLECTION_APP = gql`
         id
         name
         number
-        image
+        setCode
         rarity
-        setName
+        images { small large }
+        set { code name }
+        __typename
       }
     }
   }
@@ -221,14 +223,19 @@ const MY_COLLECTION_APP = gql`
 /* ----------------------- GraphQL: SEARCH (robust) ----------------------- */
 
 const FALLBACK_SEARCH_CONNECTION = gql`
-  query SearchCardsConnection_Safe($input: SearchCardsInput!) {
-    searchCardsConnection(input: $input) {
-      edges {
-        node {
-          id
-          name
-          image
-        }
+  query SearchCards_Safe($input: CardSearchInput!) {
+    searchCards(input: $input) {
+      total
+      items {
+        id
+        cardId
+        name
+        number
+        setCode
+        rarity
+        images { small large }
+        set { code name }
+        latestPrices { variation gbp market updatedAt }
       }
     }
   }
@@ -236,16 +243,16 @@ const FALLBACK_SEARCH_CONNECTION = gql`
 
 function resolveDoc(preferredKeys, fallbackDoc) {
   try {
-    const temp = require("../../graphql/binders-temp");
+    const docs = require("../../graphql/documents");
     for (const k of preferredKeys) {
-      const d = temp?.[k];
+      const d = docs?.[k];
       if (d && typeof d === "object" && d.kind === "Document") return d;
     }
   } catch (_) {}
   try {
-    const client = require("@sixbyfive/tcg-binder/client");
+    const temp = require("../../graphql/binders-temp");
     for (const k of preferredKeys) {
-      const d = client?.[k];
+      const d = temp?.[k];
       if (d && typeof d === "object" && d.kind === "Document") return d;
     }
   } catch (_) {}
@@ -420,7 +427,7 @@ export default function AddCardsDrawer({
         const code = extractCardCode({ id: entry?.card?.id ?? entry?.cardId });
         if (!code) return null;
         const name = entry?.card?.name ?? "";
-        const rawImage = entry?.card?.image ?? "";
+        const rawImage = entry?.card?.images?.small ?? entry?.card?.images?.large ?? entry?.card?.image ?? "";
         const candidates = buildImageCandidatesFromCode(code, rawImage);
         const image = candidates[0] || rawImage || "";
         return { id: code, name, image, _collection: entry };

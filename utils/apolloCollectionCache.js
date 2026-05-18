@@ -5,7 +5,7 @@ import { gql } from "@apollo/client";
 import { MyCollectionAppDocument } from "../graphql/localCollectionDocuments";
 
 const ENTRY_TYPENAME = "CollectionEntry";
-const CARD_TYPENAME = "CardsearchCard";
+const CARD_TYPENAME = "CatalogCard";
 
 /** Single fragment only — prevents 'Found N fragments' invariant error */
 const COLLECTION_ENTRY_FRAGMENT = gql`
@@ -21,8 +21,11 @@ const COLLECTION_ENTRY_FRAGMENT = gql`
       id
       name
       number
-      image
-      setName
+      setCode
+      images {
+        small
+        large
+      }
     }
   }
 `;
@@ -47,16 +50,16 @@ function normalizeEntry(entry) {
         id: String(entry.card.id ?? cardId),
         name: entry.card.name ?? "Card",
         number: entry.card.number ?? null,
-        image: entry.card.image ?? null,
-        setName: entry.card.setName ?? null,
+        setCode: entry.card.setCode ?? null,
+        images: entry.card.images ?? null,
       }
     : {
         __typename: CARD_TYPENAME,
         id: cardId,
         name: entry.name ?? "Card",
         number: entry.number ?? null,
-        image: entry.image ?? null,
-        setName: entry.setName ?? null,
+        setCode: entry.setCode ?? null,
+        images: entry.images ?? null,
       };
 
   return {

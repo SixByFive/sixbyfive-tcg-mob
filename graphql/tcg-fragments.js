@@ -2,7 +2,6 @@
 // Source: @sixbyfive/tcg-binder/client
 // Excludes: /^(admin)/i
 
-export { AchievementCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";
 export { AddToCollectionDocument } from "@sixbyfive/tcg-binder/client";
 export { AddToWishlistDocument } from "@sixbyfive/tcg-binder/client";
 export { AuditLogCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";
@@ -63,7 +62,6 @@ export { TwoFactorSetupPayloadCoreFragmentDoc } from "@sixbyfive/tcg-binder/clie
 export { UpdateCollectionEntryDocument } from "@sixbyfive/tcg-binder/client";
 export { UpdateMarketplaceListingDocument } from "@sixbyfive/tcg-binder/client";
 export { UpdateWishlistEntryDocument } from "@sixbyfive/tcg-binder/client";
-export { UserAchievementCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";
 export { UserCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";
 export { UserProfileDocument } from "@sixbyfive/tcg-binder/client";
 export { VariantsCoreFragmentDoc } from "@sixbyfive/tcg-binder/client";

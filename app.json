@@ -2,7 +2,7 @@
   "expo": {
     "name": "SixByFive TCG",
     "slug": "sbf-tcg-mobile",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "tcgmobile",
@@ -79,11 +79,11 @@
 
       "EXPO_PUBLIC_DEV_MODE": false,
 
-      "EXPO_PUBLIC_GRAPHQL_ENDPOINT_LOCAL": "https://backendtcg.sixbyfive.com/graphql",
+      "EXPO_PUBLIC_GRAPHQL_ENDPOINT_LOCAL": "http://10.0.2.2:4010/graphql",
 
-      "EXPO_PUBLIC_MESSAGING_GRAPHQL_ENDPOINT_LOCAL": "http://10.0.2.2:4000/graphql",
+      "EXPO_PUBLIC_MESSAGING_GRAPHQL_ENDPOINT_LOCAL": "http://10.0.2.2:4010/graphql",
 
-      "EXPO_PUBLIC_SOCKET_URL_LOCAL": "http://10.0.2.2:4000",
+      "EXPO_PUBLIC_SOCKET_URL_LOCAL": "http://10.0.2.2:4018",
       "EXPO_PUBLIC_SOCKET_PATH": "/realtime/socket.io",
 
       "router": {},

@@ -31,7 +31,7 @@ import {
 import { COLORS } from "../../../theme/colors";
 
 import { gql, useApolloClient, useLazyQuery, useQuery } from "@apollo/client";
-import { CardByIdDocument } from "@sixbyfive/tcg-binder/client";
+import { CardByIdDocument } from "../../../graphql/documents";
 import { resolveSetNameForCardlike } from "../../../utils/setNames";
 
 // CHANGED: use shared compact filters bar
@@ -57,13 +57,12 @@ const MY_WISHLIST_MIN = gql`
           id
           name
           number
-          image
-          setName
-          set {
-            code
-            name
-          }
+          setCode
+          images { small large }
+          set { code name }
+          __typename
         }
+        __typename
       }
     }
   }
@@ -84,13 +83,12 @@ const WISHLIST_MIN = gql`
           id
           name
           number
-          image
-          setName
-          set {
-            code
-            name
-          }
+          setCode
+          images { small large }
+          set { code name }
+          __typename
         }
+        __typename
       }
     }
   }
@@ -560,11 +558,11 @@ export default function WishlistTab({
     skip: !shouldFetchProfile,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
-    onError: (err) => {
-      if (__DEV__)
-        console.warn("[WishlistTab] wishlist error", err?.message || err);
-    },
   });
+  useEffect(() => {
+    if (wlError && __DEV__)
+      console.warn("[WishlistTab] wishlist error", wlError?.message || wlError);
+  }, [wlError]);
 
   const shouldFetchMine = normalizedFromProp.length === 0 && !userId;
   const {
@@ -576,11 +574,11 @@ export default function WishlistTab({
     skip: !shouldFetchMine,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
-    onError: (err) => {
-      if (__DEV__)
-        console.warn("[WishlistTab] myWishlist error", err?.message || err);
-    },
   });
+  useEffect(() => {
+    if (myWlError && __DEV__)
+      console.warn("[WishlistTab] myWishlist error", myWlError?.message || myWlError);
+  }, [myWlError]);
 
   const normalizedFromFetch = useMemo(() => {
     const root =

@@ -2,7 +2,6 @@
 // Source: @sixbyfive/tcg-binder/client
 // Excludes: /^(admin)/i
 
-export { AddAchievementDocument } from "@sixbyfive/tcg-binder/client";
 export { AddBinderPageDocument } from "@sixbyfive/tcg-binder/client";
 export { AddCardToBinderDocument } from "@sixbyfive/tcg-binder/client";
 export { AgreeToChatRulesDocument } from "@sixbyfive/tcg-binder/client";
@@ -16,18 +15,15 @@ export { CreateBinderDocument } from "@sixbyfive/tcg-binder/client";
 export { CreateShippingLabelDocument } from "@sixbyfive/tcg-binder/client";
 export { CreateSubscriptionDocument } from "@sixbyfive/tcg-binder/client";
 export { DeleteAccountDocument } from "@sixbyfive/tcg-binder/client";
-export { DeleteAchievementDocument } from "@sixbyfive/tcg-binder/client";
 export { DeleteBinderDocument } from "@sixbyfive/tcg-binder/client";
 export { DeleteBinderPageDocument } from "@sixbyfive/tcg-binder/client";
 export { DeleteChatDocument } from "@sixbyfive/tcg-binder/client";
 export { DelistMarketplaceListingDocument } from "@sixbyfive/tcg-binder/client";
 export { DisableTwoFactorDocument } from "@sixbyfive/tcg-binder/client";
 export { DismissNotificationDocument } from "@sixbyfive/tcg-binder/client";
-export { EditAchievementDocument } from "@sixbyfive/tcg-binder/client";
 export { EnableTwoFactorDocument } from "@sixbyfive/tcg-binder/client";
 export { ExportUserDataDocument } from "@sixbyfive/tcg-binder/client";
 export { GenerateProofCodeDocument } from "@sixbyfive/tcg-binder/client";
-export { GrantAchievementDocument } from "@sixbyfive/tcg-binder/client";
 export { GrantRewardDocument } from "@sixbyfive/tcg-binder/client";
 export { InitiateTradeDocument } from "@sixbyfive/tcg-binder/client";
 export { LeaveTradeFeedbackDocument } from "@sixbyfive/tcg-binder/client";
@@ -49,7 +45,6 @@ export { ResendVerificationDocument } from "@sixbyfive/tcg-binder/client";
 export { ResetPasswordDocument } from "@sixbyfive/tcg-binder/client";
 export { RespondOfferDocument } from "@sixbyfive/tcg-binder/client";
 export { RespondToTradeDocument } from "@sixbyfive/tcg-binder/client";
-export { RevokeAchievementDocument } from "@sixbyfive/tcg-binder/client";
 export { SaveBinderPagesAndSlotsDocument } from "@sixbyfive/tcg-binder/client";
 export { SendMessageDocument } from "@sixbyfive/tcg-binder/client";
 export { SubmitTrackingDocument } from "@sixbyfive/tcg-binder/client";

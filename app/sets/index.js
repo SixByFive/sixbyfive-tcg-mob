@@ -4,7 +4,7 @@
 
 import { useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
-import { SearchSetsDocument } from "@sixbyfive/tcg-binder/client";
+import { SearchSetsDocument } from "../../graphql/documents";
 import { useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {

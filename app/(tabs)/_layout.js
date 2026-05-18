@@ -1,6 +1,6 @@
 // app/(tabs)/_layout.js
 import { Ionicons } from "@expo/vector-icons";
-import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+import { useMeQuery } from "../../hooks/useMeQuery";
 import Constants from "expo-constants";
 import { Tabs, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef } from "react";

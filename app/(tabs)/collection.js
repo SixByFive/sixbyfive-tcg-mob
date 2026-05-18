@@ -55,9 +55,8 @@ import CompactSearchFiltersBar from "../../components/collection/CompactSearchFi
 import {
   CardByIdDocument,
   MyBindersDocument,
-  UpdateCollectionEntryDocument,
-} from "@sixbyfive/tcg-binder/client";
-import { useMeQuery } from "@sixbyfive/tcg-binder/react";
+} from "../../graphql/documents";
+import { useMeQuery } from "../../hooks/useMeQuery";
 
 import { useCollectionWishlistActions } from "../../hooks/useCollectionWishlistActions";
 import { resolveSetNameForCardlike } from "../../utils/setNames";
@@ -106,14 +105,13 @@ const MY_COLLECTION_APP = gql`
         id
         name
         number
-        image
+        setCode
         rarity
-        setName
-        set {
-          code
-          name
-        }
+        images { small large }
+        set { code name }
+        __typename
       }
+      __typename
     }
   }
 `;
@@ -134,14 +132,33 @@ const MY_WISHLIST = gql`
           id
           name
           number
-          image
-          setName
-          set {
-            code
-            name
-          }
+          setCode
+          images { small large }
+          set { code name }
+          __typename
         }
+        __typename
       }
+    }
+  }
+`;
+
+/* ------------------------------------------------------------------ */
+/*  UPDATE_COLLECTION_ENTRY (inline — replaces stale tcg-binder version) */
+/* ------------------------------------------------------------------ */
+const UPDATE_COLLECTION_ENTRY = gql`
+  mutation UpdateCollectionEntry($cardId: String!, $quantity: Int, $condition: String, $variation: String) {
+    updateCollectionEntry(cardId: $cardId, quantity: $quantity, condition: $condition, variation: $variation) {
+      id
+      cardId
+      variation
+      quantity
+      condition
+      wishlist
+      createdAt
+      updatedAt
+      card { id name number setCode rarity images { small large } set { code name } __typename }
+      __typename
     }
   }
 `;
@@ -649,7 +666,7 @@ export default function CollectionTab() {
   const [removing, setRemoving] = useState(null);
   const [savingRemoval, setSavingRemoval] = useState(false);
 
-  const [updateCollectionEntry] = useMutation(UpdateCollectionEntryDocument);
+  const [updateCollectionEntry] = useMutation(UPDATE_COLLECTION_ENTRY);
   const [updateWishlistEntryMutation] = useMutation(UPDATE_WISHLIST_ENTRY);
 
   const {
@@ -693,15 +710,15 @@ export default function CollectionTab() {
     skip: !userId,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
-    onError: (err) => {
-      if (__DEV__) {
-        console.warn("[CollectionTab] myCollection GraphQL error", {
-          message: extractGraphQLError(err),
-          statusCode: err?.networkError?.statusCode || 400,
-        });
-      }
-    },
   });
+  useEffect(() => {
+    if (collError && __DEV__) {
+      console.warn("[CollectionTab] myCollection GraphQL error", {
+        message: extractGraphQLError(collError),
+        statusCode: collError?.networkError?.statusCode || 400,
+      });
+    }
+  }, [collError]);
 
   const {
     data: bindersData,
@@ -713,15 +730,15 @@ export default function CollectionTab() {
     skip: !userId,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
-    onError: (err) => {
-      if (__DEV__) {
-        console.warn("[CollectionTab] myBinders GraphQL error", {
-          message: extractGraphQLError(err),
-          statusCode: err?.networkError?.statusCode,
-        });
-      }
-    },
   });
+  useEffect(() => {
+    if (bindersError && __DEV__) {
+      console.warn("[CollectionTab] myBinders GraphQL error", {
+        message: extractGraphQLError(bindersError),
+        statusCode: bindersError?.networkError?.statusCode,
+      });
+    }
+  }, [bindersError]);
 
   const {
     data: wishlistData,
@@ -733,15 +750,15 @@ export default function CollectionTab() {
     skip: !userId,
     fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: true,
-    onError: (err) => {
-      if (__DEV__) {
-        console.warn("[CollectionTab] myWishlist GraphQL error", {
-          message: extractGraphQLError(err),
-          statusCode: err?.networkError?.statusCode || 400,
-        });
-      }
-    },
   });
+  useEffect(() => {
+    if (wishlistError && __DEV__) {
+      console.warn("[CollectionTab] myWishlist GraphQL error", {
+        message: extractGraphQLError(wishlistError),
+        statusCode: wishlistError?.networkError?.statusCode || 400,
+      });
+    }
+  }, [wishlistError]);
 
   /* -------- derived: wishlist (MOVED UP so price hydrate effect can use wishlistRawList) -------- */
   const wishlistRoot = useMemo(
