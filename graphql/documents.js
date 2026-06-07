@@ -10,6 +10,7 @@ export const LoginDocument = gql`
   mutation Login($email: String, $username: String, $password: String!, $mfaToken: String) {
     login(email: $email, username: $username, password: $password, mfaToken: $mfaToken) {
       token
+      refreshToken
       user {
         id
         username
@@ -478,6 +479,848 @@ export const BrowseBindersDocument = gql`
         id userId name description coverColor accentColor visibility slug isDeleted createdAt updatedAt
       }
       total page pageSize
+    }
+  }
+`;
+
+// ─── Subscriptions ────────────────────────────────────────────────────────────
+
+export const SubscriptionPlansDocument = gql`
+  query SubscriptionPlans {
+    subscriptionPlans {
+      id
+      name
+      description
+      price
+      currency
+      interval
+      platformFeePercent
+      feeDiscount
+      maxBinders
+      maxActiveListings
+      maxActiveTrades
+      featuresJson
+      stripePriceIdMonthly
+      stripePriceIdYearly
+      active
+      sortOrder
+    }
+  }
+`;
+
+export const MySubscriptionDocument = gql`
+  query MySubscription {
+    mySubscription {
+      id
+      status
+      cancelAtPeriodEnd
+      currentPeriodStart
+      currentPeriodEnd
+      cancelledAt
+      plan {
+        id
+        name
+        price
+        currency
+        interval
+      }
+    }
+  }
+`;
+
+export const MyCapabilitiesDocument = gql`
+  query MyCapabilities {
+    myCapabilities {
+      planName
+      platformFeePercent
+      maxBinders
+      maxActiveListings
+      maxActiveTrades
+    }
+  }
+`;
+
+export const SubscriptionPortalDocument = gql`
+  query SubscriptionPortal {
+    subscriptionPortal {
+      url
+    }
+  }
+`;
+
+export const CreateSubscriptionDocument = gql`
+  mutation CreateSubscription($planId: ID!) {
+    createSubscription(planId: $planId) {
+      url
+      sessionId
+    }
+  }
+`;
+
+export const CancelSubscriptionDocument = gql`
+  mutation CancelSubscription {
+    cancelSubscription
+  }
+`;
+
+export const ResumeSubscriptionDocument = gql`
+  mutation ResumeSubscription {
+    resumeSubscription {
+      id
+      status
+      cancelAtPeriodEnd
+      currentPeriodEnd
+    }
+  }
+`;
+
+export const UpdateSubscriptionDocument = gql`
+  mutation UpdateSubscription($planId: ID!) {
+    updateSubscription(planId: $planId) {
+      id
+      status
+      cancelAtPeriodEnd
+      currentPeriodStart
+      currentPeriodEnd
+      plan {
+        id
+        name
+        price
+        interval
+      }
+    }
+  }
+`;
+
+// ── Marketplace ───────────────────────────────────────────────────────────────
+
+const CARD_LISTING_FIELDS = `
+  id
+  cardId
+  price
+  currency
+  condition
+  variation
+  description
+  willTrade
+  allowOffers
+  moderationResult
+  proofCode
+  proofImageUrl
+  pendingOfferCount
+  status
+  seller { id username avatar }
+  cardInfo { id name number rarity setName imageSmall imageLarge }
+`;
+
+export const PublicListingsDocument = gql`
+  query PublicListings($sellerId: ID!, $limit: Int) {
+    listings(sellerId: $sellerId, status: ACTIVE, limit: $limit) {
+      ... on CardListing {
+        id
+        cardId
+        condition
+        variant
+        price
+        currency
+        quantity
+        status
+        allowOffers
+        willTrade
+        createdAt
+        cardInfo { name imageSmall setName number }
+        seller { id username avatar }
+      }
+    }
+  }
+`;
+
+export const BrowseListingsDocument = gql`
+  query BrowseListings($limit: Int, $offset: Int, $condition: String, $sort: String) {
+    listings(status: ACTIVE, limit: $limit, offset: $offset, condition: $condition, sort: $sort) {
+      ... on CardListing {
+        ${CARD_LISTING_FIELDS}
+      }
+    }
+  }
+`;
+
+export const MyMarketListingsDocument = gql`
+  query MyMarketListings($limit: Int, $offset: Int) {
+    myListings(limit: $limit, offset: $offset) {
+      id
+      cardId
+      price
+      currency
+      condition
+      variation
+      willTrade
+      status
+      moderationResult
+      proofCode
+      pendingOfferCount
+      cardInfo { id name number rarity setName imageSmall imageLarge }
+    }
+  }
+`;
+
+export const CreateMarketOfferDocument = gql`
+  mutation CreateMarketOffer($listingId: ID!, $amount: Float!, $message: String) {
+    createOffer(listingId: $listingId, amount: $amount, message: $message) {
+      id amount status createdAt
+    }
+  }
+`;
+
+export const MarketplaceRulesDocument = gql`
+  query MarketplaceRules {
+    marketplaceRules
+  }
+`;
+
+export const HasAgreedToMarketplaceRulesDocument = gql`
+  query HasAgreedToMarketplaceRules {
+    hasAgreedToMarketplaceRules
+  }
+`;
+
+export const AgreeToMarketplaceRulesDocument = gql`
+  mutation AgreeToMarketplaceRules {
+    agreeToMarketplaceRules
+  }
+`;
+
+export const SellerReputationDocument = gql`
+  query SellerReputation($userId: ID!) {
+    sellerReputation(userId: $userId) {
+      score positive negative neutral completedMarketplace
+    }
+  }
+`;
+
+export const SellerReviewsDocument = gql`
+  query SellerReviews($userId: ID!, $limit: Int, $offset: Int) {
+    sellerReputation(userId: $userId) {
+      score positive negative neutral completedMarketplace
+    }
+    sellerReviews(userId: $userId, limit: $limit, offset: $offset) {
+      cardId rating review createdAt
+    }
+  }
+`;
+
+export const MyWalletDocument = gql`
+  query MyWallet {
+    myWallet(limit: 1) {
+      balance
+      held
+      currency
+    }
+  }
+`;
+
+export const QuoteTradeShippingDocument = gql`
+  query QuoteTradeShipping($id: ID!) {
+    quoteTradeShipping(id: $id) {
+      amountPence
+      amount
+      currency
+      carrier
+      service
+    }
+  }
+`;
+
+export const SetTradeShippingAddressDocument = gql`
+  mutation SetTradeShippingAddress($id: ID!, $address: JSON!) {
+    setTradeShippingAddress(id: $id, address: $address)
+  }
+`;
+
+export const ShipTradeDocument = gql`
+  mutation ShipTrade($id: ID!, $parcelSize: String) {
+    shipTrade(id: $id, parcelSize: $parcelSize) {
+      ok
+      trackingNumber
+      trackingUrl
+      labelUrl
+      carrier
+      service
+    }
+  }
+`;
+
+export const MyTradesDocument = gql`
+  query MyTrades($status: TradeStatus) {
+    myTrades(status: $status) {
+      id
+      status
+      createdAt
+      initiatorId
+      partyAId
+      partyBId
+      topUpAmount
+      addressASet
+      addressBSet
+      trackingNumberA
+      trackingNumberB
+      cards { cardId party quantity condition variation }
+    }
+  }
+`;
+
+export const InitiateTradeDocument = gql`
+  mutation InitiateTrade(
+    $userId: ID!
+    $offeredCards: [TradeCardInput!]
+    $wantedCards: [TradeCardInput!]
+    $topUpAmount: Float
+  ) {
+    initiateTrade(
+      userId: $userId
+      offeredCards: $offeredCards
+      wantedCards: $wantedCards
+      topUpAmount: $topUpAmount
+    ) {
+      id status createdAt
+    }
+  }
+`;
+
+export const MyCollectionForTradeDocument = gql`
+  query MyCollectionForTrade {
+    myCollection {
+      id
+      cardId
+      quantity
+      condition
+      variation
+      card {
+        id name number rarity
+        images { small large }
+        set { name }
+      }
+    }
+  }
+`;
+
+export const MyCollectionForListingDocument = gql`
+  query MyCollectionForListing {
+    myCollection {
+      cardId
+      quantity
+      condition
+      variation
+      card {
+        id name number rarity
+        set { name releaseDate }
+        images { small large }
+      }
+    }
+  }
+`;
+
+export const PriceSuggestionDocument = gql`
+  query PriceSuggestion($cardId: String!) {
+    listings(type: CARD, status: ACTIVE, cardId: $cardId, limit: 30) {
+      ... on CardListing { price condition }
+    }
+  }
+`;
+
+export const CreateListingDocument = gql`
+  mutation CreateListing($input: CreateListingInput!) {
+    createListing(input: $input) {
+      id cardId price currency condition variation status createdAt
+    }
+  }
+`;
+
+export const SubmitListingProofDocument = gql`
+  mutation SubmitListingProof($id: ID!, $image: String!) {
+    submitListingProof(id: $id, image: $image) {
+      ok
+      result
+      newProofCode
+    }
+  }
+`;
+
+export const DeleteListingDocument = gql`
+  mutation DeleteListing($id: ID!) {
+    deleteListing(id: $id)
+  }
+`;
+
+export const UpdateListingDocument = gql`
+  mutation UpdateListing($id: ID!, $input: UpdateListingInput!) {
+    updateListing(id: $id, input: $input) {
+      id
+      price
+      quantity
+      status
+    }
+  }
+`;
+
+// ── Offers ────────────────────────────────────────────────────────────────────
+
+export const MyIncomingOffersDocument = gql`
+  query MyIncomingOffers {
+    myIncomingOffers {
+      id
+      listingId
+      buyerId
+      amount
+      message
+      status
+      expiresAt
+      respondedAt
+      counterAmount
+      counterMessage
+      createdAt
+      buyer { id username avatar }
+      listing {
+        ... on CardListing {
+          id
+          price
+          cardInfo { name imageSmall setName }
+        }
+      }
+    }
+  }
+`;
+
+export const MyOffersDocument = gql`
+  query MyOffers {
+    myOffers {
+      id
+      listingId
+      buyerId
+      amount
+      message
+      status
+      expiresAt
+      respondedAt
+      counterAmount
+      counterMessage
+      createdAt
+      listing {
+        ... on CardListing {
+          id
+          price
+          cardInfo { name imageSmall setName }
+          seller { id username }
+        }
+      }
+    }
+  }
+`;
+
+export const RespondToOfferDocument = gql`
+  mutation RespondToOffer(
+    $offerId: ID!
+    $action: String!
+    $counterAmount: Float
+    $counterMessage: String
+  ) {
+    respondToOffer(
+      offerId: $offerId
+      action: $action
+      counterAmount: $counterAmount
+      counterMessage: $counterMessage
+    ) {
+      ok
+      status
+      orderId
+      totalAmount
+      counterAmount
+    }
+  }
+`;
+
+export const WithdrawOfferDocument = gql`
+  mutation WithdrawOffer($offerId: ID!) {
+    withdrawOffer(offerId: $offerId)
+  }
+`;
+
+// ── Orders ────────────────────────────────────────────────────────────────────
+
+export const MyOrdersDocument = gql`
+  query MyOrders($role: String, $limit: Int) {
+    myOrders(role: $role, limit: $limit) {
+      id
+      orderNumber
+      totalAmount
+      salePrice
+      shippingCost
+      currency
+      paymentStatus
+      fulfilmentStatus
+      trackingNumber
+      trackingCarrier
+      buyerId
+      sellerId
+      createdAt
+      shippedAt
+      completedAt
+      cancelledAt
+      buyer { id username avatar }
+      seller { id username avatar }
+      listing {
+        ... on CardListing {
+          id
+          cardInfo { name imageSmall setName }
+        }
+      }
+    }
+  }
+`;
+
+export const ShipOrderDocument = gql`
+  mutation ShipOrder($id: ID!) {
+    shipOrder(id: $id) {
+      ok
+      trackingNumber
+      trackingUrl
+      labelUrl
+      carrier
+      service
+    }
+  }
+`;
+
+export const ConfirmOrderReceivedDocument = gql`
+  mutation ConfirmOrderReceived($id: ID!) {
+    confirmOrderReceived(id: $id) {
+      id
+      fulfilmentStatus
+      paymentStatus
+      completedAt
+    }
+  }
+`;
+
+export const RaiseOrderDisputeDocument = gql`
+  mutation RaiseOrderDispute($id: ID!, $reason: String!) {
+    raiseOrderDispute(id: $id, reason: $reason) {
+      id
+      fulfilmentStatus
+    }
+  }
+`;
+
+export const CancelOrderDocument = gql`
+  mutation CancelOrder($id: ID!, $reason: String) {
+    cancelOrder(id: $id, reason: $reason) {
+      id
+      fulfilmentStatus
+      paymentStatus
+      cancelledAt
+    }
+  }
+`;
+
+export const LeaveOrderFeedbackDocument = gql`
+  mutation LeaveOrderFeedback($id: ID!, $rating: Int!, $review: String) {
+    leaveOrderFeedback(id: $id, rating: $rating, review: $review)
+  }
+`;
+
+export const ConfirmTradeReceivedDocument = gql`
+  mutation ConfirmTradeReceived($id: ID!) {
+    confirmTradeReceived(id: $id) {
+      id
+      status
+    }
+  }
+`;
+
+export const RaiseTradeDisputeDocument = gql`
+  mutation RaiseTradeDispute($id: ID!, $reason: String!) {
+    raiseTradeDispute(id: $id, reason: $reason) {
+      id
+      status
+    }
+  }
+`;
+
+export const LeaveTradeFleedbackDocument = gql`
+  mutation LeaveTradeFeedback($id: ID!, $rating: Int!, $review: String) {
+    leaveTradeFeedback(id: $id, rating: $rating, review: $review)
+  }
+`;
+
+// ── Seller setup ──────────────────────────────────────────────────────────────
+
+export const SellerStatusDocument = gql`
+  query SellerStatus {
+    sellerStatus {
+      connected
+      complete
+      url
+    }
+  }
+`;
+
+export const SellerAddressDocument = gql`
+  query SellerAddress {
+    sellerAddress {
+      name
+      line1
+      line2
+      city
+      postcode
+      country
+      phone
+      email
+    }
+  }
+`;
+
+export const UpdateSellerAddressDocument = gql`
+  mutation UpdateSellerAddress($input: SellerAddressInput!) {
+    updateSellerAddress(input: $input)
+  }
+`;
+
+export const ConnectStripeDocument = gql`
+  mutation ConnectStripe {
+    connectStripe {
+      accountId
+      url
+      alreadyConnected
+    }
+  }
+`;
+
+export const CreateTopupIntentDocument = gql`
+  mutation CreateTopupIntent($amountPence: Int!) {
+    createTopupIntent(amountPence: $amountPence) {
+      clientSecret
+      paymentIntentId
+    }
+  }
+`;
+
+export const ConfirmTopupDocument = gql`
+  mutation ConfirmTopup($paymentIntentId: String!) {
+    confirmTopup(paymentIntentId: $paymentIntentId) {
+      balance
+      currency
+    }
+  }
+`;
+
+// ── Wallet history & withdrawal ───────────────────────────────────────────────
+
+export const WalletDetailDocument = gql`
+  query WalletDetail($limit: Int, $offset: Int) {
+    myWallet(limit: $limit, offset: $offset) {
+      balance
+      held
+      currency
+      total
+      transactions {
+        id
+        type
+        amount
+        currency
+        status
+        description
+        relatedTradeId
+        createdAt
+      }
+    }
+  }
+`;
+
+export const RequestWithdrawalDocument = gql`
+  mutation RequestWithdrawal(
+    $amountPence: Int!
+    $sortCode: String!
+    $accountNumber: String!
+    $accountName: String
+  ) {
+    requestWithdrawal(
+      amountPence: $amountPence
+      sortCode: $sortCode
+      accountNumber: $accountNumber
+      accountName: $accountName
+    ) {
+      id
+      amount
+      status
+      description
+      createdAt
+    }
+  }
+`;
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+export const MyNotificationsDocument = gql`
+  query MyNotifications($page: Int, $pageSize: Int) {
+    myNotifications(page: $page, pageSize: $pageSize) {
+      notifications {
+        id
+        type
+        title
+        body
+        isRead
+        isDismissed
+        createdAt
+      }
+      total
+      page
+      pageSize
+    }
+  }
+`;
+
+export const UnreadNotificationCountDocument = gql`
+  query UnreadNotificationCount {
+    unreadNotificationCount
+  }
+`;
+
+export const MarkNotificationReadDocument = gql`
+  mutation MarkNotificationRead($id: ID!) {
+    markNotificationRead(id: $id)
+  }
+`;
+
+export const MarkAllNotificationsReadDocument = gql`
+  mutation MarkAllNotificationsRead {
+    markAllNotificationsRead
+  }
+`;
+
+export const DismissNotificationDocument = gql`
+  mutation DismissNotification($id: ID!) {
+    dismissNotification(id: $id)
+  }
+`;
+
+// ── Price Alerts ──────────────────────────────────────────────────────────────
+
+export const MyPriceAlertsDocument = gql`
+  query MyPriceAlerts {
+    myPriceAlerts {
+      id
+      cardId
+      variation
+      condition
+      currency
+      value
+      windowHours
+      cooldownHours
+      isActive
+      lastFiredAt
+      createdAt
+    }
+  }
+`;
+
+export const UpsertPriceAlertDocument = gql`
+  mutation UpsertPriceAlert($input: UpsertPriceAlertInput!) {
+    upsertPriceAlert(input: $input) {
+      id
+      cardId
+      variation
+      condition
+      currency
+      value
+      windowHours
+      cooldownHours
+      isActive
+      createdAt
+    }
+  }
+`;
+
+export const DeletePriceAlertDocument = gql`
+  mutation DeletePriceAlert($id: ID!) {
+    deletePriceAlert(id: $id)
+  }
+`;
+
+export const TogglePriceAlertDocument = gql`
+  mutation TogglePriceAlert($id: ID!, $active: Boolean!) {
+    togglePriceAlert(id: $id, active: $active)
+  }
+`;
+
+// ── Notification preferences ─────────────────────────────────────────────────
+
+export const MyNotificationPrefsDocument = gql`
+  query MyNotificationPrefs {
+    myNotificationPrefs {
+      inappEnabled
+      emailEnabled
+      pushEnabled
+      digest
+      quietStart
+      quietEnd
+    }
+  }
+`;
+
+export const SetNotificationPrefsDocument = gql`
+  mutation SetNotificationPrefs(
+    $inappEnabled: Boolean
+    $emailEnabled: Boolean
+    $pushEnabled: Boolean
+    $digest: String
+    $quietStart: String
+    $quietEnd: String
+  ) {
+    setNotificationPrefs(
+      inappEnabled: $inappEnabled
+      emailEnabled: $emailEnabled
+      pushEnabled: $pushEnabled
+      digest: $digest
+      quietStart: $quietStart
+      quietEnd: $quietEnd
+    )
+  }
+`;
+
+// ── Privacy / account ─────────────────────────────────────────────────────────
+
+export const DeleteAccountDocument = gql`
+  mutation DeleteAccount($password: String, $confirm: String!) {
+    deleteAccount(password: $password, confirm: $confirm)
+  }
+`;
+
+// ── Checkout ──────────────────────────────────────────────────────────────────
+
+export const WalletBalanceDocument = gql`
+  query WalletBalance {
+    myWallet(limit: 0) {
+      balance
+      currency
+    }
+  }
+`;
+
+export const CreateCartOrdersDocument = gql`
+  mutation CreateCartOrders($items: [CartItemInput!]!, $walletAmountPence: Int) {
+    createCartOrders(items: $items, walletAmountPence: $walletAmountPence) {
+      orders {
+        id
+        clientSecret
+        salePrice
+        totalAmount
+        currency
+        walletAmountPence
+      }
+      errors {
+        listingId
+        error
+      }
     }
   }
 `;

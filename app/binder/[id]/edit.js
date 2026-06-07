@@ -94,12 +94,13 @@ function toUiSlot(slot, searchHints) {
   if (!code) return null;
   const label = slot?.label || slot?.name || code.toUpperCase();
   const fromSearch = Boolean(searchHints?.has(code));
+  const image = "";
   return {
     id: slot?.id ? String(slot.id) : code,       // UI id
     _slotId: slot?.id ? String(slot.id) : undefined, // <- persist original slot id for server
     cardId: code,
     code,
-    image: "",
+    image,
     label,
     ...(fromSearch ? { source: "search", notOwned: true } : {}),
   };

@@ -4,31 +4,50 @@ import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 
-export default function PlanCard({ plan, selected, onPress }) {
+export default function PlanCard({ plan, selected, isCurrent, onPress }) {
+  const isFree = plan.price === "Free" || plan.price === "£0";
+
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [
         styles.card,
-        selected && { borderColor: COLORS.accent },
+        selected && styles.cardSelected,
         { opacity: pressed ? 0.95 : 1 },
       ]}
     >
       <View style={styles.header}>
-        <Text style={styles.title}>{plan.name}</Text>
-        {plan.highlighted && <Text style={styles.badge}>Most popular</Text>}
+        <View style={{ flex: 1 }}>
+          <Text style={styles.name}>{plan.name}</Text>
+          {isCurrent && (
+            <Text style={styles.currentLabel}>Current plan</Text>
+          )}
+        </View>
+        <View style={{ alignItems: "flex-end", gap: 4 }}>
+          {plan.highlighted && !isCurrent && (
+            <View style={styles.popularBadge}>
+              <Text style={styles.popularText}>Most popular</Text>
+            </View>
+          )}
+          {isCurrent && (
+            <View style={styles.activeBadge}>
+              <Text style={styles.activeBadgeText}>Active</Text>
+            </View>
+          )}
+        </View>
       </View>
-      <View style={styles.priceRow}>
-        <Text style={styles.price}>{plan.price}</Text>
-        {!!plan.period && <Text style={styles.period}>{plan.period}</Text>}
-      </View>
-      <Text style={styles.pitch}>
-        {plan.features.filter(f => f.included).slice(0, 2).map(f => f.label).join(" • ")}
-        {plan.features.filter(f => f.included).length > 2 ? " • +" : ""}
+
+      <Text style={styles.price}>{plan.price}</Text>
+
+      <Text style={styles.pitch} numberOfLines={2}>
+        {plan.features.filter((f) => f.included).slice(0, 3).map((f) => f.label).join(" • ")}
       </Text>
-      <View style={styles.cta}>
-        <Text style={styles.ctaText}>{selected ? "Selected" : plan.cta}</Text>
-      </View>
+
+      {selected && !isFree && (
+        <View style={styles.selectedIndicator}>
+          <Text style={styles.selectedIndicatorText}>Selected — tap below to subscribe</Text>
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -40,28 +59,66 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 14,
     padding: 14,
+    gap: 6,
   },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  title: { color: COLORS.text, fontWeight: "900", fontSize: 16 },
-  badge: {
-    color: "#fff",
+  cardSelected: {
+    borderColor: COLORS.accent,
+    borderWidth: 2,
+    backgroundColor: `${COLORS.surface}`,
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  name: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 16,
+  },
+  currentLabel: {
+    color: COLORS.accent,
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  popularBadge: {
     backgroundColor: COLORS.accent,
-    paddingHorizontal: 8, paddingVertical: 4,
     borderRadius: 999,
-    fontWeight: "900", fontSize: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
-  priceRow: { flexDirection: "row", alignItems: "flex-end", marginTop: 8 },
-  price: { color: COLORS.text, fontWeight: "900", fontSize: 22 },
-  period: { color: COLORS.textMuted, marginLeft: 6 },
-  pitch: { color: COLORS.textMuted, marginTop: 6 },
-  cta: {
-    marginTop: 12,
-    borderRadius: 10,
+  popularText: { color: "#fff", fontWeight: "900", fontSize: 11 },
+  activeBadge: {
+    backgroundColor: "rgba(16,185,129,0.15)",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.alt,
-    alignItems: "center",
-    paddingVertical: 10,
+    borderColor: "rgba(16,185,129,0.4)",
   },
-  ctaText: { color: COLORS.text, fontWeight: "800" },
+  activeBadgeText: { color: "#10b981", fontWeight: "900", fontSize: 11 },
+  price: {
+    color: COLORS.text,
+    fontWeight: "900",
+    fontSize: 22,
+  },
+  pitch: {
+    color: COLORS.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  selectedIndicator: {
+    marginTop: 4,
+    backgroundColor: `rgba(99,102,241,0.08)`,
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  selectedIndicatorText: {
+    color: COLORS.accent,
+    fontSize: 12,
+    fontWeight: "700",
+    textAlign: "center",
+  },
 });

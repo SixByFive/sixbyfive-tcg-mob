@@ -16,6 +16,13 @@
 
 import { useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useMutation } from "@apollo/client";
+import {
+  MyNotificationsDocument,
+  MarkNotificationReadDocument,
+  MarkAllNotificationsReadDocument,
+  DismissNotificationDocument,
+} from "../../graphql/documents";
 import {
   FlatList,
   Pressable,
@@ -27,7 +34,6 @@ import {
 } from "react-native";
 
 import PageHeader from "../../components/common/PageHeader";
-import SwipeRow from "../../components/lists/SwipeRow";
 import { COLORS } from "../../theme/colors";
 
 import { useFocusEffect } from "@react-navigation/native";
@@ -41,6 +47,36 @@ import Avatar from "../../components/common/Avatar";
 // ✅ NEW: base URL for resolving "/uploads/..."
 const ASSET_BASE_URL =
   process.env.EXPO_PUBLIC_ASSET_BASE_URL || "https://backendtcg.sixbyfive.com";
+
+/* -------------------------
+   Notification helpers
+------------------------- */
+
+const NOTIF_ICONS = {
+  message:     "💬",
+  trade:       "↕️",
+  order:       "📦",
+  offer:       "🏷️",
+  price_alert: "🔔",
+  system:      "📢",
+  broadcast:   "📣",
+};
+function iconFor(type) {
+  return NOTIF_ICONS[type] ?? "🔔";
+}
+
+function timeAgo(dateStr) {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
 
 /* -------------------------
    Helpers
@@ -123,7 +159,22 @@ export default function MessagesTab() {
   const [segment, setSegment] = useState("dms");
   const [query, setQuery] = useState("");
 
-  const [notifs, setNotifs] = useState([]);
+  const {
+    data: notifData,
+    loading: notifLoading,
+    refetch: refetchNotifs,
+  } = useQuery(MyNotificationsDocument, {
+    variables: { page: 1, pageSize: 50 },
+    fetchPolicy: "cache-and-network",
+  });
+  const [markRead]    = useMutation(MarkNotificationReadDocument);
+  const [markAllRead] = useMutation(MarkAllNotificationsReadDocument);
+  const [dismiss]     = useMutation(DismissNotificationDocument);
+
+  const notifications = useMemo(() => {
+    const all = notifData?.myNotifications?.notifications ?? [];
+    return all.filter((n) => !n.isDismissed);
+  }, [notifData]);
 
   const [refreshing, setRefreshing] = useState(false);
   const [newModalOpen, setNewModalOpen] = useState(false);
@@ -137,10 +188,10 @@ export default function MessagesTab() {
     [],
   );
 
-  const unreadNotifs = useMemo(() => {
-    const list = Array.isArray(notifs) ? notifs : [];
-    return list.reduce((a, c) => a + (c?.unread ? 1 : 0), 0);
-  }, [notifs]);
+  const unreadNotifs = useMemo(
+    () => notifications.filter((n) => !n.isRead).length,
+    [notifications]
+  );
 
   const unreadTotal = Number(unreadCount || 0) + unreadNotifs;
 
@@ -161,39 +212,33 @@ export default function MessagesTab() {
     useCallback(() => {
       refreshChats?.();
       refreshUnread?.();
-    }, [refreshChats, refreshUnread]),
+      refetchNotifs();
+    }, [refreshChats, refreshUnread, refetchNotifs]),
   );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    Promise.allSettled([refreshChats?.(), refreshUnread?.()]).finally(() => {
+    Promise.allSettled([refreshChats?.(), refreshUnread?.(), refetchNotifs()]).finally(() => {
       setTimeout(() => setRefreshing(false), 250);
     });
-  }, [refreshChats, refreshUnread]);
+  }, [refreshChats, refreshUnread, refetchNotifs]);
 
-  const markAllSystemRead = useCallback(() => {
-    setNotifs((prev) => {
-      const list = Array.isArray(prev) ? prev : [];
-      if (!list.length) return list;
-      return list.map((n) => ({ ...n, unread: false }));
-    });
-  }, []);
+  const markAllSystemRead = useCallback(async () => {
+    await markAllRead();
+    refetchNotifs();
+  }, [markAllRead, refetchNotifs]);
 
-  const toggleRead = useCallback((id) => {
+  const handleMarkRead = useCallback(async (id) => {
     if (!id) return;
-    setNotifs((prev) => {
-      const list = Array.isArray(prev) ? prev : [];
-      return list.map((n) => (n?.id === id ? { ...n, unread: !n.unread } : n));
-    });
-  }, []);
+    await markRead({ variables: { id } });
+    refetchNotifs();
+  }, [markRead, refetchNotifs]);
 
-  const clearNotif = useCallback((id) => {
+  const clearNotif = useCallback(async (id) => {
     if (!id) return;
-    setNotifs((prev) => {
-      const list = Array.isArray(prev) ? prev : [];
-      return list.filter((n) => n?.id !== id);
-    });
-  }, []);
+    await dismiss({ variables: { id } });
+    refetchNotifs();
+  }, [dismiss, refetchNotifs]);
 
   const filteredChats = useMemo(() => {
     const q = safeString(query).toLowerCase();
@@ -207,10 +252,10 @@ export default function MessagesTab() {
     });
   }, [chats, query]);
 
-  const data = segment === "dms" ? filteredChats : notifs;
+  const data = segment === "dms" ? filteredChats : notifications;
 
   const isSystemEmpty =
-    segment === "system" && (!Array.isArray(notifs) || notifs.length === 0);
+    segment === "system" && !notifLoading && notifications.length === 0;
 
   // Recent users for modal (deduped)
   const recentUsers = useMemo(() => {
@@ -476,25 +521,31 @@ export default function MessagesTab() {
                   ) : null}
                 </Pressable>
               ) : (
-                <SwipeRow
-                  rightActions={[
-                    {
-                      label: item?.unread ? "Mark read" : "Mark unread",
-                      type: "primary",
-                      onPress: () => toggleRead(item?.id),
-                    },
-                    {
-                      label: "Clear",
-                      type: "danger",
-                      onPress: () => clearNotif(item?.id),
-                    },
-                  ]}
+                <Pressable
+                  onPress={() => handleMarkRead(item.id)}
+                  style={[styles.notifCard, !item.isRead && styles.notifCardUnread]}
                 >
-                  <View style={styles.notifCard}>
-                    <Text style={styles.cardTitle}>{item?.title}</Text>
-                    <Text style={styles.cardBody}>{item?.body}</Text>
+                  <View style={styles.notifIconWrap}>
+                    <Text style={{ fontSize: 18 }}>{iconFor(item.type)}</Text>
                   </View>
-                </SwipeRow>
+                  <View style={{ flex: 1 }}>
+                    {item.title ? (
+                      <Text style={styles.notifTitle}>{item.title}</Text>
+                    ) : null}
+                    {item.body ? (
+                      <Text style={styles.notifBody}>{item.body}</Text>
+                    ) : null}
+                    <Text style={styles.notifTime}>{timeAgo(item.createdAt)}</Text>
+                  </View>
+                  {!item.isRead && <View style={styles.unreadDot} />}
+                  <Pressable
+                    onPress={() => clearNotif(item.id)}
+                    hitSlop={10}
+                    style={styles.dismissBtn}
+                  >
+                    <Text style={styles.dismissText}>✕</Text>
+                  </Pressable>
+                </Pressable>
               )
             }
           />
@@ -595,14 +646,40 @@ const styles = StyleSheet.create({
   badgeText: { color: "#fff", fontWeight: "900", fontSize: 12 },
 
   notifCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
     backgroundColor: COLORS.surface,
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  cardTitle: { color: COLORS.text, fontWeight: "900" },
-  cardBody: { color: COLORS.textSecondary, marginTop: 6 },
+  notifCardUnread: {
+    borderColor: COLORS.accent + "44",
+    backgroundColor: COLORS.accent + "0A",
+  },
+  notifIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: COLORS.alt,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  notifTitle: { color: COLORS.text, fontWeight: "800", fontSize: 14, marginBottom: 2 },
+  notifBody: { color: COLORS.textMuted, fontSize: 13, lineHeight: 18 },
+  notifTime: { color: COLORS.textMuted, fontSize: 11, marginTop: 4 },
+  unreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.accent,
+    marginTop: 6,
+    flexShrink: 0,
+  },
+  dismissBtn: { padding: 4 },
+  dismissText: { color: COLORS.textMuted, fontSize: 13 },
 
   emptyWrap: {
     marginHorizontal: 16,

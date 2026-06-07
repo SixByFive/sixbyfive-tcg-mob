@@ -125,6 +125,8 @@ function normalizeOneSlot(s) {
   if (!code) return null;
   const direct =
     s?.image ??
+    get(s, "card.image_small") ??
+    get(s, "card.image_large") ??
     get(s, "card.image") ??
     get(s, "card.imageUrl") ??
     get(s, "card.images.small") ??

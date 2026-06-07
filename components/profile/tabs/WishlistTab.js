@@ -24,6 +24,7 @@ import {
   FlatList,
   Image,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -522,6 +523,7 @@ export default function WishlistTab({
   title = "Wishlist",
   items = [],
   userId,
+  username,
   onOpenCard,
   onViewAll,
   pageSize = 24,
@@ -859,11 +861,26 @@ export default function WishlistTab({
       {/* Title row */}
       <View style={styles.headerRow}>
         <Text style={styles.cardTitle}>{title}</Text>
-        {typeof onViewAll === "function" ? (
-          <Pressable onPress={onViewAll} hitSlop={8}>
-            <Text style={styles.viewAll}>View all →</Text>
-          </Pressable>
-        ) : null}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          {username ? (
+            <Pressable
+              hitSlop={8}
+              onPress={() =>
+                Share.share({
+                  title: `${username}'s wishlist · SixByFive TCG`,
+                  message: `Check out what ${username} is hunting for!\nhttps://sixbyfive.co.uk/profile/${encodeURIComponent(username)}`,
+                })
+              }
+            >
+              <Text style={styles.shareBtn}>Share ↗</Text>
+            </Pressable>
+          ) : null}
+          {typeof onViewAll === "function" ? (
+            <Pressable onPress={onViewAll} hitSlop={8}>
+              <Text style={styles.viewAll}>View all →</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       {/* Bar directly under title */}
@@ -1024,6 +1041,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: { color: COLORS.text, fontWeight: "900" },
   viewAll: { color: COLORS.accent, fontWeight: "800" },
+  shareBtn: { color: COLORS.textMuted, fontWeight: "700", fontSize: 13 },
   bodyText: { color: COLORS.text },
 
   // 2-column grid (matches CardsTab proportions)

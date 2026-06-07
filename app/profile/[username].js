@@ -28,6 +28,7 @@ import BindersTab from "../../components/profile/tabs/BindersTab";
 import CardsTab from "../../components/profile/tabs/CardsTab";
 import OverviewTab from "../../components/profile/tabs/OverviewTab";
 import WishlistTab from "../../components/profile/tabs/WishlistTab";
+import ProfileListingsTab from "../../components/profile/tabs/ProfileListingsTab";
 import { COLORS } from "../../theme/colors";
 
 /* ---------- Home Hub persistence key (must match home.js strings) ---------- */
@@ -113,7 +114,8 @@ function normalizeTabValue(value) {
     lower === "overview" ||
     lower === "cards" ||
     lower === "binders" ||
-    lower === "wishlist"
+    lower === "wishlist" ||
+    lower === "listings"
   ) {
     return lower;
   }
@@ -122,6 +124,7 @@ function normalizeTabValue(value) {
   if (lower.includes("card")) return "cards";
   if (lower.includes("binder")) return "binders";
   if (lower.includes("wish")) return "wishlist";
+  if (lower.includes("listing")) return "listings";
 
   return "overview";
 }
@@ -271,10 +274,11 @@ export default function PublicProfile() {
   }
 
   const tabs = [
-    { key: "overview", label: "Overview" },
-    { key: "cards", label: "Cards" },
-    { key: "binders", label: "Binders" },
-    { key: "wishlist", label: "Wishlist" },
+    { key: "overview",  label: "Overview" },
+    { key: "cards",     label: "Cards" },
+    { key: "binders",   label: "Binders" },
+    { key: "wishlist",  label: "Wishlist" },
+    { key: "listings",  label: "Listings" },
   ];
 
   const isRefreshing = networkStatus === 4;
@@ -351,6 +355,7 @@ export default function PublicProfile() {
           <WishlistTab
             items={vm.wishlistPreview}
             userId={vm.id}
+            username={vm.username}
             onOpenCard={(card) =>
               router.push({
                 pathname: "/card/[id]",
@@ -365,6 +370,10 @@ export default function PublicProfile() {
               })
             }
           />
+        )}
+
+        {activeTab === "listings" && (
+          <ProfileListingsTab userId={vm.id} username={vm.username} />
         )}
 
         <View style={{ height: 28 }} />

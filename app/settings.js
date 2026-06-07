@@ -13,7 +13,12 @@
 // - Still uses ../lib/push helpers for local persistence + Android channel config.
 // - Uses expo-notifications ONLY for permission status reads (no prompts unless enabling).
 
-import { gql, useApolloClient } from "@apollo/client";
+import { gql, useMutation, useApolloClient } from "@apollo/client";
+import {
+  DeleteAccountDocument,
+  MyNotificationPrefsDocument,
+  SetNotificationPrefsDocument,
+} from "../graphql/documents";
 import Constants from "expo-constants";
 import React, {
   useCallback,
@@ -24,6 +29,7 @@ import React, {
 } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Easing,
   Image,
@@ -41,8 +47,12 @@ import {
 // ADD: permission status reads (no prompt unless you call requestPermissionsAsync)
 import * as Notifications from "expo-notifications";
 
+import { router } from "expo-router";
 import PageHeaderBackSimple from "../components/common/PageHeaderBackSimple";
+import WalletSheet from "../components/wallet/WalletSheet";
+import PriceAlertsSheet from "../components/alerts/PriceAlertsSheet";
 import { COLORS } from "../theme/colors";
+import { clearToken, clearRefreshToken, getToken } from "../lib/auth";
 
 // Notification prefs + permissions helpers
 import {
@@ -268,6 +278,14 @@ function formatDobInputSlashes(raw) {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+function formatTimeInput(raw) {
+  const digits = raw.replace(/\D/g, "").slice(0, 4);
+  const hh = digits.slice(0, 2);
+  const mm = digits.slice(2, 4);
+  if (digits.length <= 2) return hh;
+  return `${hh}:${mm}`;
+}
+
 function parseUkDobToIso(input) {
   if (!input) return "";
   const s = String(input).trim();
@@ -410,6 +428,13 @@ export default function Settings() {
 
   const openURL = (url) => Linking.openURL(url).catch(() => {});
   const appVersion = Constants.expoConfig?.version ?? "1.0.0";
+
+  async function handleSignOut() {
+    await clearToken();
+    await clearRefreshToken();
+    await client.clearStore();
+    router.replace("/auth");
+  }
 
   // Local user snapshot
   const [user, setUser] = useState(null);
@@ -978,6 +1003,32 @@ export default function Settings() {
     }
   }
 
+  const [showWallet, setShowWallet] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
+
+  // Privacy & account deletion
+  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [deleteFields, setDeleteFields] = useState({ confirm: "", password: "" });
+  const [deleteStatus, setDeleteStatus] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const [deleteAccount] = useMutation(DeleteAccountDocument);
+
+  // ── Email & push notification prefs (server-side) ──────────────────────────
+  const [notifPrefsForm, setNotifPrefsForm] = useState({
+    emailEnabled: true,
+    pushEnabled:  true,
+    inappEnabled: true,
+    digest: null,          // null | "daily" | "weekly"
+    quietHours: false,     // UI toggle derived from quietStart/quietEnd presence
+    quietStart: "22:00",
+    quietEnd:   "07:00",
+  });
+  const [notifPrefsLoading, setNotifPrefsLoading] = useState(true);
+  const [notifPrefsSaving,  setNotifPrefsSaving]  = useState(false);
+  const [notifPrefsStatus,  setNotifPrefsStatus]  = useState(null);
+  const [saveNotifPrefsMutation] = useMutation(SetNotificationPrefsDocument);
+
   const [show2FA, setShow2FA] = useState(false);
   const [twoFA, setTwoFA] = useState({
     enabled: !!user?.twoFactorEnabled,
@@ -1098,12 +1149,222 @@ export default function Settings() {
     }
   }
 
+  /* =============================================================================
+     DISCORD OAUTH LINKING
+  ============================================================================= */
+
+  // Derive REST base from GraphQL endpoint (strip /graphql suffix)
+  const AUTH_BASE = (() => {
+    const extra = Constants.expoConfig?.extra ?? {};
+    const gql =
+      extra.EXPO_PUBLIC_GRAPHQL_ENDPOINT ||
+      process.env.EXPO_PUBLIC_GRAPHQL_ENDPOINT ||
+      "https://backendtcg.sixbyfive.com/graphql";
+    return gql.replace(/\/graphql$/, "");
+  })();
+
+  const [showDiscord, setShowDiscord] = useState(false);
+  const [discordStatus, setDiscordStatus] = useState({
+    loading: true,
+    linked: false,
+    username: null,
+    avatar: null,
+    linkedAt: null,
+    awaitingCallback: false,
+    error: null,
+  });
+
+  const loadDiscordStatus = useCallback(async () => {
+    setDiscordStatus((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const token = await getToken();
+      const res = await fetch(`${AUTH_BASE}/auth/discord`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setDiscordStatus((s) => ({
+        ...s,
+        loading: false,
+        linked: !!json.linked,
+        username: json.discordUsername ?? null,
+        avatar: json.avatar ?? null,
+        linkedAt: json.linkedAt ?? null,
+        awaitingCallback: false,
+      }));
+    } catch (e) {
+      setDiscordStatus((s) => ({
+        ...s,
+        loading: false,
+        error: e.message || "Could not load Discord status.",
+      }));
+    }
+  }, [AUTH_BASE]);
+
+  // Load on mount
+  useEffect(() => {
+    loadDiscordStatus();
+  }, [loadDiscordStatus]);
+
+  async function handleConnectDiscord() {
+    setDiscordStatus((s) => ({ ...s, error: null }));
+    try {
+      const token = await getToken();
+      const res = await fetch(`${AUTH_BASE}/auth/discord/start-url`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (!json.url) throw new Error("Could not get Discord authorisation URL.");
+      await Linking.openURL(json.url);
+      // Mark awaiting so we show the "check" button
+      setDiscordStatus((s) => ({ ...s, awaitingCallback: true }));
+    } catch (e) {
+      setDiscordStatus((s) => ({
+        ...s,
+        error: e.message || "Failed to start Discord linking.",
+      }));
+    }
+  }
+
+  async function handleUnlinkDiscord() {
+    Alert.alert(
+      "Unlink Discord?",
+      "Your Discord account will be disconnected. You can re-link at any time.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Unlink",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const token = await getToken();
+              await fetch(`${AUTH_BASE}/auth/discord/unlink`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              loadDiscordStatus();
+            } catch (e) {
+              setDiscordStatus((s) => ({
+                ...s,
+                error: e.message || "Failed to unlink Discord.",
+              }));
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  /* =============================================================================
+     EMAIL & PUSH NOTIFICATION PREFERENCES
+  ============================================================================= */
+
+  // Load server prefs on mount
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setNotifPrefsLoading(true);
+      try {
+        const { data } = await client.query({
+          query: MyNotificationPrefsDocument,
+          fetchPolicy: "network-only",
+        });
+        const p = data?.myNotificationPrefs;
+        if (p && mounted) {
+          setNotifPrefsForm({
+            emailEnabled: p.emailEnabled !== false,
+            pushEnabled:  p.pushEnabled  !== false,
+            inappEnabled: p.inappEnabled !== false,
+            digest:       p.digest ?? null,
+            quietHours:   !!(p.quietStart && p.quietEnd),
+            quietStart:   p.quietStart ?? "22:00",
+            quietEnd:     p.quietEnd   ?? "07:00",
+          });
+        }
+      } catch (_) {
+        // Non-fatal — use defaults
+      } finally {
+        if (mounted) setNotifPrefsLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleSaveNotifPrefs() {
+    setNotifPrefsStatus(null);
+    setNotifPrefsSaving(true);
+    try {
+      await saveNotifPrefsMutation({
+        variables: {
+          emailEnabled: notifPrefsForm.emailEnabled,
+          pushEnabled:  notifPrefsForm.pushEnabled,
+          inappEnabled: notifPrefsForm.inappEnabled,
+          digest:       notifPrefsForm.digest ?? null,
+          quietStart:   notifPrefsForm.quietHours ? notifPrefsForm.quietStart : null,
+          quietEnd:     notifPrefsForm.quietHours ? notifPrefsForm.quietEnd   : null,
+        },
+        fetchPolicy: "no-cache",
+      });
+      setNotifPrefsStatus({ type: "success", message: "Notification preferences saved." });
+    } catch (err) {
+      setNotifPrefsStatus({
+        type: "error",
+        message: err?.message || "Failed to save preferences.",
+      });
+    } finally {
+      setNotifPrefsSaving(false);
+    }
+  }
+
+  /* =============================================================================
+     ACCOUNT DELETION
+  ============================================================================= */
+
+  async function handleDeleteAccount() {
+    setDeleteStatus(null);
+    if (deleteFields.confirm !== "DELETE") {
+      setDeleteStatus({ type: "error", message: 'Type "DELETE" exactly to confirm.' });
+      return;
+    }
+    if (!isOAuth && !deleteFields.password) {
+      setDeleteStatus({ type: "error", message: "Enter your current password." });
+      return;
+    }
+    setDeleteLoading(true);
+    try {
+      const { data: res } = await deleteAccount({
+        variables: {
+          confirm: "DELETE",
+          password: isOAuth ? undefined : deleteFields.password,
+        },
+        fetchPolicy: "no-cache",
+      });
+      if (res?.deleteAccount) {
+        await clearToken();
+        await clearRefreshToken();
+        await client.clearStore();
+        router.replace("/auth");
+      } else {
+        throw new Error("Account deletion failed.");
+      }
+    } catch (err) {
+      setDeleteStatus({
+        type: "error",
+        message: err?.message || "Failed to delete account.",
+      });
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.background }}>
       <PageHeaderBackSimple
         title="Settings"
         subtitle="Account, Notifications & Preferences"
       />
+      <WalletSheet visible={showWallet} onClose={() => setShowWallet(false)} />
+      <PriceAlertsSheet visible={showAlerts} onClose={() => setShowAlerts(false)} />
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
 
       {/* =========================
@@ -1253,6 +1514,170 @@ export default function Settings() {
               ) : null}
             </View>
           </Collapsible>
+        </View>
+      </View>
+
+      {/* =========================
+          Email & Notification Preferences
+      ========================= */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Email & Notifications</Text>
+
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Notification channels</Text>
+          <Text style={styles.cardBody}>
+            Control which channels we use to reach you.
+          </Text>
+
+          {notifPrefsLoading ? (
+            <ActivityIndicator color={COLORS.accent} style={{ marginTop: 12, alignSelf: "flex-start" }} />
+          ) : (
+            <View style={{ gap: 10, marginTop: 12 }}>
+
+              {/* Email */}
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleTitle}>Email notifications</Text>
+                  <Text style={styles.toggleSub}>Trade updates, order status, price alerts</Text>
+                </View>
+                <Switch
+                  value={!!notifPrefsForm.emailEnabled}
+                  onValueChange={(v) => setNotifPrefsForm((f) => ({ ...f, emailEnabled: v }))}
+                />
+              </View>
+
+              {/* Push */}
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleTitle}>Push notifications</Text>
+                  <Text style={styles.toggleSub}>Messages, offers and activity alerts</Text>
+                </View>
+                <Switch
+                  value={!!notifPrefsForm.pushEnabled}
+                  onValueChange={(v) => setNotifPrefsForm((f) => ({ ...f, pushEnabled: v }))}
+                />
+              </View>
+
+              {/* In-app */}
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleTitle}>In-app notifications</Text>
+                  <Text style={styles.toggleSub}>Alerts shown while using the app</Text>
+                </View>
+                <Switch
+                  value={!!notifPrefsForm.inappEnabled}
+                  onValueChange={(v) => setNotifPrefsForm((f) => ({ ...f, inappEnabled: v }))}
+                />
+              </View>
+
+              {/* Digest */}
+              <View style={{ gap: 6 }}>
+                <Text style={styles.inputLabel}>Email digest</Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  {[
+                    { label: "Off",    value: null },
+                    { label: "Daily",  value: "daily" },
+                    { label: "Weekly", value: "weekly" },
+                  ].map((opt) => (
+                    <Pressable
+                      key={String(opt.value)}
+                      onPress={() => setNotifPrefsForm((f) => ({ ...f, digest: opt.value }))}
+                      style={[
+                        styles.btn,
+                        notifPrefsForm.digest === opt.value
+                          ? styles.btnPrimary
+                          : styles.btnSecondary,
+                        { flex: 1 },
+                      ]}
+                    >
+                      <Text
+                        style={
+                          notifPrefsForm.digest === opt.value
+                            ? styles.btnPrimaryText
+                            : styles.btnSecondaryText
+                        }
+                      >
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              {/* Quiet hours */}
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleTitle}>Quiet hours</Text>
+                  <Text style={styles.toggleSub}>Pause push during set times</Text>
+                </View>
+                <Switch
+                  value={!!notifPrefsForm.quietHours}
+                  onValueChange={(v) => setNotifPrefsForm((f) => ({ ...f, quietHours: v }))}
+                />
+              </View>
+
+              {notifPrefsForm.quietHours && (
+                <View style={{ flexDirection: "row", gap: 12 }}>
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <Text style={styles.inputLabel}>Start (HH:MM)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={notifPrefsForm.quietStart}
+                      onChangeText={(v) =>
+                        setNotifPrefsForm((f) => ({
+                          ...f,
+                          quietStart: formatTimeInput(v),
+                        }))
+                      }
+                      placeholder="22:00"
+                      placeholderTextColor={COLORS.textMuted}
+                      keyboardType="number-pad"
+                      maxLength={5}
+                    />
+                  </View>
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <Text style={styles.inputLabel}>End (HH:MM)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={notifPrefsForm.quietEnd}
+                      onChangeText={(v) =>
+                        setNotifPrefsForm((f) => ({
+                          ...f,
+                          quietEnd: formatTimeInput(v),
+                        }))
+                      }
+                      placeholder="07:00"
+                      placeholderTextColor={COLORS.textMuted}
+                      keyboardType="number-pad"
+                      maxLength={5}
+                    />
+                  </View>
+                </View>
+              )}
+
+              {/* Save */}
+              <Pressable
+                onPress={handleSaveNotifPrefs}
+                disabled={notifPrefsSaving}
+                style={[styles.btn, styles.btnPrimary, notifPrefsSaving && styles.btnDisabled]}
+              >
+                {notifPrefsSaving ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.btnPrimaryText}>Save preferences</Text>
+                )}
+              </Pressable>
+
+              {notifPrefsStatus ? (
+                <StatusBanner
+                  type={notifPrefsStatus.type}
+                  message={notifPrefsStatus.message}
+                  onClose={() => setNotifPrefsStatus(null)}
+                />
+              ) : null}
+
+            </View>
+          )}
         </View>
       </View>
 
@@ -1704,6 +2129,130 @@ export default function Settings() {
           ) : null}
         </Collapsible>
 
+        {/* Discord linking */}
+        <Pressable
+          style={styles.rowBtn}
+          onPress={() => setShowDiscord((s) => !s)}
+        >
+          <Text style={styles.label}>Discord</Text>
+          <Text style={styles.value}>
+            {discordStatus.linked
+              ? `@${discordStatus.username || "linked"}`
+              : showDiscord
+              ? "Close"
+              : "Connect"}
+          </Text>
+        </Pressable>
+
+        <Collapsible open={showDiscord}>
+          {discordStatus.loading ? (
+            <ActivityIndicator
+              color={COLORS.accent}
+              style={{ alignSelf: "flex-start", marginVertical: 8 }}
+            />
+          ) : discordStatus.linked ? (
+            <View style={{ gap: 10 }}>
+              <View style={styles.discordLinkedRow}>
+                <View style={styles.discordAvatar}>
+                  <Text style={{ fontSize: 22 }}>🎮</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.discordUsername}>
+                    @{discordStatus.username || "Discord account"}
+                  </Text>
+                  {discordStatus.linkedAt ? (
+                    <Text style={styles.discordMeta}>
+                      Linked{" "}
+                      {new Date(discordStatus.linkedAt).toLocaleDateString(
+                        "en-GB",
+                        { day: "numeric", month: "short", year: "numeric" }
+                      )}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+
+              <Text style={styles.helpText}>
+                Your Discord account is connected. You can share your
+                collection to servers and use the SixByFive bot.
+              </Text>
+
+              <Pressable
+                onPress={handleUnlinkDiscord}
+                style={[
+                  styles.btn,
+                  styles.btnSecondary,
+                  { borderColor: "rgba(239,68,68,0.3)" },
+                ]}
+              >
+                <Text style={[styles.btnSecondaryText, { color: "#ef4444" }]}>
+                  Unlink Discord
+                </Text>
+              </Pressable>
+
+              {discordStatus.error ? (
+                <StatusBanner
+                  type="error"
+                  message={discordStatus.error}
+                  onClose={() =>
+                    setDiscordStatus((s) => ({ ...s, error: null }))
+                  }
+                />
+              ) : null}
+            </View>
+          ) : (
+            <View style={{ gap: 10 }}>
+              <Text style={styles.helpText}>
+                Link your Discord account to share your collection to servers,
+                use the SixByFive bot, and unlock community features.
+              </Text>
+
+              {discordStatus.error ? (
+                <StatusBanner
+                  type="error"
+                  message={discordStatus.error}
+                  onClose={() =>
+                    setDiscordStatus((s) => ({ ...s, error: null }))
+                  }
+                />
+              ) : null}
+
+              <Pressable
+                onPress={handleConnectDiscord}
+                style={[
+                  styles.btn,
+                  {
+                    backgroundColor: "#5865F2",
+                    flexDirection: "row",
+                    gap: 8,
+                    justifyContent: "center",
+                  },
+                ]}
+              >
+                <Text style={{ fontSize: 16 }}>🎮</Text>
+                <Text style={styles.btnPrimaryText}>Connect Discord</Text>
+              </Pressable>
+
+              {discordStatus.awaitingCallback && (
+                <>
+                  <Text style={styles.helpText}>
+                    Complete the authorisation in your browser, then tap below
+                    to confirm.
+                  </Text>
+                  <Pressable
+                    onPress={loadDiscordStatus}
+                    style={[styles.btn, styles.btnSecondary]}
+                  >
+                    <Text style={styles.btnSecondaryText}>
+                      ✓ I've connected — check status
+                    </Text>
+                  </Pressable>
+                </>
+              )}
+            </View>
+          )}
+        </Collapsible>
+
         <Pressable
           style={styles.rowBtn}
           onPress={() => setShowEmail((s) => !s)}
@@ -1891,15 +2440,178 @@ export default function Settings() {
         </Collapsible>
       </View>
 
+      {/* =========================
+          Privacy & Data
+      ========================= */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Help & Legal</Text>
+        <Text style={styles.sectionTitle}>Privacy & Data</Text>
+
+        <Pressable
+          style={styles.rowBtn}
+          onPress={() =>
+            openURL(
+              "mailto:support@sixbyfive.com?subject=Data%20Export%20Request&body=Please%20send%20me%20a%20copy%20of%20my%20data."
+            )
+          }
+        >
+          <Text style={styles.label}>Request data export</Text>
+          <Text style={styles.value}>Email us</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.rowBtn}
+          onPress={() => setShowPrivacy((s) => !s)}
+        >
+          <Text style={[styles.label, { color: "#ef4444" }]}>
+            Delete account
+          </Text>
+          <Text style={styles.value}>{showPrivacy ? "Close" : "Open"}</Text>
+        </Pressable>
+
+        <Collapsible open={showPrivacy}>
+          <View style={{ gap: 10 }}>
+            <View
+              style={{
+                borderWidth: 1,
+                borderColor: "rgba(239,68,68,0.3)",
+                backgroundColor: "rgba(239,68,68,0.06)",
+                borderRadius: 12,
+                padding: 12,
+              }}
+            >
+              <Text
+                style={{ color: "#ef4444", fontWeight: "800", fontSize: 13 }}
+              >
+                ⚠️ This is permanent and cannot be undone.
+              </Text>
+              <Text
+                style={{
+                  color: COLORS.textMuted,
+                  fontSize: 12,
+                  marginTop: 4,
+                  lineHeight: 17,
+                }}
+              >
+                Your collection, binders, trades, and messages will be deleted.
+                Any wallet balance will be forfeited.
+              </Text>
+            </View>
+
+            <Text style={styles.inputLabel}>
+              Type DELETE to confirm
+            </Text>
+            <TextInput
+              value={deleteFields.confirm}
+              onChangeText={(t) =>
+                setDeleteFields((f) => ({ ...f, confirm: t }))
+              }
+              placeholder="DELETE"
+              placeholderTextColor={COLORS.textMuted}
+              style={[
+                styles.input,
+                deleteFields.confirm === "DELETE" && {
+                  borderColor: "#ef444455",
+                },
+              ]}
+              autoCapitalize="characters"
+              autoCorrect={false}
+            />
+
+            {!isOAuth && (
+              <>
+                <Text style={styles.inputLabel}>Current password</Text>
+                <TextInput
+                  value={deleteFields.password}
+                  onChangeText={(t) =>
+                    setDeleteFields((f) => ({ ...f, password: t }))
+                  }
+                  placeholder="Your password"
+                  placeholderTextColor={COLORS.textMuted}
+                  secureTextEntry
+                  style={styles.input}
+                  autoComplete="password"
+                />
+              </>
+            )}
+
+            <Pressable
+              onPress={handleDeleteAccount}
+              disabled={
+                deleteLoading || deleteFields.confirm !== "DELETE"
+              }
+              style={[
+                styles.btn,
+                {
+                  backgroundColor: "#ef4444",
+                  opacity:
+                    deleteLoading || deleteFields.confirm !== "DELETE"
+                      ? 0.4
+                      : 1,
+                },
+              ]}
+            >
+              {deleteLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.btnPrimaryText}>
+                  Permanently delete my account
+                </Text>
+              )}
+            </Pressable>
+
+            {deleteStatus ? (
+              <View style={{ marginTop: 4 }}>
+                <StatusBanner
+                  type={deleteStatus.type}
+                  message={deleteStatus.message}
+                  onClose={() => setDeleteStatus(null)}
+                />
+              </View>
+            ) : null}
+          </View>
+        </Collapsible>
+      </View>
+
+      {/* =========================
+          Help & Support
+      ========================= */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Help & Support</Text>
+
+        <Pressable
+          style={styles.rowBtn}
+          onPress={() => openURL("https://discord.gg/PRMbMbRE2H")}
+        >
+          <Text style={styles.label}>Discord community</Text>
+          <Text style={styles.value}>Join ↗</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.rowBtn}
+          onPress={() => openURL("mailto:support@sixbyfive.com")}
+        >
+          <Text style={styles.label}>Email support</Text>
+          <Text style={styles.value}>Email</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.rowBtn}
+          onPress={() =>
+            openURL(
+              "mailto:support@sixbyfive.com?subject=Bug%20Report&body=Describe%20the%20bug%20here…"
+            )
+          }
+        >
+          <Text style={styles.label}>Report a bug</Text>
+          <Text style={styles.value}>Email</Text>
+        </Pressable>
 
         <Pressable
           style={styles.rowBtn}
           onPress={() => openURL("https://tcg.sixbyfive.com/privacy")}
         >
           <Text style={styles.label}>Privacy Policy</Text>
-          <Text style={styles.value}>Open</Text>
+          <Text style={styles.value}>Open ↗</Text>
         </Pressable>
 
         <Pressable
@@ -1907,15 +2619,26 @@ export default function Settings() {
           onPress={() => openURL("https://tcg.sixbyfive.com/terms")}
         >
           <Text style={styles.label}>Terms of Service</Text>
-          <Text style={styles.value}>Open</Text>
+          <Text style={styles.value}>Open ↗</Text>
         </Pressable>
+      </View>
 
-        <Pressable
-          style={styles.rowBtn}
-          onPress={() => openURL("mailto:support@sixbyfive.com")}
-        >
-          <Text style={styles.label}>Contact support</Text>
-          <Text style={styles.value}>Email</Text>
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Account</Text>
+        <Pressable style={styles.rowBtn} onPress={() => setShowWallet(true)}>
+          <Text style={styles.label}>Wallet & Payments</Text>
+          <Text style={styles.value}>Balance →</Text>
+        </Pressable>
+        <Pressable style={styles.rowBtn} onPress={() => setShowAlerts(true)}>
+          <Text style={styles.label}>Price Alerts</Text>
+          <Text style={styles.value}>Manage →</Text>
+        </Pressable>
+        <Pressable style={styles.rowBtn} onPress={() => router.push("/subscriptions")}>
+          <Text style={styles.label}>Subscription & Billing</Text>
+          <Text style={styles.value}>View plans →</Text>
+        </Pressable>
+        <Pressable onPress={handleSignOut} style={styles.signOutBtn}>
+          <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
       </View>
 
@@ -2161,6 +2884,17 @@ const styles = StyleSheet.create({
 
   btnDisabled: { opacity: 0.5 },
 
+  signOutBtn: {
+    marginTop: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: "rgba(239,68,68,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.3)",
+  },
+  signOutText: { color: "#ef4444", fontWeight: "700", fontSize: 15 },
+
   banner: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 10,
@@ -2172,6 +2906,35 @@ const styles = StyleSheet.create({
   },
   bannerText: { fontSize: 12, fontWeight: "700" },
   bannerClose: { marginLeft: 12 },
+
+  discordLinkedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "rgba(88,101,242,0.08)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(88,101,242,0.25)",
+    borderRadius: 12,
+    padding: 12,
+  },
+  discordAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(88,101,242,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  discordUsername: {
+    color: COLORS.text,
+    fontWeight: "800",
+    fontSize: 15,
+  },
+  discordMeta: {
+    color: COLORS.textMuted,
+    fontSize: 12,
+    marginTop: 2,
+  },
 
   monoSmall: {
     color: COLORS.textMuted,

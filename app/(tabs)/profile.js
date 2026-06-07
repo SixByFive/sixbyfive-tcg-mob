@@ -328,6 +328,7 @@ export default function ProfileTab() {
         {tab === "wishlist" && (
           <WishlistTab
             items={me?.wishlistPreview ?? []}
+            username={me?.username}
             onBrowse={() => router.push("/(tabs)/search")}
             onOpenCard={(card) =>
               router.push({

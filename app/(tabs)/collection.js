@@ -195,10 +195,9 @@ const UPDATE_WISHLIST_ENTRY = gql`
 /* ---------------- [PRICES] Primary schema queries ---------------- */
 const Q_CARD_cardsearchCardById = gql`
   query CardById_cardsearch($id: ID!, $variant: String) {
-    cardsearchCardById(cardId: $id, variant: $variant) {
+    cardsearchCard(id: $id, variant: $variant) {
       id
-      cardId
-      latestPrices(variant: $variant) {
+      latestPrices {
         provider
         currency
         gbp
@@ -213,165 +212,6 @@ const Q_CARD_cardsearchCardById = gql`
   }
 `;
 
-const Q_ROOT_cardsearchPriceLatest = gql`
-  query PriceLatest_cardsearch($id: ID!, $variant: String) {
-    cardsearchPriceLatest(cardId: $id, variant: $variant) {
-      provider
-      currency
-      low
-      mid
-      high
-      market
-      updatedAt
-      variant
-    }
-  }
-`;
-
-/* ---------------- Legacy fallbacks (unchanged) ---------------- */
-const Q_CARD_card = gql`
-  query CardById_card($id: ID!) {
-    card(id: $id) {
-      id
-      priceLatest {
-        source
-        market
-        currency
-        low
-        mid
-        high
-        lastUpdated
-        variant
-      }
-      prices {
-        source
-        market
-        currency
-        low
-        mid
-        high
-        lastUpdated
-        variant
-      }
-      pricing {
-        source
-        market
-        currency
-        low
-        mid
-        high
-        lastUpdated
-        variant
-      }
-    }
-  }
-`;
-
-const Q_CARD_cardById = gql`
-  query CardById_cardById($id: ID!) {
-    cardById(id: $id) {
-      id
-      priceLatest {
-        source
-        market
-        currency
-        low
-        mid
-        high
-        lastUpdated
-        variant
-      }
-      prices {
-        source
-        market
-        currency
-        low
-        mid
-        high
-        lastUpdated
-        variant
-      }
-      pricing {
-        source
-        market
-        currency
-        low
-        mid
-        high
-        lastUpdated
-        variant
-      }
-    }
-  }
-`;
-
-const Q_CARD_Cap = gql`
-  query CardById_Cap($id: ID!) {
-    Card(id: $id) {
-      id
-      priceLatest {
-        source
-        market
-        currency
-        low
-        mid
-        high
-        lastUpdated
-        variant
-      }
-      prices {
-        source
-        market
-        currency
-        low
-        mid
-        high
-        lastUpdated
-        variant
-      }
-      pricing {
-        source
-        market
-        currency
-        low
-        mid
-        high
-        lastUpdated
-        variant
-      }
-    }
-  }
-`;
-
-const Q_ROOT_priceLatest = gql`
-  query PriceLatestRoot($id: ID!, $variant: String) {
-    priceLatest(cardId: $id, variant: $variant) {
-      source
-      market
-      currency
-      low
-      mid
-      high
-      lastUpdated
-      variant
-    }
-  }
-`;
-
-const Q_ROOT_prices = gql`
-  query PricesRoot($id: ID!) {
-    prices(cardId: $id) {
-      source
-      market
-      currency
-      low
-      mid
-      high
-      lastUpdated
-      variant
-    }
-  }
-`;
 
 /* ---------------- utils ---------------- */
 const debugLog = (...args) => {
@@ -899,30 +739,10 @@ export default function CollectionTab() {
             fetchPolicy: "network-only",
             errorPolicy: "all",
           });
-          const card = data?.cardsearchCardById;
+          const card = data?.cardsearchCard;
           const lp = Array.isArray(card?.latestPrices) ? card.latestPrices : [];
           if (lp.length) {
             const normalized = normalizePricesArray(lp);
-            const picked =
-              variantValue == null
-                ? normalized
-                : preferVariant(normalized, variantValue);
-            if (picked.length) return picked;
-          }
-        } catch (err) {}
-
-        try {
-          const { data } = await apollo.query({
-            query: Q_ROOT_cardsearchPriceLatest,
-            variables: baseVars,
-            fetchPolicy: "network-only",
-            errorPolicy: "all",
-          });
-          const rows = Array.isArray(data?.cardsearchPriceLatest)
-            ? data.cardsearchPriceLatest
-            : [];
-          if (rows.length) {
-            const normalized = normalizePricesArray(rows);
             const picked =
               variantValue == null
                 ? normalized
@@ -942,69 +762,7 @@ export default function CollectionTab() {
         if (result.length) return result;
       }
 
-      const legacyAttempts = [
-        { q: Q_CARD_card, key: "card" },
-        { q: Q_CARD_cardById, key: "cardById" },
-        { q: Q_CARD_Cap, key: "Card" },
-        {
-          q: Q_ROOT_priceLatest,
-          key: "priceLatest",
-          root: true,
-          useVariant: true,
-        },
-        { q: Q_ROOT_prices, key: "prices", root: true },
-      ];
-
-      for (const a of legacyAttempts) {
-        try {
-          const variables = a.useVariant
-            ? mapped == null
-              ? { id: String(id) }
-              : { id: String(id), variant: String(mapped) }
-            : { id: String(id) };
-
-          const { data } = await apollo.query({
-            query: a.q,
-            variables,
-            fetchPolicy: "network-only",
-            errorPolicy: "all",
-          });
-
-          if (!a.root) {
-            const card = data?.[a.key];
-            if (!card) continue;
-            let all = [];
-            if (Array.isArray(card?.prices))
-              all = all.concat(normalizePricesArray(card.prices));
-            if (Array.isArray(card?.pricing))
-              all = all.concat(normalizePricesArray(card.pricing));
-            if (card?.priceLatest)
-              all = all.concat(normalizeFromPriceLatest(card.priceLatest));
-            if (!all.length) continue;
-            return preferVariant(all, variation);
-          }
-
-          if (a.key === "priceLatest" && data?.priceLatest) {
-            return normalizeFromPriceLatest(data.priceLatest);
-          }
-          if (a.key === "prices" && Array.isArray(data?.prices)) {
-            return preferVariant(normalizePricesArray(data.prices), variation);
-          }
-        } catch (err) {
-          if (__DEV__)
-            console.warn("[CollectionTab] price hydrate attempt failed", {
-              shape: a.key,
-              id,
-              message: extractGraphQLError(err),
-            });
-        }
-      }
-
-      if (__DEV__)
-        console.warn("[CollectionTab] price hydrate yielded no rows", {
-          id,
-          variation,
-        });
+      // No prices found via the current gateway schema
       return [];
     },
     [apollo],

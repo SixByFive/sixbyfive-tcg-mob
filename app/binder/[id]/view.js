@@ -155,15 +155,32 @@ function toUiSlot(slot) {
 function mapBinderToPagesUI(binder) {
   const pages = Array.isArray(binder?.pages) ? binder.pages : [];
   return pages.map((p, i) => {
-    const slots = Array.isArray(p?.slots) ? p.slots : [];
+    const rawSlots = Array.isArray(p?.slots) ? p.slots : [];
     const layoutId = p?.layout || "pocket-9";
     const { rows, cols } = rcFromLayoutId(layoutId);
+    const total = rows * cols;
+    // Build a fixed-size grid (null = empty), placing each card at its saved position
+    const grid = Array.from({ length: total }, () => null);
+    rawSlots.forEach((raw) => {
+      const normalized = toUiSlot(raw);
+      if (!normalized) return;
+      const pos = Number(raw?.position);
+      // position is 1-based on the server
+      const preferred =
+        Number.isFinite(pos) && pos > 0 ? Math.min(total - 1, pos - 1) : undefined;
+      if (preferred != null && grid[preferred] == null) {
+        grid[preferred] = normalized;
+      } else {
+        const fallback = grid.findIndex((cell) => cell == null);
+        if (fallback !== -1) grid[fallback] = normalized;
+      }
+    });
     return {
       id: String(p?.id ?? i),
       title: p?.title ?? `Page ${i + 1}`,
       rows,
       cols,
-      slots: slots.map(toUiSlot),
+      slots: grid,
     };
   });
 }

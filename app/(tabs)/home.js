@@ -120,7 +120,6 @@ export default function Home() {
   // UI state
   const [recent, setRecent] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
-
   // Local "Continue" routes
   const [lastBinderRoute, setLastBinderRoute] = useState("");
   const [lastSearchRoute, setLastSearchRoute] = useState("");
@@ -282,6 +281,7 @@ export default function Home() {
   );
 
   return (
+    <>
     <ScrollView
       style={{ flex: 1, backgroundColor: COLORS.background }}
       contentContainerStyle={{
@@ -308,19 +308,21 @@ export default function Home() {
           </Text>
         </View>
 
-        {/* NEW: Gear icon -> Settings */}
-        <Pressable
-          onPress={() => router.push("/settings")}
-          hitSlop={10}
-          style={({ pressed }) => [
-            styles.headerIconBtn,
-            pressed && { opacity: 0.85 },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Open settings"
-        >
-          <Ionicons name="settings-outline" size={22} color={COLORS.text} />
-        </Pressable>
+        {/* Icon buttons: Gear */}
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Pressable
+            onPress={() => router.push("/settings")}
+            hitSlop={10}
+            style={({ pressed }) => [
+              styles.headerIconBtn,
+              pressed && { opacity: 0.85 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Open settings"
+          >
+            <Ionicons name="settings-outline" size={22} color={COLORS.text} />
+          </Pressable>
+        </View>
       </View>
 
       {/* Verify banner */}
@@ -466,6 +468,8 @@ export default function Home() {
       {/* Partner spotlight (SLIDER) */}
       <PartnersSpotlightSlider partners={partners} showDots autoplay={true} />
     </ScrollView>
+
+</>
   );
 }
 

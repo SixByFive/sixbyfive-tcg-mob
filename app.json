@@ -2,19 +2,20 @@
   "expo": {
     "name": "SixByFive TCG",
     "slug": "sbf-tcg-mobile",
-    "version": "1.2.3",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "tcgmobile",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sixbyfive.sbftcgmobile",
-      "associatedDomains": ["applinks:tcg.sixbyfive.com"]
+      "associatedDomains": ["applinks:tcg.sixbyfive.com"],
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scan Pokémon cards to add them to your collection."
+      }
     },
-
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/logo.png",
@@ -23,7 +24,7 @@
       "softwareKeyboardLayoutMode": "resize",
       "edgeToEdgeEnabled": true,
       "package": "com.sixbyfive.sbftcgmobile",
-      "permissions": ["NOTIFICATIONS"],
+      "permissions": ["NOTIFICATIONS", "CAMERA"],
       "intentFilters": [
         {
           "action": "VIEW",
@@ -40,13 +41,11 @@
       ],
       "googleServicesFile": "./google-services.json"
     },
-
     "web": {
       "bundler": "metro",
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
-
     "plugins": [
       "expo-router",
       [
@@ -64,19 +63,19 @@
           "resizeMode": "contain",
           "backgroundColor": "#000000"
         }
-      ]
+      ],
+      "react-native-vision-camera",
+      "react-native-fast-tflite",
+      "expo-asset"
     ],
-
     "experiments": {
       "typedRoutes": false
     },
-
     "extra": {
       "EXPO_PUBLIC_SITE_ORIGIN": "https://tcg.sixbyfive.com",
       "EXPO_PUBLIC_GRAPHQL_ENDPOINT": "https://backendtcg.sixbyfive.com/graphql",
       "EXPO_PUBLIC_ASSET_BASE_URL": "https://backendtcg.sixbyfive.com",
       "EXPO_PUBLIC_SOCKET_URL": "https://backendtcg.sixbyfive.com",
-
       "EXPO_PUBLIC_DEV_MODE": false,
 
       "EXPO_PUBLIC_GRAPHQL_ENDPOINT_LOCAL": "http://10.0.2.2:4010/graphql",
@@ -85,17 +84,13 @@
 
       "EXPO_PUBLIC_SOCKET_URL_LOCAL": "http://10.0.2.2:4018",
       "EXPO_PUBLIC_SOCKET_PATH": "/realtime/socket.io",
-
       "router": {},
-      "eas": { "projectId": "941ffa41-876d-4f3b-83aa-f66b7f1bb442" }
+      "eas": {
+        "projectId": "941ffa41-876d-4f3b-83aa-f66b7f1bb442"
+      }
     },
-
     "owner": "sixbyfive",
-
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
-
+    "runtimeVersion": "1.2.2",
     "updates": {
       "url": "https://u.expo.dev/941ffa41-876d-4f3b-83aa-f66b7f1bb442",
       "checkAutomatically": "ON_LOAD",

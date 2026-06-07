@@ -14,7 +14,7 @@ import {
   View,
 } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
-import { setToken } from "../lib/auth";
+import { setToken, setRefreshToken } from "../lib/auth";
 
 const COLORS = {
   background: "#16171c",
@@ -68,9 +68,11 @@ export default function Auth() {
         : { username: cleaned, password };
       try {
         const { data } = await login({ variables });
-        const token = data?.login?.token ?? null;
+        const token        = data?.login?.token        ?? null;
+        const refreshToken = data?.login?.refreshToken ?? null;
         if (token) {
           await setToken(token);
+          if (refreshToken) await setRefreshToken(refreshToken);
           try {
             await apolloClient.clearStore();
           } catch (storeErr) {
