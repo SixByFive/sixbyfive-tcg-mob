@@ -14,10 +14,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@apollo/client";
+import { CardField, useConfirmPayment } from "@stripe/stripe-react-native";
 import { COLORS } from "../../theme/colors";
 import { CreateTopupIntentDocument, ConfirmTopupDocument } from "../../graphql/documents";
-
-const STRIPE_KEY = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
 
 const PRESETS = [
   { label: "£5",  pence: 500 },
@@ -26,82 +25,6 @@ const PRESETS = [
   { label: "£50", pence: 5000 },
 ];
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function formatCardNumber(raw) {
-  const digits = raw.replace(/\D/g, "").slice(0, 16);
-  return digits.replace(/(.{4})/g, "$1 ").trim();
-}
-
-function formatExpiry(raw) {
-  const digits = raw.replace(/\D/g, "").slice(0, 4);
-  if (digits.length >= 3) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  return digits;
-}
-
-function encodeForm(obj) {
-  return Object.entries(obj)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
-}
-
-async function confirmWithStripe(clientSecret, card) {
-  const paymentIntentId = clientSecret.split("_secret_")[0];
-  const [expMonth, expYear] = card.expiry.split("/");
-  const body = encodeForm({
-    // Required for client-side confirmation with a publishable key
-    client_secret: clientSecret,
-    "payment_method_data[type]": "card",
-    "payment_method_data[card][number]": card.number.replace(/\s/g, ""),
-    "payment_method_data[card][exp_month]": expMonth?.trim() ?? "",
-    "payment_method_data[card][exp_year]": `20${expYear?.trim() ?? ""}`,
-    "payment_method_data[card][cvc]": card.cvc,
-  });
-
-  const res = await fetch(
-    `https://api.stripe.com/v1/payment_intents/${paymentIntentId}/confirm`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${STRIPE_KEY}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body,
-    }
-  );
-
-  const json = await res.json();
-  if (json.error) throw new Error(json.error.message);
-  if (json.status === "requires_action") {
-    throw new Error("This card requires extra verification (3D Secure). Please use a different card.");
-  }
-  if (json.status !== "succeeded") {
-    throw new Error(`Payment not completed (status: ${json.status}).`);
-  }
-  return json;
-}
-
-// ── Sub-components ────────────────────────────────────────────────────────────
-
-function CardInput({ label, value, onChangeText, placeholder, keyboardType, maxLength, style, autoFocus }) {
-  return (
-    <View style={{ gap: 4 }}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput
-        style={[styles.input, style]}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={COLORS.textMuted}
-        keyboardType={keyboardType ?? "numeric"}
-        maxLength={maxLength}
-        autoFocus={autoFocus}
-        autoCorrect={false}
-        autoComplete="off"
-      />
-    </View>
-  );
-}
 
 // ── Main sheet ────────────────────────────────────────────────────────────────
 
@@ -116,10 +39,7 @@ export default function WalletTopupSheet({ visible, onClose, onSuccess }) {
   const [customAmount, setCustomAmount] = useState("");
 
   // card
-  const [cardNumber, setCardNumber] = useState("");
-  const [expiry,     setExpiry]     = useState("");
-  const [cvc,        setCvc]        = useState("");
-  const [cardName,   setCardName]   = useState("");
+  const [cardComplete, setCardComplete] = useState(false);
 
   // state
   const [loading, setLoading] = useState(false);
@@ -129,13 +49,14 @@ export default function WalletTopupSheet({ visible, onClose, onSuccess }) {
   // intent data held between phases
   const intentRef = useRef({ clientSecret: "", paymentIntentId: "" });
 
+  const { confirmPayment } = useConfirmPayment();
   const [createIntent] = useMutation(CreateTopupIntentDocument);
   const [confirmTopup] = useMutation(ConfirmTopupDocument);
 
   function reset() {
     setPhase("amount");
     setSelectedPreset(null); setCustomAmount("");
-    setCardNumber(""); setExpiry(""); setCvc(""); setCardName("");
+    setCardComplete(false);
     setError(""); setLoading(false); setNewBalance(null);
     intentRef.current = { clientSecret: "", paymentIntentId: "" };
   }
@@ -164,15 +85,18 @@ export default function WalletTopupSheet({ visible, onClose, onSuccess }) {
   }
 
   async function handlePay() {
-    const digits = cardNumber.replace(/\s/g, "");
-    if (digits.length < 13) { setError("Enter a valid card number."); return; }
-    if (expiry.length < 5)  { setError("Enter a valid expiry (MM/YY)."); return; }
-    if (cvc.length < 3)     { setError("Enter your CVC."); return; }
-
+    if (!cardComplete) { setError("Enter your card details."); return; }
     setError(""); setLoading(true);
     try {
+      const { paymentIntent, error: stripeError } = await confirmPayment(
+        intentRef.current.clientSecret,
+        { paymentMethodType: "Card" },
+      );
+      if (stripeError) throw new Error(stripeError.message);
+      if (paymentIntent?.status !== "succeeded") {
+        throw new Error(`Payment not completed (status: ${paymentIntent?.status}).`);
+      }
       const paymentIntentId = intentRef.current.clientSecret.split("_secret_")[0];
-      await confirmWithStripe(intentRef.current.clientSecret, { number: cardNumber, expiry, cvc });
       const { data } = await confirmTopup({ variables: { paymentIntentId } });
       setNewBalance(data?.confirmTopup?.balance ?? null);
       setPhase("success");
@@ -274,48 +198,27 @@ export default function WalletTopupSheet({ visible, onClose, onSuccess }) {
               <>
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>Card details</Text>
-                  <CardInput
-                    label="Name on card"
-                    value={cardName}
-                    onChangeText={setCardName}
-                    placeholder="Jane Smith"
-                    keyboardType="default"
-                    autoFocus
+                  <CardField
+                    postalCodeEnabled={false}
+                    onCardChange={(details) => setCardComplete(details.complete)}
+                    style={{ height: 54, marginVertical: 4 }}
+                    cardStyle={{
+                      backgroundColor: COLORS.alt,
+                      textColor: COLORS.text,
+                      borderColor: COLORS.border,
+                      borderWidth: 1,
+                      borderRadius: 10,
+                      placeholderColor: COLORS.textMuted,
+                      fontSize: 15,
+                    }}
                   />
-                  <CardInput
-                    label="Card number"
-                    value={cardNumber}
-                    onChangeText={v => setCardNumber(formatCardNumber(v))}
-                    placeholder="1234 5678 9012 3456"
-                    maxLength={19}
-                  />
-                  <View style={{ flexDirection: "row", gap: 12 }}>
-                    <View style={{ flex: 1 }}>
-                      <CardInput
-                        label="Expiry"
-                        value={expiry}
-                        onChangeText={v => setExpiry(formatExpiry(v))}
-                        placeholder="MM/YY"
-                        maxLength={5}
-                      />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <CardInput
-                        label="CVC"
-                        value={cvc}
-                        onChangeText={v => setCvc(v.replace(/\D/g, "").slice(0, 4))}
-                        placeholder="123"
-                        maxLength={4}
-                      />
-                    </View>
-                  </View>
                   <Text style={styles.secureNote}>🔒 Processed securely by Stripe</Text>
                 </View>
 
                 <Pressable
                   onPress={handlePay}
-                  disabled={loading}
-                  style={[styles.primaryBtn, loading && { opacity: 0.5 }]}
+                  disabled={loading || !cardComplete}
+                  style={[styles.primaryBtn, (loading || !cardComplete) && { opacity: 0.5 }]}
                 >
                   {loading
                     ? <ActivityIndicator color="#fff" size="small" />

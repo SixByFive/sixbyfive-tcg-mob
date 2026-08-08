@@ -1,19 +1,11 @@
 // components/home/SnapshotCard.js
-//
-// UPDATED (2026-02-18)
-//
-// CHANGES:
-// - ADD: `onCounts` callback prop to expose computed {cards, binders, wishlist}
-//        so Home can use the same schema-safe logic for onboarding + hub UI.
-// - KEEP: Existing UI + inline, schema-safe queries (no breaking changes)
 
+import { Ionicons } from "@expo/vector-icons";
+import { gql, useQuery } from "@apollo/client";
 import React, { useEffect, useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 
-import { gql, useQuery } from "@apollo/client";
-
-// --- Inline, minimal docs (avoid problematic package docs) ---
 const MY_COLLECTION_MIN = gql`
   query MyCollection_Min {
     myCollection {
@@ -41,7 +33,6 @@ const MY_BINDERS_DOC = gql`
   }
 `;
 
-/* wishlist helpers (same as OverviewTab) */
 function wlRoot(data) {
   return data?.myWishlist ?? data?.wishlist ?? {};
 }
@@ -53,9 +44,18 @@ function wlTotal(root, listLen = 0) {
   return Number(n) || 0;
 }
 
-function Stat({ label, value }) {
+const STATS = [
+  { key: "cards",    label: "Cards",    icon: "cube-outline",    iconColor: COLORS.accent },
+  { key: "binders",  label: "Binders",  icon: "albums-outline",  iconColor: "#9b59b6"     },
+  { key: "wishlist", label: "Wishlist", icon: "heart-outline",   iconColor: "#e8b84b"     },
+];
+
+function StatTile({ label, value, icon, iconColor }) {
   return (
     <View style={styles.tile}>
+      <View style={[styles.iconWrap, { backgroundColor: iconColor + "18" }]}>
+        <Ionicons name={icon} size={15} color={iconColor} />
+      </View>
       <Text style={styles.value}>{value}</Text>
       <Text style={styles.label}>{label}</Text>
     </View>
@@ -65,17 +65,11 @@ function Stat({ label, value }) {
 export default function SnapshotCard({
   loading,
   user,
-
-  // optional explicit overrides
   cardsCount,
   bindersCount,
   wishlistCount,
-
-  // NEW: optional callback that receives computed counts
-  // onCounts?.({ cards, binders, wishlist })
   onCounts,
 }) {
-  // Always query for the signed-in user on the home snapshot
   const { data: colData } = useQuery(MY_COLLECTION_MIN, {
     fetchPolicy: "cache-and-network",
     nextFetchPolicy: "cache-first",
@@ -89,7 +83,7 @@ export default function SnapshotCard({
   });
 
   const { data: wlData } = useQuery(MY_WISHLIST_MIN, {
-    variables: { page: 1, pageSize: 1 }, // we only need total; tiny page for safety
+    variables: { page: 1, pageSize: 1 },
     fetchPolicy: "cache-and-network",
     nextFetchPolicy: "cache-first",
     notifyOnNetworkStatusChange: true,
@@ -98,8 +92,6 @@ export default function SnapshotCard({
   const { cards, binders, wishlist } = useMemo(() => {
     const hasNum = (v) => typeof v === "number" && !Number.isNaN(v);
 
-    // EXACT match to OverviewTab semantics:
-    // only trust counts if GraphQL returned arrays (or "total" for wishlist).
     const cardsFromQ = Array.isArray(colData?.myCollection)
       ? colData.myCollection.length
       : undefined;
@@ -111,16 +103,15 @@ export default function SnapshotCard({
     const root = wlRoot(wlData);
     const wishlistFromQ = wlTotal(root, wlList(root).length);
 
-    // Fallbacks from user.stats
     const stats = user?.stats ?? {};
-    const cardsFromUser = Number(stats.totalCards ?? stats.cards ?? 0) || 0;
+    const cardsFromUser   = Number(stats.totalCards ?? stats.cards ?? 0) || 0;
     const bindersFromUser = Number(stats.binders ?? 0) || 0;
     const wishlistFromUser = Number(stats.wishlist ?? 0) || 0;
 
     return {
       cards:
-        (hasNum(cardsCount) ? cardsCount : undefined) ??
-        (hasNum(cardsFromQ) ? cardsFromQ : undefined) ??
+        (hasNum(cardsCount)   ? cardsCount   : undefined) ??
+        (hasNum(cardsFromQ)   ? cardsFromQ   : undefined) ??
         cardsFromUser,
       binders:
         (hasNum(bindersCount) ? bindersCount : undefined) ??
@@ -131,60 +122,62 @@ export default function SnapshotCard({
         (hasNum(wishlistFromQ) ? wishlistFromQ : undefined) ??
         wishlistFromUser,
     };
-  }, [
-    cardsCount,
-    bindersCount,
-    wishlistCount,
-    user,
-    colData,
-    bindersData,
-    wlData,
-  ]);
+  }, [cardsCount, bindersCount, wishlistCount, user, colData, bindersData, wlData]);
 
-  // NEW: notify parent with computed counts (for Hub / onboarding logic)
   useEffect(() => {
     if (typeof onCounts !== "function") return;
     onCounts({ cards, binders, wishlist });
   }, [cards, binders, wishlist, onCounts]);
 
   const fmt = (n) => {
-    try {
-      return new Intl.NumberFormat().format(Number(n || 0));
-    } catch {
-      return String(n ?? 0);
-    }
+    try { return new Intl.NumberFormat().format(Number(n || 0)); }
+    catch { return String(n ?? 0); }
   };
   const show = (n) => (loading && !user ? "…" : fmt(n));
 
+  const values = { cards: show(cards), binders: show(binders), wishlist: show(wishlist) };
+
   return (
     <View style={styles.row}>
-      <Stat label="Cards" value={show(cards)} />
-      <Stat label="Binders" value={show(binders)} />
-      <Stat label="Wishlist" value={show(wishlist)} />
+      {STATS.map((s) => (
+        <StatTile
+          key={s.key}
+          label={s.label}
+          value={values[s.key]}
+          icon={s.icon}
+          iconColor={s.iconColor}
+        />
+      ))}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: COLORS.surface,
-    borderColor: COLORS.border,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-  },
-  title: { color: COLORS.text, fontWeight: "900", marginBottom: 8 },
-  row: { flexDirection: "row", gap: 10 },
+  row: { flexDirection: "row", gap: 8 },
   tile: {
     flex: 1,
     alignItems: "center",
     paddingVertical: 12,
-    backgroundColor: COLORS.background,
+    backgroundColor: COLORS.alt,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 12,
+    borderRadius: 13,
+    gap: 4,
   },
-  value: { color: COLORS.text, fontSize: 20, fontWeight: "900" },
-  label: { color: COLORS.textMuted, marginTop: 2 },
+  iconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 2,
+  },
+  value: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: "900",
+    fontVariant: ["tabular-nums"],
+    lineHeight: 24,
+  },
+  label: { color: COLORS.textMuted, fontSize: 11, fontWeight: "500", marginTop: 1 },
 });

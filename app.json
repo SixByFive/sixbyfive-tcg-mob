@@ -48,6 +48,7 @@
     },
     "plugins": [
       "expo-router",
+      ["@stripe/stripe-react-native", { "merchantIdentifier": "merchant.com.sixbyfive.sbftcgmobile" }],
       [
         "expo-notifications",
         {

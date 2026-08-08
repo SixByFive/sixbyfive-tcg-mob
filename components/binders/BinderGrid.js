@@ -168,14 +168,20 @@ export default function BinderGrid({
   pageIndex,
 
   onSlotPress,
-  onRemove,  // (slotIndex)
-  onMove,    // (fromIdx, toIdx)
-  onMoveToPage, // (fromIdx, 'prev'|'next')
+  onRemove,       // (slotIndex)
+  onMove,         // (fromIdx, toIdx)
+  onMoveToPage,   // (fromIdx, 'prev'|'next')
+  notes = "",
+  onNotesChange,  // (notes: string)
+  onAutoArrange,  // ()
+  onClearEmpty,   // ()
 }) {
   const total = rows * cols;
 
   const toast = useToast();
-  const showSoon = (label) => toast.show(`${label} is coming soon`, { type: "info", duration: 2000 });
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [localNotes, setLocalNotes] = useState(notes);
+  useEffect(() => { setLocalNotes(notes); }, [notes]);
 
   const canSelfHandle = Boolean(binderId != null && Number.isInteger(pageIndex));
   const usesDefaultHandlers = canSelfHandle && !onRemove && !onMove;
@@ -574,25 +580,39 @@ export default function BinderGrid({
         </View>
 
         <View style={styles.footerActions}>
-          <Pressable style={[styles.chip, styles.chipDisabled]} onPress={() => showSoon("Auto-arrange")}>
+          <Pressable
+            style={[styles.chip, !onAutoArrange && styles.chipDisabled]}
+            onPress={onAutoArrange}
+            disabled={!onAutoArrange}
+          >
             <Ionicons name="grid-outline" size={16} color={COLORS.text} />
             <Text style={styles.chipText}>Auto-arrange</Text>
           </Pressable>
 
-          <Pressable style={[styles.chip, styles.chipDisabled]} onPress={() => showSoon("Clear empty")}>
+          <Pressable
+            style={[styles.chip, !onClearEmpty && styles.chipDisabled]}
+            onPress={onClearEmpty}
+            disabled={!onClearEmpty}
+          >
             <Ionicons name="trash-outline" size={16} color={COLORS.text} />
             <Text style={styles.chipText}>Clear empty</Text>
           </Pressable>
 
-          <Pressable style={[styles.chip, styles.chipDisabled]} onPress={() => showSoon("Page notes")}>
-            <Ionicons name="create-outline" size={16} color={COLORS.text} />
-            <Text style={styles.chipText}>Page notes</Text>
+          <Pressable
+            style={[styles.chip, notesOpen && styles.chipActive]}
+            onPress={() => setNotesOpen((v) => !v)}
+          >
+            <Ionicons name="create-outline" size={16} color={notesOpen ? COLORS.accent : COLORS.text} />
+            <Text style={[styles.chipText, notesOpen && { color: COLORS.accent }]}>Page notes</Text>
           </Pressable>
         </View>
 
-        {false && (
+        {notesOpen && (
           <View style={styles.notesBox}>
             <TextInput
+              value={localNotes}
+              onChangeText={setLocalNotes}
+              onBlur={() => onNotesChange?.(localNotes)}
               placeholder="Notes for this page…"
               placeholderTextColor={COLORS.textMuted}
               multiline
@@ -727,6 +747,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   chipDisabled: { opacity: 0.55 },
+  chipActive: { borderColor: COLORS.accent, backgroundColor: `${COLORS.accent}18` },
   chipText: { color: COLORS.text, fontWeight: "700", fontSize: 12 },
 
   notesBox: {

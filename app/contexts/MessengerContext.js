@@ -654,11 +654,14 @@ export function MessagingProvider({ children }) {
     };
   }, [emitNewMessageToSubscribers, refreshChats, refreshUnread, setTyping]);
 
-  // Initial data load (stable callbacks)
+  // Initial data load — only when a token exists (avoids blocking the auth flow)
   useEffect(() => {
-    refreshChats();
-    refreshUnread();
-    loadChatRulesText();
+    getToken().then((tok) => {
+      if (!tok) return;
+      refreshChats();
+      refreshUnread();
+      loadChatRulesText();
+    });
   }, [refreshChats, refreshUnread, loadChatRulesText]);
 
   const value = useMemo(

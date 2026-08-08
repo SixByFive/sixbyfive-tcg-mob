@@ -60,10 +60,20 @@ import { useMeQuery } from "../../hooks/useMeQuery";
 
 import { useCollectionWishlistActions } from "../../hooks/useCollectionWishlistActions";
 import { resolveSetNameForCardlike } from "../../utils/setNames";
+import {
+  buildImageCandidates,
+  forceHttps,
+  inferEraFromSetCode,
+  isAbs,
+  normalizeSetCode,
+  parseCardId,
+  pokemontcgFromParts,
+  tcgdexFromParts,
+} from "../../utils/cardImageHelpers";
 
 let MY_BINDERS_QUERY = MyBindersDocument;
 try {
-  const maybeSafe = require("../../graphql/binders-temp");
+  const maybeSafe = require("../../graphql/binders");
   if (maybeSafe?.MY_BINDERS_SAFE) MY_BINDERS_QUERY = maybeSafe.MY_BINDERS_SAFE;
 } catch (err) {
   if (__DEV__)
@@ -109,6 +119,17 @@ const MY_COLLECTION_APP = gql`
         rarity
         images { small large }
         set { code name }
+        latestPrices {
+          provider
+          currency
+          gbp
+          low
+          mid
+          high
+          market
+          variation
+          updatedAt
+        }
         __typename
       }
       __typename
@@ -229,78 +250,6 @@ function extractGraphQLError(err) {
     .filter(Boolean)
     .join(" | ");
   return msg || err?.toString?.() || "Unknown GraphQL error";
-}
-
-/* id + image helpers (same as before) */
-function forceHttps(url) {
-  if (!url || typeof url !== "string") return null;
-  return url.replace(/^http:\/\//i, "https://");
-}
-function isAbs(url) {
-  return /^https?:\/\//i.test(url || "");
-}
-function normalizeSetCode(code) {
-  if (!code) return "";
-  return String(code).trim().toLowerCase().replace(/\s+/g, "");
-}
-function inferEraFromSetCode(code) {
-  const c = normalizeSetCode(code);
-  if (!c) return null;
-  const m = c.match(/^[a-z]+/);
-  return m ? m[0] : null;
-}
-function parseCardId(id) {
-  if (typeof id !== "string") return { setCode: null, number: null };
-  const parts = id.split("-");
-  if (parts.length < 2) return { setCode: null, number: null };
-  const setCode = parts[0]?.trim() || null;
-  const numberRaw = parts.slice(1).join("-").trim();
-  const number = numberRaw || null;
-  return { setCode, number };
-}
-function tcgdexFromParts(setCode, number, era = null, quality = "high") {
-  if (!setCode || !number) return null;
-  const eraSlug = (era || inferEraFromSetCode(setCode) || "")
-    .toLowerCase()
-    .replace(/[^a-z]/g, "");
-  const numPadded = String(number).replace(/^0+/, "").padStart(3, "0");
-  if (!eraSlug) return null;
-  return `https://assets.tcgdex.net/en/${eraSlug}/${setCode}/${numPadded}/${quality}.webp`;
-}
-function pokemontcgFromParts(setCode, number, hires = true) {
-  if (!setCode || !number) return null;
-  const n = String(number).replace(/^0+/, "");
-  const suffix = hires ? "_hires" : "";
-  return `https://images.pokemontcg.io/${setCode}/${n}${suffix}.png`;
-}
-function buildImageCandidates(cardish) {
-  const out = [];
-  const raw = cardish?.image;
-  if (raw && isAbs(raw)) out.push(forceHttps(raw));
-  const parsed = parseCardId(
-    cardish?.id || cardish?.cardId || cardish?._collection?.cardId || "",
-  );
-  if (parsed.setCode && parsed.number) {
-    const era = inferEraFromSetCode(parsed.setCode);
-    const dHigh = tcgdexFromParts(parsed.setCode, parsed.number, era, "high");
-    const dLow = tcgdexFromParts(parsed.setCode, parsed.number, era, "low");
-    if (dHigh) out.push(dHigh);
-    if (dLow) out.push(dLow);
-    const pHires = pokemontcgFromParts(parsed.setCode, parsed.number, true);
-    const pStd = pokemontcgFromParts(parsed.setCode, parsed.number, false);
-    if (pHires) out.push(pHires);
-    if (pStd) out.push(pStd);
-  }
-  const seen = new Set();
-  const list = out.filter((u) => {
-    const k = String(u || "");
-    if (!k || seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-  const tcgdexFirst =
-    list.find((u) => u.includes("assets.tcgdex.net")) || list[0] || "";
-  return [tcgdexFirst, ...list.filter((u) => u !== tcgdexFirst)];
 }
 
 /* ---------------- [PRICES] helpers ---------------- */
@@ -671,7 +620,10 @@ export default function CollectionTab() {
         const displayImage = candidates[0] || card?.image || "";
 
         const hydrated = collectionPricesById.get(idKey);
-        const prices = Array.isArray(hydrated) ? hydrated : [];
+        const inlinePrices = Array.isArray(card?.latestPrices)
+          ? normalizePricesArray(card.latestPrices)
+          : [];
+        const prices = Array.isArray(hydrated) && hydrated.length ? hydrated : inlinePrices;
         const priceLatest = prices[0] || null;
         const pricing = prices;
 
@@ -712,8 +664,18 @@ export default function CollectionTab() {
 
   /* -------- [PRICES] background hydration with variant probing -------- */
 
+  // Catalog stores zero-padded set codes: sv01, sv02, swsh01, etc.
+  // Collection entries may use non-padded codes: sv1-001 → sv01-001
+  function normalizeCatalogId(id) {
+    return String(id).replace(
+      /^([a-z]+)(\d+)(-.+)$/i,
+      (_, era, num, rest) => `${era.toLowerCase()}${num.padStart(2, "0")}${rest}`,
+    );
+  }
+
   const tryFetchPrices = useCallback(
     async (id, variation) => {
+      const catalogId = normalizeCatalogId(id);
       const mapped = mapAppVariantToBackend(variation);
 
       const variantCandidates = [
@@ -729,18 +691,27 @@ export default function CollectionTab() {
       const runSchemaFirst = async (variantValue) => {
         const baseVars =
           variantValue == null
-            ? { id: String(id) }
-            : { id: String(id), variant: String(variantValue) };
+            ? { id: catalogId }
+            : { id: catalogId, variant: String(variantValue) };
 
         try {
-          const { data } = await apollo.query({
+          const { data, errors } = await apollo.query({
             query: Q_CARD_cardsearchCardById,
             variables: baseVars,
             fetchPolicy: "network-only",
             errorPolicy: "all",
           });
+          if (__DEV__ && errors?.length) {
+            console.warn("[CollectionTab] cardsearchCard gql errors", baseVars.id, errors.map(e => e.message));
+          }
           const card = data?.cardsearchCard;
+          if (__DEV__ && !card) {
+            console.warn("[CollectionTab] cardsearchCard returned null for", baseVars.id);
+          }
           const lp = Array.isArray(card?.latestPrices) ? card.latestPrices : [];
+          if (__DEV__ && card && !lp.length) {
+            console.warn("[CollectionTab] cardsearchCard has no latestPrices for", baseVars.id);
+          }
           if (lp.length) {
             const normalized = normalizePricesArray(lp);
             const picked =
@@ -749,7 +720,9 @@ export default function CollectionTab() {
                 : preferVariant(normalized, variantValue);
             if (picked.length) return picked;
           }
-        } catch (err) {}
+        } catch (err) {
+          if (__DEV__) console.warn("[CollectionTab] cardsearchCard fetch error", baseVars.id, err?.message);
+        }
 
         return [];
       };
@@ -910,7 +883,7 @@ export default function CollectionTab() {
     return toArray(root);
   }, [bindersData]);
 
-  const DEFAULT_BINDER_COVER = "#23243c";
+  const DEFAULT_BINDER_COVER = COLORS.alt;
   const DEFAULT_BINDER_ACCENT = "#424a80";
 
   const asNumber = (v) => {

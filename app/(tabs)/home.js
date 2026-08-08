@@ -51,9 +51,8 @@ const LEO_HERO = require("../../assets/images/leos.png");
 
 const DISCORD_INVITE = "https://discord.gg/PRMbMbRE2H";
 
-// Feature switches (hardcoded off for now)
-const SHOW_SUBSCRIPTION = false;
-const SHOW_PRICE_WATCH = false;
+const SHOW_SUBSCRIPTION = true;
+const SHOW_PRICE_WATCH = true;
 
 // SecureStore keys (local-only)
 const RECENT_USERS_KEY = "sbf_home_recent_user_search_v1";
@@ -459,7 +458,6 @@ export default function Home() {
           setRouteKey(LAST_PROFILE_ROUTE_KEY, route);
           router.push(route);
         }}
-        onToggleFollow={() => {}}
       />
 
       {/* Discord */}

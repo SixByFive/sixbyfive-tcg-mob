@@ -15,7 +15,14 @@ import {
   Text,
   View,
 } from "react-native";
-import { clearToken } from "../../lib/auth";
+import Constants from "expo-constants";
+import { clearToken, getToken } from "../../lib/auth";
+
+const _extra = Constants.expoConfig?.extra || {};
+const _devMode = !!_extra.EXPO_PUBLIC_DEV_MODE;
+const _prodGql = _extra.EXPO_PUBLIC_GRAPHQL_ENDPOINT || process.env.EXPO_PUBLIC_GRAPHQL_ENDPOINT || "";
+const _devGql = _extra.EXPO_PUBLIC_GRAPHQL_ENDPOINT_LOCAL || _prodGql;
+const BASE_URL = (_devMode ? _devGql : _prodGql).replace(/\/graphql\/?$/, "");
 
 import PageHeader from "../../components/common/PageHeader";
 import SegmentTabs from "../../components/common/SegmentTabs";
@@ -154,15 +161,23 @@ export default function ProfileTab() {
   const cardsPreview = Array.isArray(me?.cardsPreview) ? me.cardsPreview : [];
   const forSalePreview = Array.isArray(me?.forSalePreview) ? me.forSalePreview : [];
   const forTradePreview = Array.isArray(me?.forTradePreview) ? me.forTradePreview : [];
-  // Upload helper (no-op placeholder; replace with your real endpoint when ready)
   const uploadAvatarIfNeeded = useCallback(async (uri) => {
     if (!uri || typeof uri !== "string") return uri;
     if (/^file:|^content:/i.test(uri)) {
       try {
         const form = new FormData();
         form.append("file", { uri, name: "avatar.jpg", type: "image/jpeg" });
-        // TODO: POST to your real upload endpoint, return "/uploads/avatars/....png"
-        return uri; // fallback to keep UI showing
+        const token = await getToken();
+        const res = await fetch(`${BASE_URL}/upload/avatar`, {
+          method: "POST",
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: form,
+        });
+        if (!res.ok) return uri;
+        const json = await res.json();
+        return json.url || json.path || uri;
       } catch {
         return uri;
       }

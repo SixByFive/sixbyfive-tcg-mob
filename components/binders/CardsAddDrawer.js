@@ -250,7 +250,7 @@ function resolveDoc(preferredKeys, fallbackDoc) {
     }
   } catch (_) {}
   try {
-    const temp = require("../../graphql/binders-temp");
+    const temp = require("../../graphql/binders");
     for (const k of preferredKeys) {
       const d = temp?.[k];
       if (d && typeof d === "object" && d.kind === "Document") return d;

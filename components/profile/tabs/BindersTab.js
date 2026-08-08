@@ -22,7 +22,7 @@ import BinderGrid from "../../collection/BinderGrid";
 
 let MY_BINDERS_QUERY = MyBindersDocument;
 try {
-  const maybeSafe = require("../../../graphql/binders-temp");
+  const maybeSafe = require("../../../graphql/binders");
   if (maybeSafe?.MY_BINDERS_SAFE) MY_BINDERS_QUERY = maybeSafe.MY_BINDERS_SAFE;
 } catch (err) {
   if (__DEV__)
@@ -120,13 +120,13 @@ const normalizeBinder = (b) => {
     userId: b?.userId ? String(b.userId) : undefined,
     name: b?.name ?? b?.title ?? "Binder",
     // match Collection tab defaults
-    coverColor: b?.coverColor ?? b?.cover?.coverColor ?? "#23243c",
+    coverColor: b?.coverColor ?? b?.cover?.coverColor ?? COLORS.alt,
     accentColor: b?.accentColor ?? b?.cover?.accentColor ?? "#424a80",
     updatedAt: b?.updatedAt ?? b?.modifiedAt ?? b?.createdAt ?? null,
     pages,
     cardsCount: cardCount,
     // aliases some grids expect
-    color: b?.coverColor ?? b?.cover?.coverColor ?? "#23243c",
+    color: b?.coverColor ?? b?.cover?.coverColor ?? COLORS.alt,
     cardCount: cardCount,
     pageCount: pages.length,
   };

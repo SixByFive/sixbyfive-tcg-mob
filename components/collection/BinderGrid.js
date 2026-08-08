@@ -34,7 +34,7 @@ function mergeBinder(stub) {
 
   const id = String(b?.id ?? stub?.id ?? "");
   const name = (b?.name || b?.title || "Binder").trim();
-  const coverColor = b?.coverColor || b?.cover?.coverColor || "#23243c";
+  const coverColor = b?.coverColor || b?.cover?.coverColor || COLORS.alt;
   const accentColor = b?.accentColor || b?.cover?.accentColor || "#424a80";
   const updatedAt = b?.updatedAt;
 

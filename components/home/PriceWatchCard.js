@@ -300,7 +300,7 @@ const styles = StyleSheet.create({
 
   // skeleton helpers
   skelBox: {
-    backgroundColor: COLORS.alt || "#23243c",
+    backgroundColor: COLORS.alt,
     borderColor: COLORS.border,
     borderWidth: 1,
   },

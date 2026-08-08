@@ -26,78 +26,17 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation, useQuery } from "@apollo/client";
 import { useRouter } from "expo-router";
+import { CardField, useConfirmPayment } from "@stripe/stripe-react-native";
 import { COLORS } from "../../theme/colors";
 import {
   WalletBalanceDocument,
   CreateCartOrdersDocument,
 } from "../../graphql/documents";
 
-const STRIPE_KEY = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmt(pounds) {
   return `£${Number(pounds || 0).toFixed(2)}`;
-}
-
-function formatCardNumber(raw) {
-  const digits = raw.replace(/\D/g, "").slice(0, 16);
-  return digits.replace(/(.{4})/g, "$1 ").trim();
-}
-
-function formatExpiry(raw) {
-  const digits = raw.replace(/\D/g, "").slice(0, 4);
-  if (digits.length >= 3) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  return digits;
-}
-
-function encodeForm(obj) {
-  return Object.entries(obj)
-    .filter(([, v]) => v !== undefined && v !== null && v !== "")
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
-}
-
-// Marketplace orders use manual capture — backend holds the payment until
-// the seller ships, then captures. So we accept "requires_capture" as success.
-async function confirmWithStripe(clientSecret, card) {
-  const paymentIntentId = clientSecret.split("_secret_")[0];
-  const [expMonth, expYear] = card.expiry.split("/");
-
-  const body = encodeForm({
-    // Required for client-side confirmation with a publishable key
-    client_secret: clientSecret,
-    "payment_method_data[type]": "card",
-    "payment_method_data[card][number]": card.number.replace(/\s/g, ""),
-    "payment_method_data[card][exp_month]": expMonth?.trim() ?? "",
-    "payment_method_data[card][exp_year]": `20${expYear?.trim() ?? ""}`,
-    "payment_method_data[card][cvc]": card.cvc,
-  });
-
-  const res = await fetch(
-    `https://api.stripe.com/v1/payment_intents/${paymentIntentId}/confirm`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${STRIPE_KEY}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body,
-    }
-  );
-
-  const json = await res.json();
-  if (json.error) throw new Error(json.error.message);
-  if (json.status === "requires_action") {
-    throw new Error(
-      "This card requires 3D Secure verification. Please use a different card or pay with your wallet."
-    );
-  }
-  // requires_capture = held; succeeded = immediate capture (both are OK)
-  if (json.status !== "requires_capture" && json.status !== "succeeded") {
-    throw new Error(`Payment not completed (status: ${json.status}).`);
-  }
-  return json;
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -148,10 +87,8 @@ export default function CheckoutSheet({ visible, listing, onClose, onSuccess }) 
   // wallet
   const [useWallet, setUseWallet] = useState(false);
 
-  // card inputs
-  const [cardNumber, setCardNumber] = useState("");
-  const [expiry, setExpiry]         = useState("");
-  const [cvc, setCvc]               = useState("");
+  // card
+  const [cardComplete, setCardComplete] = useState(false);
 
   // async state
   const [loading, setLoading] = useState(false);
@@ -166,6 +103,7 @@ export default function CheckoutSheet({ visible, listing, onClose, onSuccess }) 
     skip: !visible,
   });
 
+  const { confirmPayment } = useConfirmPayment();
   const [createCartOrders] = useMutation(CreateCartOrdersDocument);
 
   const walletBalance     = walletData?.myWallet?.balance ?? 0; // in £
@@ -195,7 +133,7 @@ export default function CheckoutSheet({ visible, listing, onClose, onSuccess }) 
     setAddr({ line1: "", line2: "", city: "", postcode: "", country: "GB" });
     setAddrErrors({});
     setUseWallet(false);
-    setCardNumber(""); setExpiry(""); setCvc("");
+    setCardComplete(false);
     setError(""); setLoading(false);
     ordersRef.current = [];
   }
@@ -274,17 +212,21 @@ export default function CheckoutSheet({ visible, listing, onClose, onSuccess }) 
   }
 
   async function handlePay() {
-    const digits = cardNumber.replace(/\s/g, "");
-    if (digits.length < 13) { setError("Enter a valid card number."); return; }
-    if (expiry.length < 5)  { setError("Enter a valid expiry (MM/YY)."); return; }
-    if (cvc.length < 3)     { setError("Enter your CVC."); return; }
-
+    if (!cardComplete) { setError("Enter your card details."); return; }
     setError("");
     setLoading(true);
     try {
       for (const order of ordersRef.current) {
         if (!order.clientSecret) continue;
-        await confirmWithStripe(order.clientSecret, { number: cardNumber, expiry, cvc });
+        const { paymentIntent, error: stripeError } = await confirmPayment(
+          order.clientSecret,
+          { paymentMethodType: "Card" },
+        );
+        if (stripeError) throw new Error(stripeError.message);
+        // requires_capture = held by manual capture; succeeded = immediate
+        if (paymentIntent?.status !== "requires_capture" && paymentIntent?.status !== "succeeded") {
+          throw new Error(`Payment not completed (status: ${paymentIntent?.status}).`);
+        }
       }
       setPhase("success");
       onSuccess?.();
@@ -516,47 +458,27 @@ export default function CheckoutSheet({ visible, listing, onClose, onSuccess }) 
                 {/* Card details */}
                 <View style={styles.section}>
                   <SectionLabel>Card details</SectionLabel>
-                  <FieldInput
-                    label="Card number"
-                    value={cardNumber}
-                    onChangeText={(v) => setCardNumber(formatCardNumber(v))}
-                    placeholder="1234 5678 9012 3456"
-                    keyboardType="numeric"
-                    autoCapitalize="none"
-                    maxLength={19}
-                    autoFocus
+                  <CardField
+                    postalCodeEnabled={false}
+                    onCardChange={(details) => setCardComplete(details.complete)}
+                    style={{ height: 54, marginVertical: 4 }}
+                    cardStyle={{
+                      backgroundColor: COLORS.alt,
+                      textColor: COLORS.text,
+                      borderColor: COLORS.border,
+                      borderWidth: 1,
+                      borderRadius: 10,
+                      placeholderColor: COLORS.textMuted,
+                      fontSize: 15,
+                    }}
                   />
-                  <View style={{ flexDirection: "row", gap: 12 }}>
-                    <View style={{ flex: 1 }}>
-                      <FieldInput
-                        label="Expiry"
-                        value={expiry}
-                        onChangeText={(v) => setExpiry(formatExpiry(v))}
-                        placeholder="MM/YY"
-                        keyboardType="numeric"
-                        autoCapitalize="none"
-                        maxLength={5}
-                      />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <FieldInput
-                        label="CVC"
-                        value={cvc}
-                        onChangeText={(v) => setCvc(v.replace(/\D/g, "").slice(0, 4))}
-                        placeholder="123"
-                        keyboardType="numeric"
-                        autoCapitalize="none"
-                        maxLength={4}
-                      />
-                    </View>
-                  </View>
                   <Text style={styles.secureNote}>🔒 Processed securely by Stripe</Text>
                 </View>
 
                 <Pressable
                   onPress={handlePay}
-                  disabled={loading}
-                  style={[styles.primaryBtn, loading && { opacity: 0.6 }]}
+                  disabled={loading || !cardComplete}
+                  style={[styles.primaryBtn, (loading || !cardComplete) && { opacity: 0.6 }]}
                 >
                   {loading ? (
                     <ActivityIndicator color="#fff" size="small" />

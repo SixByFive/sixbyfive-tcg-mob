@@ -24,14 +24,11 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Animated,
-  Easing,
   Image,
   Linking,
   Platform,
@@ -61,6 +58,19 @@ import {
   getPushPrefsAsync,
   setPushPrefsAsync,
 } from "../lib/push";
+import {
+  checkPasswordStrength,
+  computeFrontendRestriction,
+  formatDateTime,
+  formatDobInputSlashes,
+  formatTimeInput,
+  getPasswordRules,
+  isoToUkSlashes,
+  parseUkDobToIso,
+  toInputDateValue,
+} from "../utils/settingsHelpers";
+import StatusBanner from "../components/settings/StatusBanner";
+import Collapsible from "../components/settings/Collapsible";
 
 /* ------------------------- Dev logging helpers ------------------------- */
 function devLog(...args) {
@@ -95,222 +105,6 @@ function devLogGqlError(err, label = "GraphQL error") {
     graphQLErrors,
     networkError,
   });
-}
-
-/* ------------------------- Small inline banner ------------------------- */
-function StatusBanner({ type = "info", message = "", onClose }) {
-  if (!message) return null;
-
-  const palette =
-    type === "success"
-      ? { bg: "#0f5132", fg: "#d1e7dd", border: "#badbcc" }
-      : type === "error"
-        ? { bg: "#842029", fg: "#f8d7da", border: "#f5c2c7" }
-        : type === "warning"
-          ? { bg: "#664d03", fg: "#fff3cd", border: "#ffecb5" }
-          : { bg: "#055160", fg: "#cff4fc", border: "#b6effb" }; // info
-
-  return (
-    <View
-      style={[
-        styles.banner,
-        { backgroundColor: palette.bg, borderColor: palette.border },
-      ]}
-    >
-      <Text style={[styles.bannerText, { color: palette.fg }]}>{message}</Text>
-      {onClose ? (
-        <Pressable onPress={onClose} style={styles.bannerClose}>
-          <Text style={[styles.bannerText, { color: palette.fg }]}>✕</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-/* --------------------- Password rules (same as web) -------------------- */
-function getPasswordRules(pw) {
-  return {
-    length: pw.length >= 8,
-    upper: /[A-Z]/.test(pw),
-    lower: /[a-z]/.test(pw),
-    number: /[0-9]/.test(pw),
-    special: /[\W_]/.test(pw),
-  };
-}
-function checkPasswordStrength(pw) {
-  if (pw.length < 8) return "Password must be at least 8 characters";
-  if (!/[A-Z]/.test(pw))
-    return "Password must have at least one uppercase letter";
-  if (!/[a-z]/.test(pw))
-    return "Password must have at least one lowercase letter";
-  if (!/[0-9]/.test(pw)) return "Password must have at least one number";
-  if (!/[\W_]/.test(pw))
-    return "Password must have at least one special character";
-  return null;
-}
-
-/* ----------------------- Collapsible --------------------- */
-function Collapsible({ open, children, duration = 220 }) {
-  const [measured, setMeasured] = useState(false);
-  const [contentH, setContentH] = useState(0);
-  const [fullyOpen, setFullyOpen] = useState(false);
-  const hAnim = useRef(new Animated.Value(0)).current;
-  const oAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (!measured) return;
-
-    if (!open) setFullyOpen(false);
-
-    Animated.timing(hAnim, {
-      toValue: open ? contentH : 0,
-      duration,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start(({ finished }) => {
-      if (finished && open) setFullyOpen(true);
-    });
-
-    Animated.timing(oAnim, {
-      toValue: open ? 1 : 0,
-      duration: Math.max(120, duration - 40),
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [open, measured, contentH, duration, hAnim, oAnim]);
-
-  return (
-    <>
-      {!measured && (
-        <View
-          style={{ position: "absolute", opacity: 0, left: -10000, right: 0 }}
-          pointerEvents="none"
-          onLayout={(e) => {
-            setContentH(e.nativeEvent.layout.height);
-            setMeasured(true);
-          }}
-        >
-          <View style={styles.dropdownCard}>{children}</View>
-        </View>
-      )}
-
-      {measured ? (
-        <Animated.View
-          style={
-            fullyOpen
-              ? { opacity: oAnim, overflow: "visible" }
-              : { height: hAnim, opacity: oAnim, overflow: "hidden" }
-          }
-        >
-          <View style={styles.dropdownCard}>{children}</View>
-        </Animated.View>
-      ) : null}
-    </>
-  );
-}
-
-/* =========================
-   Helpers (match web logic, UK input UX)
-========================= */
-
-function toInputDateValue(dateLike) {
-  if (!dateLike) return "";
-
-  const s = String(dateLike).trim();
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}\s/.test(s)) return s.slice(0, 10);
-
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return "";
-
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function formatDateTime(dateLike) {
-  if (!dateLike) return "";
-  const d = new Date(dateLike);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString();
-}
-
-function computeFrontendRestriction({ dob, backendLevel }) {
-  if (backendLevel) return backendLevel;
-
-  if (!dob) return "full";
-
-  const d = new Date(dob);
-  if (Number.isNaN(d.getTime())) return "full";
-
-  const now = new Date();
-  let age = now.getFullYear() - d.getFullYear();
-  const m = now.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
-
-  if (age < 13) return "child";
-  if (age < 16) return "teen";
-  return "none";
-}
-
-function isoToUkSlashes(iso) {
-  if (!iso) return "";
-  const s = String(iso).trim();
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return s;
-  const [, yyyy, mm, dd] = m;
-  return `${dd}/${mm}/${yyyy}`;
-}
-
-function formatDobInputSlashes(raw) {
-  const digits = String(raw || "")
-    .replace(/\D/g, "")
-    .slice(0, 8);
-  const dd = digits.slice(0, 2);
-  const mm = digits.slice(2, 4);
-  const yyyy = digits.slice(4, 8);
-
-  if (digits.length <= 2) return dd;
-  if (digits.length <= 4) return `${dd}/${mm}`;
-  return `${dd}/${mm}/${yyyy}`;
-}
-
-function formatTimeInput(raw) {
-  const digits = raw.replace(/\D/g, "").slice(0, 4);
-  const hh = digits.slice(0, 2);
-  const mm = digits.slice(2, 4);
-  if (digits.length <= 2) return hh;
-  return `${hh}:${mm}`;
-}
-
-function parseUkDobToIso(input) {
-  if (!input) return "";
-  const s = String(input).trim();
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-  const m = s.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
-  if (!m) return "";
-
-  const [, ddStr, mmStr, yyyyStr] = m;
-  const dd = Number(ddStr);
-  const mm = Number(mmStr);
-  const yyyy = Number(yyyyStr);
-
-  if (yyyy < 1900 || yyyy > 2100) return "";
-  if (mm < 1 || mm > 12) return "";
-  if (dd < 1 || dd > 31) return "";
-
-  const iso = `${yyyyStr}-${mmStr}-${ddStr}`;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-
-  if (toInputDateValue(d) !== iso) return "";
-
-  return iso;
 }
 
 /* =========================

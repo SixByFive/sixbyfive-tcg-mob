@@ -1,5 +1,6 @@
 // app/messages/[userId].js
 
+import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, {
@@ -985,9 +986,10 @@ export default function Thread() {
     setSheetOpen(true);
   };
 
-  const onCopy = () => {
+  const onCopy = async () => {
     setSheetOpen(false);
-    // TODO: expo-clipboard
+    const text = selectedMsg?.text || selectedMsg?.content || selectedMsg?.message || "";
+    if (text) await Clipboard.setStringAsync(text);
   };
 
   const onDelete = useCallback(async () => {

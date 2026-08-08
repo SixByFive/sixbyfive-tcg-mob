@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { getToken } from "../lib/auth";
+import { COLORS } from "../theme/colors";
 
 export default function Index() {
   useEffect(() => {
@@ -12,8 +13,8 @@ export default function Index() {
     })();
   }, []);
   return (
-    <View style={{ flex:1, justifyContent:"center", alignItems:"center", backgroundColor:"#16171c" }}>
-      <ActivityIndicator size="large" color="#2963FF" />
+    <View style={{ flex:1, justifyContent:"center", alignItems:"center", backgroundColor: COLORS.background }}>
+      <ActivityIndicator size="large" color={COLORS.accent} />
     </View>
   );
 }

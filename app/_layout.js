@@ -32,11 +32,13 @@ import React, { useEffect, useRef } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ToastProvider } from "../components/ui/ToastProvider";
+import { COLORS } from "../theme/colors";
 
 import { client } from "../lib/apollo";
 import { MessagingProvider } from "./contexts/MessengerContext";
 
-import { connectSocket, getSocketId, isSocketConnected } from "../lib/realtime";
+import { StripeProvider } from "@stripe/stripe-react-native";
+import { getSocketId, isSocketConnected } from "../lib/realtime";
 
 // ✅ CHANGED: include the auto-prompt + token helper
 import {
@@ -64,11 +66,6 @@ const REGISTER_EXPO_PUSH_TOKEN = gql`
     )
   }
 `;
-
-const COLORS = {
-  background: "#16171c",
-  accent: "#2963FF",
-};
 
 function getAppVersionSafe() {
   return (
@@ -145,11 +142,11 @@ export default function RootLayout() {
 
     (async () => {
       await bootPushAndRegisterToken();
-
-      // Existing socket boot
-      await connectSocket();
-      console.log("[TEST] socket connected?", isSocketConnected());
-      console.log("[TEST] socket id:", getSocketId());
+      // Socket is managed by MessagingProvider — no second connect here.
+      if (__DEV__) {
+        console.log("[TEST] socket connected?", isSocketConnected());
+        console.log("[TEST] socket id:", getSocketId());
+      }
     })();
   }, []);
 
@@ -182,8 +179,11 @@ export default function RootLayout() {
     );
   }
 
+  const stripeKey = process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
+
   return (
     <ApolloProvider client={client}>
+      <StripeProvider publishableKey={stripeKey}>
       <StatusBar style="light" />
       <GestureHandlerRootView
         style={{ flex: 1, backgroundColor: COLORS.background }}
@@ -199,6 +199,7 @@ export default function RootLayout() {
           </MessagingProvider>
         </ToastProvider>
       </GestureHandlerRootView>
+      </StripeProvider>
     </ApolloProvider>
   );
 }

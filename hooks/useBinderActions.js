@@ -18,7 +18,7 @@ import useToast from "./useToast";
 
 let SAFE_DOCS = {};
 try {
-  SAFE_DOCS = require("../graphql/binders-temp");
+  SAFE_DOCS = require("../graphql/binders");
 } catch (err) {
   if (__DEV__) console.warn("[useBinderActions] Safe binder queries unavailable", err?.message ?? err);
 }

@@ -2,7 +2,7 @@
 import { gql, useQuery } from "@apollo/client";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Dimensions,
@@ -38,6 +38,7 @@ const FALLBACK_BINDER_SAFE = gql`
         title
         pageOrder
         layout
+        notes
         slots { id cardId position quantity notes }
       }
     }
@@ -48,15 +49,15 @@ const FALLBACK_BINDER_SAFE = gql`
 function resolveBinderQuery() {
   try {
     // Use require() so we bypass any ESM/CJS interop oddities
-    // Path from this file: ../../../graphql/binders-temp
+    // Path from this file: ../../../graphql/binders
     // eslint-disable-next-line import/no-dynamic-require, global-require
-    const safe = require("../../../graphql/binders-temp");
+    const safe = require("../../../graphql/binders");
     const doc = safe?.BINDER_SAFE;
     if (doc && typeof doc === "object" && doc.kind === "Document") {
       return doc;
     }
   } catch (err) {
-    if (__DEV__) console.warn("[BinderEditor] require('../../../graphql/binders-temp') failed:", err?.message || err);
+    if (__DEV__) console.warn("[BinderEditor] require('../../../graphql/binders') failed:", err?.message || err);
   }
   if (__DEV__) console.warn("[BinderEditor] Using FALLBACK_BINDER_SAFE (temp module missing or invalid export)");
   return FALLBACK_BINDER_SAFE;
@@ -139,9 +140,10 @@ function mapBinderToPagesUI(binder, totalSlots, searchHints) {
     });
 
     return {
-      id: String(p?.id ?? i),             // UI id
-      rawId: p?.id ? String(p.id) : undefined, // <- persist original page id for server
+      id: String(p?.id ?? i),
+      rawId: p?.id ? String(p.id) : undefined,
       title: p?.title ?? `Page ${i + 1}`,
+      notes: p?.notes ?? "",
       slots: grid,
     };
   });
@@ -279,7 +281,7 @@ export default function BinderEditor() {
       try {
         await addCardServer({
           ...(currentPageId
-            ? { pageId: currentPageId, position: nextIdx }
+            ? { pageId: currentPageId, position: nextIdx, binderId }
             : { binderId, pageIndex: index, slotIndex: nextIdx }),
           cardId,
         });
@@ -383,6 +385,68 @@ export default function BinderEditor() {
       console.warn("removeSlot failed", e);
     }
   };
+
+  // Build a save-pages payload from raw cache data, with per-page overrides
+  const buildPagesPayload = useCallback((overrides = {}) => {
+    const rawPages = Array.isArray(data?.binder?.pages) ? data.binder.pages : [];
+    return rawPages.map((p, i) => ({
+      id: String(p.id),
+      title: p?.title ?? `Page ${i + 1}`,
+      layout: p?.layout || "pocket-9",
+      pageOrder: i,
+      notes: overrides[i]?.notes !== undefined ? overrides[i].notes : (p?.notes || ""),
+      slots: (overrides[i]?.slots ?? (Array.isArray(p?.slots) ? p.slots : []))
+        .filter((s) => s?.cardId)
+        .map((s, pos) => ({
+          ...(s?.id ? { id: String(s.id) } : {}),
+          cardId: String(s.cardId),
+          position: pos + 1,
+          quantity: Number.isFinite(s?.quantity) ? Number(s.quantity) : 1,
+          ...(s?.notes ? { notes: s.notes } : {}),
+        })),
+    }));
+  }, [data]);
+
+  const handleAutoArrange = useCallback(async (pageIdx) => {
+    const rawPage = data?.binder?.pages?.[pageIdx];
+    if (!rawPage) return;
+    const sorted = (rawPage.slots || [])
+      .filter((s) => s?.cardId)
+      .sort((a, b) => (a.cardId || "").localeCompare(b.cardId || ""));
+    try {
+      await savePagesServer(binderId, buildPagesPayload({ [pageIdx]: { slots: sorted } }));
+    } catch (e) {
+      Alert.alert("Auto-arrange failed", e?.message || "Could not arrange page.");
+    }
+  }, [data, binderId, savePagesServer, buildPagesPayload]);
+
+  const handleClearEmpty = useCallback(async (pageIdx) => {
+    const rawPage = data?.binder?.pages?.[pageIdx];
+    if (!rawPage) return;
+    const compacted = (rawPage.slots || []).filter((s) => s?.cardId);
+    try {
+      await savePagesServer(binderId, buildPagesPayload({ [pageIdx]: { slots: compacted } }));
+    } catch (e) {
+      Alert.alert("Clear empty failed", e?.message || "Could not compact page.");
+    }
+  }, [data, binderId, savePagesServer, buildPagesPayload]);
+
+  const handleNotesChange = useCallback(async (notes, pageIdx) => {
+    try {
+      await savePagesServer(binderId, buildPagesPayload({ [pageIdx]: { notes } }));
+    } catch (e) {
+      console.warn("saveNotes failed", e);
+    }
+  }, [binderId, savePagesServer, buildPagesPayload]);
+
+  const handleChangeDestination = useCallback(() => {
+    const options = pages.map((p, i) => ({
+      text: p.title || `Page ${i + 1}`,
+      onPress: () => setIndex(i),
+    }));
+    options.push({ text: "Cancel", style: "cancel" });
+    Alert.alert("Select page", "Add cards to which page?", options);
+  }, [pages]);
 
   // Options modal → update name/rows/cols/cover
   const saveOptions = async ({ name: nextName, layoutId: nextLayoutId, cover, rows, cols }) => {
@@ -548,16 +612,20 @@ export default function BinderEditor() {
           showsHorizontalScrollIndicator={false}
           getItemLayout={(_, i) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i })}
           onMomentumScrollEnd={onMomentumEnd}
-          renderItem={({ item }) => (
+          renderItem={({ item, index: pageListIdx }) => (
             <View style={{ width: SCREEN_W, height: "100%", paddingHorizontal: 12 }}>
               <BinderGrid
                 rows={layout.rows}
                 cols={layout.cols}
                 slots={item.slots}
+                notes={item.notes}
                 onSlotPress={(slotIdx) => openDrawer(slotIdx)}
                 onRemove={handleRemove}
                 onMove={handleMoveWithin}
                 onMoveToPage={handleMoveToPage}
+                onAutoArrange={() => handleAutoArrange(pageListIdx)}
+                onClearEmpty={() => handleClearEmpty(pageListIdx)}
+                onNotesChange={(n) => handleNotesChange(n, pageListIdx)}
               />
             </View>
           )}
@@ -576,7 +644,7 @@ export default function BinderEditor() {
         visible={drawerOpen}
         onClose={closeDrawer}
         destination={{ pageIndex: index, pageLabel: `Page ${index + 1}`, slotIndex: pendingSlotIndex, slotsLeft: slotsRemaining }}
-        onChangeDestination={() => {}}
+        onChangeDestination={handleChangeDestination}
         onConfirmAdd={handleConfirmAdd}
       />
 

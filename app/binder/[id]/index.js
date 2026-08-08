@@ -32,11 +32,11 @@ const FALLBACK_BINDER_SAFE = gql`
 function resolveBinderQuery() {
   try {
     // eslint-disable-next-line import/no-dynamic-require, global-require
-    const mod = require("../../../graphql/binders-temp");
+    const mod = require("../../../graphql/binders");
     const doc = mod?.BINDER_SAFE;
     if (doc && typeof doc === "object" && doc.kind === "Document") return doc;
   } catch (err) {
-    if (__DEV__) console.warn("[BinderReadOnly] require('../../../graphql/binders-temp') failed:", err?.message || err);
+    if (__DEV__) console.warn("[BinderReadOnly] require('../../../graphql/binders') failed:", err?.message || err);
   }
   if (BinderDocument && typeof BinderDocument === "object" && BinderDocument.kind === "Document") {
     return BinderDocument;
@@ -121,7 +121,7 @@ export default function BinderReadOnly() {
     );
   }
   const name = binder?.name ?? "Binder";
-  const coverColor = binder?.coverColor || "#23243c";
+  const coverColor = binder?.coverColor || COLORS.alt;
   const accentColor = binder?.accentColor || "#424a80";
 
   return (

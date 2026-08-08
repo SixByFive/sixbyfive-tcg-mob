@@ -2,6 +2,7 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { getSellerTier } from "../../utils/sellerTier";
+import { COLORS } from "../../theme/colors";
 
 /**
  * size="sm"  compact chip: ● Gold · 32 sales
@@ -97,14 +98,14 @@ const styles = StyleSheet.create({
   fullSales: { fontSize: 12, fontWeight: "600", opacity: 0.7 },
 
   rateRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  rateLabel: { color: "#8f98bc", fontSize: 12 },
+  rateLabel: { color: COLORS.textMuted, fontSize: 12 },
   rateValue: { fontSize: 12, fontWeight: "700" },
-  rateSub: { fontWeight: "500", color: "#8f98bc" },
+  rateSub: { fontWeight: "500", color: COLORS.textMuted },
 
   progressSection: { gap: 5 },
   progressLabelRow: { flexDirection: "row", justifyContent: "space-between" },
-  progressLabel: { color: "#8f98bc", fontSize: 10 },
-  track: { height: 4, backgroundColor: "#31365e", borderRadius: 2, overflow: "hidden" },
+  progressLabel: { color: COLORS.textMuted, fontSize: 10 },
+  track: { height: 4, backgroundColor: COLORS.alt, borderRadius: 2, overflow: "hidden" },
   bar: { height: "100%", borderRadius: 2 },
 
   maxTier: { fontSize: 10, fontWeight: "700" },

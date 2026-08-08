@@ -98,13 +98,13 @@ const FALLBACK_BINDER_SAFE = gql`
 function resolveBinderQuery() {
   try {
     // eslint-disable-next-line import/no-dynamic-require, global-require
-    const mod = require("../../../graphql/binders-temp");
+    const mod = require("../../../graphql/binders");
     const doc = mod?.BINDER_SAFE;
     if (doc && typeof doc === "object" && doc.kind === "Document") return doc;
   } catch (err) {
     if (__DEV__)
       console.warn(
-        "[BinderView] require('../../../graphql/binders-temp') failed:",
+        "[BinderView] require('../../../graphql/binders') failed:",
         err?.message || err,
       );
   }

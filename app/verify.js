@@ -1,10 +1,17 @@
 // app/verify.js
 
+import Constants from "expo-constants";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import PageHeaderBack from "../components/common/PageHeaderBack";
 import { COLORS } from "../theme/colors";
+
+const _extra = Constants.expoConfig?.extra || {};
+const _devMode = !!_extra.EXPO_PUBLIC_DEV_MODE;
+const _prodGql = _extra.EXPO_PUBLIC_GRAPHQL_ENDPOINT || process.env.EXPO_PUBLIC_GRAPHQL_ENDPOINT || "";
+const _devGql = _extra.EXPO_PUBLIC_GRAPHQL_ENDPOINT_LOCAL || _prodGql;
+const BASE_URL = (_devMode ? _devGql : _prodGql).replace(/\/graphql\/?$/, "");
 
 export default function VerifyAccount() {
   const { token } = useLocalSearchParams();
@@ -15,7 +22,12 @@ export default function VerifyAccount() {
     if (!hasToken) return;
     (async () => {
       try {
-        // TODO: await verifyAccount({ variables: { token } });
+        const res = await fetch(`${BASE_URL}/auth/email/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        if (!res.ok) throw new Error("verify failed");
         setStatus("success");
       } catch (e) {
         setStatus("error");
