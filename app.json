@@ -39,7 +39,8 @@
           ]
         }
       ],
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "enableProguardInReleaseBuilds": true
     },
     "web": {
       "bundler": "metro",
@@ -66,7 +67,6 @@
         }
       ],
       "react-native-vision-camera",
-      "react-native-fast-tflite",
       "expo-asset"
     ],
     "experiments": {

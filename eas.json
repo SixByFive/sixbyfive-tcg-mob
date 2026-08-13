@@ -21,7 +21,10 @@
     },
     "production": {
       "autoIncrement": true,
-      "channel": "production"
+      "channel": "production",
+      "android": {
+        "ndk": "28.0.12433566"
+      }
     }
   },
   "submit": {
