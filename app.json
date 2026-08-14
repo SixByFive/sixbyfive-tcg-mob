@@ -2,7 +2,7 @@
   "expo": {
     "name": "SixByFive TCG",
     "slug": "sbf-tcg-mobile",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "tcgmobile",
@@ -22,7 +22,6 @@
         "backgroundColor": "#ffffff"
       },
       "softwareKeyboardLayoutMode": "resize",
-      "edgeToEdgeEnabled": true,
       "package": "com.sixbyfive.sbftcgmobile",
       "permissions": ["NOTIFICATIONS", "CAMERA"],
       "intentFilters": [
@@ -49,7 +48,10 @@
     },
     "plugins": [
       "expo-router",
-      ["@stripe/stripe-react-native", { "merchantIdentifier": "merchant.com.sixbyfive.sbftcgmobile" }],
+      [
+        "@stripe/stripe-react-native",
+        { "merchantIdentifier": "merchant.com.sixbyfive.sbftcgmobile" }
+      ],
       [
         "expo-notifications",
         {
