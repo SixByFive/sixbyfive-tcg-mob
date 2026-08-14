@@ -45,3 +45,6 @@ package-lock.json
 android/app/src/main/res/mipmap-mdpi/ic_launcher_round.webp
 /android
 /.claude
+.pnp.cjs
+.pnp.loader.mjs
+.yarn/install-state.gz
