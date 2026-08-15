@@ -41,7 +41,6 @@ app-example
 package-lock.json
 .env
 *.zip
-/scripts
 android/app/src/main/res/mipmap-mdpi/ic_launcher_round.webp
 /android
 /.claude
