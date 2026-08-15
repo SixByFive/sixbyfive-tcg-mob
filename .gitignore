@@ -38,7 +38,6 @@ yarn-error.*
 
 app-example
 .vscode/settings.json
-package-lock.json
 .env
 *.zip
 android/app/src/main/res/mipmap-mdpi/ic_launcher_round.webp
