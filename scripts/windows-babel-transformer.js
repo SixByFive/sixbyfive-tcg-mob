@@ -1,34 +1,43 @@
 'use strict';
-// Windows Hermes hermesc.exe miscompiles class declarations inside module
-// factory functions under the hermes-stable transform profile (no Babel class
-// transform). Fix: strip the 'engine' caller hint so babel-preset-expo falls
-// back to the 'default' profile, which applies @babel/plugin-transform-classes
-// before hermesc sees the source. EAS (Linux) builds are unaffected.
-//
-// Loaded via metro.config.js: config.transformer.babelTransformerPath on Windows.
 
+const fs = require('fs');
 const path = require('path');
 
-// Require the default Expo Metro Babel transformer.
-// This lives inside expo's own node_modules since it's an internal package.
-const defaultTransformer = require(
-  path.join(__dirname, '..', 'node_modules', 'expo', 'node_modules', '@expo', 'metro-config', 'build', 'babel-transformer.js')
-);
+// @expo/metro-config may be deduplicated to the top-level node_modules (Linux/EAS)
+// or nested under expo/node_modules (Windows npm hoisting). Try both.
+function resolveExpoTransformer() {
+  const candidates = [
+    path.join(__dirname, '..', 'node_modules', '@expo', 'metro-config', 'build', 'babel-transformer.js'),
+    path.join(__dirname, '..', 'node_modules', 'expo', 'node_modules', '@expo', 'metro-config', 'build', 'babel-transformer.js'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  throw new Error(
+    '[hermes-compat-transformer] Could not locate @expo/metro-config/build/babel-transformer.js.\n' +
+    'Tried:\n' + candidates.map(p => '  ' + p).join('\n')
+  );
+}
 
+const defaultTransformer = require(resolveExpoTransformer());
+
+// Strip engine:'hermes' from customTransformOptions so babel-preset-expo selects
+// the 'default' transform profile instead of 'hermes-stable'. This causes Babel
+// to apply @babel/plugin-transform-classes and @babel/plugin-transform-private-*
+// before hermesc sees the source, which is required because hermesc bundled with
+// RN 0.81.x does not support native class declarations or #private fields.
 const transform = (params) => {
-  const {options} = params;
+  const { options } = params;
   return defaultTransformer.transform({
     ...params,
     options: {
       ...options,
       customTransformOptions: {
         ...(options.customTransformOptions || {}),
-        // Suppress 'hermes' so babel-preset-expo picks 'default' profile.
-        // See: babel-preset-expo/build/index.js line ~55
         engine: undefined,
       },
     },
   });
 };
 
-module.exports = {transform};
+module.exports = { transform };
