@@ -244,7 +244,6 @@ export function useCollectionWishlistActions() {
       } catch {}
     },
     refetchQueries: [{ query: MY_COLLECTION_APP }],
-    awaitRefetchQueries: true,
   });
 
   /* --------------- Public API --------------- */

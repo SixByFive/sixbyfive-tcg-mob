@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../theme/colors";
 
 export default function PageHeaderBack({
@@ -13,8 +14,9 @@ export default function PageHeaderBack({
   onBack,       // optional custom back handler
   right = null, // optional right-side content (e.g., menu, call icon)
 }) {
+  const insets = useSafeAreaInsets();
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, { paddingTop: insets.top + 8 }]}>
       <View style={styles.row}>
         {/* Back */}
         <Pressable
@@ -54,7 +56,7 @@ export default function PageHeaderBack({
 }
 
 const styles = StyleSheet.create({
-  wrap: { paddingHorizontal: 16, paddingTop: 35, paddingBottom: 6 },
+  wrap: { paddingHorizontal: 16, paddingBottom: 6 },
   row: { flexDirection: "row", alignItems: "center" },
 
   userBlock: { flexDirection: "row", alignItems: "center", flex: 1, gap: 10 },

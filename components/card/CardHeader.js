@@ -2,11 +2,13 @@
 
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../theme/colors";
 
 export default function CardHeader({ title, onBack }) {
+  const insets = useSafeAreaInsets();
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
       <Pressable onPress={onBack} style={styles.backBtn}>
         <Text style={styles.backBtnText}>‹ Back</Text>
       </Pressable>
@@ -20,7 +22,7 @@ export default function CardHeader({ title, onBack }) {
 
 const styles = StyleSheet.create({
   header: {
-    paddingTop: 25,
+    paddingTop: 10,
     paddingHorizontal: 12,
     paddingBottom: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,

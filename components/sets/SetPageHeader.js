@@ -3,6 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS } from "../../theme/colors";
 import getSetLogo from "../../utils/setLogos.native";
 
@@ -15,6 +16,7 @@ export default function SetPageHeader({
   onBack,
   right = null,
 }) {
+  const insets = useSafeAreaInsets();
   const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
 
   // Prefer abbr if present; fall back to code; otherwise hide subtitle
@@ -26,7 +28,7 @@ export default function SetPageHeader({
   })();
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, { paddingTop: insets.top + 8 }]}>
       <View style={styles.row}>
         {/* Back */}
         <Pressable
@@ -81,7 +83,7 @@ export default function SetPageHeader({
 const styles = StyleSheet.create({
   wrap: {
     paddingHorizontal: 12,
-    paddingTop: 35,
+    paddingTop: 8,
     paddingBottom: 8,
     backgroundColor: COLORS.background,
   },
