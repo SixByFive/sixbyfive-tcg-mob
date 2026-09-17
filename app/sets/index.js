@@ -104,7 +104,7 @@ export default function SetsIndexScreen() {
   });
 
   const sets = useMemo(() => {
-    const raw = Array.isArray(data?.searchSets) ? data.searchSets : [];
+    const raw = Array.isArray(data?.cardsearchSets) ? data.cardsearchSets : [];
     return raw
       .map((s) => ({
         code: s.code,
