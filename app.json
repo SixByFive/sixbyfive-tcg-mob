@@ -47,14 +47,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "ndkVersion": "28.0.12433566"
-          }
-        }
-      ],
+      ["./plugins/withNdkVersion", { "ndkVersion": "28.0.12433566" }],
       "expo-router",
       [
         "@stripe/stripe-react-native",
