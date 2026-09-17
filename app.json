@@ -2,7 +2,7 @@
   "expo": {
     "name": "SixByFive TCG",
     "slug": "sbf-tcg-mobile",
-    "version": "2.0.1",
+    "version": "2.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "tcgmobile",
@@ -47,6 +47,14 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "ndkVersion": "28.0.12433566"
+          }
+        }
+      ],
       "expo-router",
       [
         "@stripe/stripe-react-native",
