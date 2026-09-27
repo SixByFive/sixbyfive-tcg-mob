@@ -504,7 +504,7 @@ export default function CollectionTab() {
     if (collError && __DEV__) {
       console.warn("[CollectionTab] myCollection GraphQL error", {
         message: extractGraphQLError(collError),
-        statusCode: collError?.networkError?.statusCode || 400,
+        statusCode: collError?.networkError?.statusCode,
       });
     }
   }, [collError]);
@@ -544,7 +544,7 @@ export default function CollectionTab() {
     if (wishlistError && __DEV__) {
       console.warn("[CollectionTab] myWishlist GraphQL error", {
         message: extractGraphQLError(wishlistError),
-        statusCode: wishlistError?.networkError?.statusCode || 400,
+        statusCode: wishlistError?.networkError?.statusCode,
       });
     }
   }, [wishlistError]);

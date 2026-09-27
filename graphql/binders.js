@@ -32,7 +32,6 @@ export const BINDER_SAFE = gql`
         title
         pageOrder
         layout
-        notes
         slots { id cardId position quantity notes }
       }
     }
