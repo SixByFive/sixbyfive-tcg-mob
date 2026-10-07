@@ -96,6 +96,35 @@ const USER_PROFILE_PUBLIC = gql`
         createdAt
         lastLogin
         updatedAt
+
+        cardsPreview {
+          id
+          cardId
+          quantity
+          card { id name images { small } }
+        }
+        wishlistPreview {
+          id
+          cardId
+          card { id name images { small } }
+        }
+        forSalePreview {
+          id
+          title
+          price
+          currency
+          listingKind
+          willTrade
+          cardInfo { id name imageSmall }
+        }
+        forTradePreview {
+          id
+          title
+          price
+          currency
+          listingKind
+          cardInfo { id name imageSmall }
+        }
       }
     }
   }

@@ -97,8 +97,8 @@ export default function ProfileTab() {
       { key: "cards", label: "Cards" },
       { key: "binders", label: "Binders" },
       { key: "wishlist", label: "Wishlist" },
-      // { key: "forSale", label: "For Sale" },
-      // { key: "forTrade", label: "For Trade" },
+      { key: "forSale", label: "For Sale" },
+      { key: "forTrade", label: "For Trade" },
     ],
     []
   );
@@ -159,8 +159,17 @@ export default function ProfileTab() {
     sales: me?.stats?.sales ?? me?.salesCount ?? 0,
   };
   const cardsPreview = Array.isArray(me?.cardsPreview) ? me.cardsPreview : [];
-  const forSalePreview = Array.isArray(me?.forSalePreview) ? me.forSalePreview : [];
-  const forTradePreview = Array.isArray(me?.forTradePreview) ? me.forTradePreview : [];
+  // Normalise listings into the {id, name, image, listingKind, cardId} shape
+  // SaleTradeTab renders. Bulk lots use the listing title and no card image.
+  const toListingTile = (l) => ({
+    id: l.id,
+    cardId: l.cardInfo?.id ?? null,
+    name: l.cardInfo?.name || l.title || "Lot",
+    image: l.cardInfo?.imageSmall || null,
+    listingKind: l.listingKind,
+  });
+  const forSalePreview  = (me?.forSalePreview  || []).map(toListingTile);
+  const forTradePreview = (me?.forTradePreview || []).map(toListingTile);
   const uploadAvatarIfNeeded = useCallback(async (uri) => {
     if (!uri || typeof uri !== "string") return uri;
     if (/^file:|^content:/i.test(uri)) {
@@ -365,9 +374,14 @@ export default function ProfileTab() {
           <SaleTradeTab
             title="For Sale"
             items={forSalePreview}
-            onOpenCard={(c) =>
-              router.push({ pathname: "/card/[id]", params: { id: String(c.id) } })
-            }
+            onOpenCard={(c) => {
+              // Singles → open the catalog card. Bulk lots don't have a
+              // single-card detail; routing to a lot-detail screen is a
+              // follow-up once that exists.
+              if (c.cardId) {
+                router.push({ pathname: "/card/[id]", params: { id: String(c.cardId) } });
+              }
+            }}
           />
         )}
 
@@ -375,9 +389,11 @@ export default function ProfileTab() {
           <SaleTradeTab
             title="For Trade"
             items={forTradePreview}
-            onOpenCard={(c) =>
-              router.push({ pathname: "/card/[id]", params: { id: String(c.id) } })
-            }
+            onOpenCard={(c) => {
+              if (c.cardId) {
+                router.push({ pathname: "/card/[id]", params: { id: String(c.cardId) } });
+              }
+            }}
           />
         )}
 

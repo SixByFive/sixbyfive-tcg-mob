@@ -77,6 +77,35 @@ export const MeDocument = gql`
       lastLogin
       createdAt
       updatedAt
+
+      cardsPreview {
+        id
+        cardId
+        quantity
+        card { id name images { small } }
+      }
+      wishlistPreview {
+        id
+        cardId
+        card { id name images { small } }
+      }
+      forSalePreview {
+        id
+        title
+        price
+        currency
+        listingKind
+        willTrade
+        cardInfo { id name imageSmall }
+      }
+      forTradePreview {
+        id
+        title
+        price
+        currency
+        listingKind
+        cardInfo { id name imageSmall }
+      }
     }
   }
 `;
@@ -832,6 +861,23 @@ export const CreateListingDocument = gql`
   mutation CreateListing($input: CreateListingInput!) {
     createListing(input: $input) {
       id cardId price currency condition variation status createdAt
+    }
+  }
+`;
+
+// Bulk-lot sale — one listing representing a whole lot (tracked from the
+// seller's collection or a seller-declared random lot).
+export const CreateBulkLotDocument = gql`
+  mutation CreateBulkLot($input: CreateBulkLotInput!) {
+    createBulkLot(input: $input) {
+      id
+      listingKind
+      title
+      cardCount
+      status
+      proofCode
+      proofCodeExpiresAt
+      createdAt
     }
   }
 `;

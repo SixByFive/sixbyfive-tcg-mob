@@ -13,6 +13,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { gql, useApolloClient, useMutation } from "@apollo/client";
 import { COLORS } from "../../theme/colors";
 import {
@@ -64,6 +65,7 @@ function median(nums) {
 export default function CreateListingSheet({ visible, onClose, onCreated }) {
   const insets = useSafeAreaInsets();
   const client = useApolloClient();
+  const router = useRouter();
 
   // Steps: "pick" | "details" | "done"
   const [step, setStep] = useState("pick");
@@ -462,7 +464,22 @@ export default function CreateListingSheet({ visible, onClose, onCreated }) {
               textAlignVertical="top"
             />
 
-            {err ? <Text style={styles.errText}>{err}</Text> : null}
+            {err ? (
+              <View>
+                <Text style={styles.errText}>{err}</Text>
+                {/listing limit/i.test(err) && (
+                  <Text
+                    style={[styles.errText, { color: COLORS.accent, textDecorationLine: "underline" }]}
+                    onPress={() => {
+                      onClose?.();
+                      router.push("/subscriptions");
+                    }}
+                  >
+                    Upgrade your plan →
+                  </Text>
+                )}
+              </View>
+            ) : null}
 
             <View style={styles.submitRow}>
               <Pressable onPress={() => setStep("pick")} style={styles.backBtn}>

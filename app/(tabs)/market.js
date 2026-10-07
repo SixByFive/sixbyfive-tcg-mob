@@ -21,6 +21,7 @@ import PageHeader from "../../components/common/PageHeader";
 import { COLORS } from "../../theme/colors";
 
 import CreateListingSheet from "../../components/market/CreateListingSheet";
+import BulkLotSheet from "../../components/market/BulkLotSheet";
 import ListingDetailSheet from "../../components/market/ListingDetailSheet";
 import ListingRow from "../../components/market/ListingRow";
 import MarketplaceRulesSheet from "../../components/market/MarketplaceRulesSheet";
@@ -86,6 +87,7 @@ export default function MarketTab() {
   const BROWSE_PAGE_SIZE = 24;
   const [selectedListing, setSelectedListing] = useState(null);
   const [showCreateListing, setShowCreateListing] = useState(false);
+  const [showBulkLot, setShowBulkLot] = useState(false);
   const [proofListing, setProofListing] = useState(null);
   const [showSellerSetup, setShowSellerSetup] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
@@ -234,7 +236,10 @@ export default function MarketTab() {
               onPress={() => setSort(opt.value)}
               style={[styles.sortChip, sort === opt.value && styles.sortChipActive]}
             >
-              <Text style={[styles.sortChipText, sort === opt.value && styles.sortChipTextActive]}>
+              <Text
+                numberOfLines={1}
+                style={[styles.sortChipText, sort === opt.value && styles.sortChipTextActive]}
+              >
                 {opt.label}
               </Text>
             </Pressable>
@@ -335,6 +340,12 @@ export default function MarketTab() {
               >
                 <Text style={styles.ctaText}>+ Create Listing</Text>
               </Pressable>
+              <Pressable
+                onPress={() => setShowBulkLot(true)}
+                style={[styles.cta, { backgroundColor: COLORS.alt, borderWidth: 1, borderColor: COLORS.border }]}
+              >
+                <Text style={[styles.ctaText, { color: COLORS.textMuted }]}>📦 Sell bulk lot</Text>
+              </Pressable>
               <View style={{ flexDirection: "row", gap: 8 }}>
                 <Pressable
                   onPress={() => setShowDashboard(true)}
@@ -403,6 +414,15 @@ export default function MarketTab() {
         }}
       />
 
+      <BulkLotSheet
+        visible={showBulkLot}
+        onClose={() => {
+          setShowBulkLot(false);
+          if (segment === "listings") refetchMy();
+        }}
+        onCreated={() => { refetchMy(); }}
+      />
+
       <MarketplaceRulesSheet
         visible={showRules}
         isLoggedIn={isLoggedIn}
@@ -451,7 +471,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 6,
-    alignItems: "center",
   },
   sortChip: {
     borderWidth: 1,
@@ -460,7 +479,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 6,
     backgroundColor: COLORS.alt,
-    alignSelf: "flex-start",
+    // Keep each chip at its natural content width — without this, Android can
+    // squeeze chips to a tiny column when the row fits within the viewport,
+    // which collapses the label into vertical gibberish.
+    flexShrink: 0,
   },
   sortChipActive: {
     backgroundColor: COLORS.accent,
