@@ -13,7 +13,6 @@ import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Modal,
   Pressable,
   StyleSheet,
@@ -21,6 +20,7 @@ import {
   View,
 } from "react-native";
 import { normalizeImageUrl } from "../../utils/cards";
+import CardImage from "../common/CardImage";
 
 /* -------------------- helpers -------------------- */
 
@@ -188,13 +188,12 @@ export default function WishlistGrid({
           ]}
         >
           <View style={styles.wishlistImgWrap}>
-            {img ? (
-              <Image
-                source={{ uri: img }}
-                resizeMode="contain"
-                style={StyleSheet.absoluteFill}
-              />
-            ) : null}
+            <CardImage
+              uri={img}
+              name={c.name}
+              cardId={cardId}
+              style={StyleSheet.absoluteFill}
+            />
 
             {/* Status badge */}
             {showStatusBadges && !!status && (

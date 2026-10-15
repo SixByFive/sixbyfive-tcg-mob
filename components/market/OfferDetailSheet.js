@@ -2,7 +2,6 @@
 import React, { useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -14,6 +13,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@apollo/client";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 import { RespondToOfferDocument, WithdrawOfferDocument } from "../../graphql/documents";
 import { OFFER_STATUS_META } from "./OfferRow";
 
@@ -198,11 +198,7 @@ export default function OfferDetailSheet({ offer, direction, visible, onClose, o
           {/* Card + status */}
           <SectionBox>
             <View style={{ flexDirection: "row", gap: 12, alignItems: "flex-start" }}>
-              {cardInfo?.imageSmall ? (
-                <Image source={{ uri: cardInfo.imageSmall }} style={styles.cardImage} resizeMode="contain" />
-              ) : (
-                <View style={[styles.cardImage, { backgroundColor: COLORS.alt }]} />
-              )}
+              <CardImage uri={cardInfo?.imageSmall} name={cardInfo?.name} cardId={cardInfo?.id} style={styles.cardImage} />
               <View style={{ flex: 1, gap: 5 }}>
                 <Text style={styles.cardName}>{cardInfo?.name || "Card"}</Text>
                 {cardInfo?.setName && <Text style={styles.setName}>{cardInfo.setName}</Text>}

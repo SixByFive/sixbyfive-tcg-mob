@@ -8,7 +8,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -17,6 +16,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import CardImage from "../../components/common/CardImage";
 import SetPageHeader from "../../components/sets/SetPageHeader";
 import useSetOwned from "../../hooks/useSetOwned";
 import { COLORS } from "../../theme/colors";
@@ -82,13 +82,7 @@ function CardTile({ card, owned }) {
   return (
     <View style={styles.cardTile} accessible>
       <View style={styles.imageWrap}>
-        {card?.imageUrl ? (
-          <Image source={{ uri: card.imageUrl }} style={styles.cardImage} resizeMode="contain" />
-        ) : (
-          <View style={styles.noImg}>
-            <Text style={styles.noImgText}>No Image</Text>
-          </View>
-        )}
+        <CardImage uri={card?.imageUrl} name={card?.name} cardId={card?.id} style={styles.cardImage} />
         {owned && (
           <View style={styles.ownedPill}>
             <Text style={styles.ownedPillText}>Owned</Text>

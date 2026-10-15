@@ -2,7 +2,6 @@
 import React, { useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   Linking,
   Modal,
   Pressable,
@@ -15,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@apollo/client";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 import { getApiBase } from "../../utils/getApiBase";
 import {
   ShipOrderDocument,
@@ -280,11 +280,7 @@ export default function OrderDetailSheet({ order, myUserId, visible, onClose, on
           {/* Card + status */}
           <SectionBox>
             <View style={{ flexDirection: "row", gap: 12, alignItems: "flex-start" }}>
-              {cardInfo?.imageSmall ? (
-                <Image source={{ uri: cardInfo.imageSmall }} style={styles.cardImage} resizeMode="contain" />
-              ) : (
-                <View style={[styles.cardImage, { backgroundColor: COLORS.alt }]} />
-              )}
+              <CardImage uri={cardInfo?.imageSmall} name={cardInfo?.name} cardId={cardInfo?.id} style={styles.cardImage} />
               <View style={{ flex: 1, gap: 5 }}>
                 <Text style={styles.cardName}>{cardInfo?.name || "Card"}</Text>
                 {cardInfo?.setName && <Text style={styles.setName}>{cardInfo.setName}</Text>}

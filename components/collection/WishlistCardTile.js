@@ -15,9 +15,10 @@
 
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useMemo, useState } from "react";
-import { Image, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 import { normalizeImageUrl } from "../../utils/cards";
+import CardImage from "../common/CardImage";
 
 /* =================== Price helpers (COPIED from CollectionCardTile) =================== */
 
@@ -284,13 +285,12 @@ export default function WishlistCardTile({
           android_ripple={{ color: "#00000022" }}
         >
           <View style={styles.cardImageWrap}>
-            {imageUri ? (
-              <Image
-                source={{ uri: imageUri }}
-                style={styles.cardImage}
-                resizeMode="contain"
-              />
-            ) : null}
+            <CardImage
+              uri={imageUri}
+              name={item?.name}
+              cardId={item?.id ?? item?._wishlist?.cardId}
+              style={styles.cardImage}
+            />
 
             {/* Status pill (display-only) */}
             {statusLabel ? (

@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation, useQuery } from "@apollo/client";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 import { CreateMarketOfferDocument, SellerReputationDocument } from "../../graphql/documents";
 import { getApiBase } from "../../utils/getApiBase";
 import SellerTierBadge from "./SellerTierBadge";
@@ -159,18 +160,15 @@ export default function ListingDetailSheet({ listing, visible, onClose }) {
                     <Text style={styles.enlargeHintText}>Tap to enlarge</Text>
                   </View>
                 </Pressable>
-              ) : imageUrl ? (
-                // Card image slide
-                <View style={styles.imagePanelInner}>
-                  <Image
-                    source={{ uri: imageUrl }}
-                    style={styles.cardImage}
-                    resizeMode="contain"
-                  />
-                </View>
               ) : (
-                <View style={styles.noImage}>
-                  <Text style={styles.noImageText}>No image</Text>
+                // Card image slide (sprite fallback when there is no image)
+                <View style={styles.imagePanelInner}>
+                  <CardImage
+                    uri={imageUrl}
+                    name={info.name}
+                    cardId={info.id || listing.cardId}
+                    style={styles.cardImage}
+                  />
                 </View>
               )}
 

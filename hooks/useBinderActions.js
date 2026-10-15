@@ -13,14 +13,16 @@ import {
 } from "../graphql/documents";
 // MoveBinderSlot / RemoveBinderSlot do not exist in the tcg-runtime gateway schema.
 // Both operations are implemented below using saveBinderPagesAndSlots (full bulk-save).
-import { useCallback } from "react";
-import useToast from "./useToast";
 
 let SAFE_DOCS = {};
 try {
   SAFE_DOCS = require("../graphql/binders");
 } catch (err) {
-  if (__DEV__) console.warn("[useBinderActions] Safe binder queries unavailable", err?.message ?? err);
+  if (__DEV__)
+    console.warn(
+      "[useBinderActions] Safe binder queries unavailable",
+      err?.message ?? err,
+    );
 }
 
 const BINDER_QUERY = SAFE_DOCS.BINDER_SAFE || BinderDocument;
@@ -46,8 +48,8 @@ function logError(tag, err, extra = {}) {
         `  #${i + 1}:`,
         e.message,
         e.path ? ` path=${JSON.stringify(e.path)}` : "",
-        e.extensions ? ` extensions=${JSON.stringify(e.extensions)}` : ""
-      )
+        e.extensions ? ` extensions=${JSON.stringify(e.extensions)}` : "",
+      ),
     );
   }
   if (ne) {
@@ -60,8 +62,8 @@ function logError(tag, err, extra = {}) {
           `  #${i + 1}:`,
           e.message,
           e.path ? ` path=${JSON.stringify(e.path)}` : "",
-          e.extensions ? ` extensions=${JSON.stringify(e.extensions)}` : ""
-        )
+          e.extensions ? ` extensions=${JSON.stringify(e.extensions)}` : "",
+        ),
       );
     }
   }
@@ -77,7 +79,12 @@ const isFiniteNum = (n) => Number.isFinite(n);
 
 // Backend layouts + capacity
 const CAPACITY = { "pocket-9": 9, "pocket-4": 4, "pocket-3": 3, full: 1 };
-const LAYOUT_BY_RC = { "3x3": "pocket-9", "2x2": "pocket-4", "3x1": "pocket-3", "1x1": "full" };
+const LAYOUT_BY_RC = {
+  "3x3": "pocket-9",
+  "2x2": "pocket-4",
+  "3x1": "pocket-3",
+  "1x1": "full",
+};
 
 function layoutFromRowsCols(rows, cols) {
   const key = `${Number(rows) || 0}x${Number(cols) || 0}`;
@@ -93,7 +100,9 @@ function slotCardId(s) {
     s?.card_id ??
     s?.card?.code ??
     s?.card?.id ??
-    (typeof s?.id === "string" && (s.id.match(/-/g) || []).length === 1 ? s.id : null);
+    (typeof s?.id === "string" && (s.id.match(/-/g) || []).length === 1
+      ? s.id
+      : null);
 
   return c ? String(c) : null;
 }
@@ -127,8 +136,12 @@ function normalizePositions(slots, capacity) {
 function summarizePagesPayload(pages) {
   return pages.map((p) => {
     const capacity = CAPACITY[p.layout] ?? 9;
-    const positions = (Array.isArray(p.slots) ? p.slots : []).map((s) => s.position);
-    const dupePositions = positions.filter((pos, idx) => positions.indexOf(pos) !== idx);
+    const positions = (Array.isArray(p.slots) ? p.slots : []).map(
+      (s) => s.position,
+    );
+    const dupePositions = positions.filter(
+      (pos, idx) => positions.indexOf(pos) !== idx,
+    );
     const outOfRange = positions.filter((pos) => pos < 1 || pos > capacity);
     return {
       pageId: p.id || "(new)",
@@ -145,7 +158,8 @@ function summarizePagesPayload(pages) {
   });
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CODE_RE = /^[a-z]{2,4}\d{1,4}-[0-9a-z]{2,6}$/i;
 
 function coerceCardCodeFromCache(apollo, v) {
@@ -155,7 +169,7 @@ function coerceCardCodeFromCache(apollo, v) {
   try {
     const data = apollo.readQuery({ query: MyCollectionDocument });
     const arr =
-      (data?.myCollection?.edges?.map((e) => e?.node).filter(Boolean)) ||
+      data?.myCollection?.edges?.map((e) => e?.node).filter(Boolean) ||
       data?.myCollection ||
       data?.collection ||
       [];
@@ -207,7 +221,9 @@ function buildPagesPayload(binder, patch) {
         if (!code) continue;
 
         const pos =
-          Number.isFinite(s?.position) && Number(s.position) > 0 ? Number(s.position) : i + 1;
+          Number.isFinite(s?.position) && Number(s.position) > 0
+            ? Number(s.position)
+            : i + 1;
 
         slots.push({
           ...(s?.id ? { id: sid(s.id) } : {}),
@@ -222,7 +238,8 @@ function buildPagesPayload(binder, patch) {
       const matchesPatchById = patch?.pageId && sid(patch.pageId) === sid(p.id);
       const matchesPatchByIndex =
         !patch?.pageId &&
-        Number(patch?.pageIndex) === (Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx);
+        Number(patch?.pageIndex) ===
+          (Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx);
 
       if (patch && (matchesPatchById || matchesPatchByIndex)) {
         slots.push({
@@ -238,7 +255,8 @@ function buildPagesPayload(binder, patch) {
       return {
         id: sid(p.id),
         title:
-          p?.title ?? `Page ${(Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx) + 1}`,
+          p?.title ??
+          `Page ${(Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx) + 1}`,
         layout,
         pageOrder: Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx,
         slots: saneSlots,
@@ -260,23 +278,24 @@ function buildPagesPayloadWithNewLayout(binder, newLayoutKey) {
       const capacity = CAPACITY[newLayoutKey] ?? 9;
 
       const saneSlots = normalizePositions(
-        slotsArr
-          .filter(Boolean)
-          .map((s, i) => ({
-            ...(s?.id ? { id: sid(s.id) } : {}),
-            cardId: sid(slotCardId(s) || ""),
-            position:
-              Number.isFinite(s?.position) && Number(s.position) > 0 ? Number(s.position) : i + 1,
-            quantity: isFiniteNum(s?.quantity) ? Number(s.quantity) : 1,
-            ...(s?.notes ? { notes: s.notes } : {}),
-          })),
-        capacity
+        slotsArr.filter(Boolean).map((s, i) => ({
+          ...(s?.id ? { id: sid(s.id) } : {}),
+          cardId: sid(slotCardId(s) || ""),
+          position:
+            Number.isFinite(s?.position) && Number(s.position) > 0
+              ? Number(s.position)
+              : i + 1,
+          quantity: isFiniteNum(s?.quantity) ? Number(s.quantity) : 1,
+          ...(s?.notes ? { notes: s.notes } : {}),
+        })),
+        capacity,
       );
 
       return {
         id: sid(p.id),
         title:
-          p?.title ?? `Page ${(Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx) + 1}`,
+          p?.title ??
+          `Page ${(Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx) + 1}`,
         layout: newLayoutKey,
         pageOrder: Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : idx,
         slots: saneSlots,
@@ -303,7 +322,9 @@ export default function useBinderActions() {
       if (Array.isArray(list)) {
         const exists = list.some((b) => sid(b.id) === sid(binder.id));
         const myBinders = exists
-          ? list.map((b) => (sid(b.id) === sid(binder.id) ? { ...b, ...binder } : b))
+          ? list.map((b) =>
+              sid(b.id) === sid(binder.id) ? { ...b, ...binder } : b,
+            )
           : [binder, ...list];
         apollo.writeQuery({ query: MY_BINDERS_QUERY, data: { myBinders } });
       }
@@ -314,7 +335,9 @@ export default function useBinderActions() {
       if (Array.isArray(root)) {
         const exists = root.some((b) => sid(b.id) === sid(binder.id));
         const newList = exists
-          ? root.map((b) => (sid(b.id) === sid(binder.id) ? { ...b, ...binder } : b))
+          ? root.map((b) =>
+              sid(b.id) === sid(binder.id) ? { ...b, ...binder } : b,
+            )
           : [binder, ...root];
         if (browse?.browseBinders) {
           apollo.writeQuery({
@@ -359,14 +382,23 @@ export default function useBinderActions() {
    * Update binder meta (name/colors) and/or layout (rows/cols/template).
    * Meta first; if layout changes, bulk-save with the new layout across all pages.
    */
-  async function updateBinder({ binderId, name, cover, rows, cols, templateId } = {}) {
+  async function updateBinder({
+    binderId,
+    name,
+    cover,
+    rows,
+    cols,
+    templateId,
+  } = {}) {
     const id = sid(binderId);
 
     // 1) meta (try both server shapes)
     const varsA = {
       id,
       input: {
-        ...(typeof name === "string" && name.trim() ? { name: name.trim() } : {}),
+        ...(typeof name === "string" && name.trim()
+          ? { name: name.trim() }
+          : {}),
         ...(cover?.color ? { coverColor: cover.color } : {}),
         ...(cover?.accent ? { accentColor: cover.accent } : {}),
       },
@@ -391,16 +423,27 @@ export default function useBinderActions() {
 
     // 2) layout change → bulk save (preserve pageOrder)
     const wantsLayoutChange =
-      (isFiniteNum(rows) && isFiniteNum(cols)) || (typeof templateId === "string" && templateId);
+      (isFiniteNum(rows) && isFiniteNum(cols)) ||
+      (typeof templateId === "string" && templateId);
 
     if (wantsLayoutChange) {
       const desiredLayout =
-        (typeof templateId === "string" && templateId) || layoutFromRowsCols(rows, cols);
-      const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id } });
+        (typeof templateId === "string" && templateId) ||
+        layoutFromRowsCols(rows, cols);
+      const cached = apollo.readQuery({
+        query: BINDER_QUERY,
+        variables: { id },
+      });
       const binder = cached?.binder;
       if (binder) {
-        const pagesPayload = buildPagesPayloadWithNewLayout(binder, desiredLayout);
-        log("[Binder/update->savePages] payload summary:", summarizePagesPayload(pagesPayload));
+        const pagesPayload = buildPagesPayloadWithNewLayout(
+          binder,
+          desiredLayout,
+        );
+        log(
+          "[Binder/update->savePages] payload summary:",
+          summarizePagesPayload(pagesPayload),
+        );
         await savePages(id, pagesPayload);
       }
     }
@@ -465,7 +508,12 @@ export default function useBinderActions() {
         .map((p) => (Number.isFinite(p?.pageOrder) ? Number(p.pageOrder) : 0))
         .reduce((a, b) => Math.max(a, b), -1) || -1;
 
-    const nextPage = { title: `Page ${lastOrder + 2}`, layout, pageOrder: lastOrder + 1, slots: [] };
+    const nextPage = {
+      title: `Page ${lastOrder + 2}`,
+      layout,
+      pageOrder: lastOrder + 1,
+      slots: [],
+    };
     const basePayload = buildPagesPayload(binder);
     const payload = [...basePayload, nextPage];
 
@@ -477,7 +525,10 @@ export default function useBinderActions() {
       });
       return data?.saveBinderPagesAndSlots ?? data?.binder ?? null;
     } catch (e) {
-      logError("Binder/addPage", e, { id, payloadSummary: summarizePagesPayload(payload) });
+      logError("Binder/addPage", e, {
+        id,
+        payloadSummary: summarizePagesPayload(payload),
+      });
       throw e;
     }
   }
@@ -518,11 +569,13 @@ export default function useBinderActions() {
             ...(s?.id ? { id: sid(s.id) } : {}),
             cardId: sid(slotCardId(s) || ""),
             position:
-              Number.isFinite(s?.position) && Number(s.position) > 0 ? Number(s.position) : j + 1,
+              Number.isFinite(s?.position) && Number(s.position) > 0
+                ? Number(s.position)
+                : j + 1,
             quantity: isFiniteNum(s?.quantity) ? Number(s.quantity) : 1,
             ...(s?.notes ? { notes: s.notes } : {}),
           })),
-        capacity
+        capacity,
       );
       // Re-number pageOrder densely from 0
       return {
@@ -561,7 +614,10 @@ export default function useBinderActions() {
       });
       return data?.saveBinderPagesAndSlots ?? data?.binder ?? null;
     } catch (e) {
-      logError("Binder/savePages", e, { id, payloadSummary: summarizePagesPayload(pages) });
+      logError("Binder/savePages", e, {
+        id,
+        payloadSummary: summarizePagesPayload(pages),
+      });
       throw e;
     }
   }
@@ -593,16 +649,25 @@ export default function useBinderActions() {
     if (!pid) {
       if (!bId) throw new Error("addCard requires pageId or binderId");
       // Try cache first, fall back to network fetch on miss
-      let binderData = apollo.readQuery({ query: BINDER_QUERY, variables: { id: bId } });
+      let binderData = apollo.readQuery({
+        query: BINDER_QUERY,
+        variables: { id: bId },
+      });
       if (!binderData?.binder?.pages?.length) {
         try {
-          const res = await apollo.query({ query: BINDER_QUERY, variables: { id: bId }, fetchPolicy: "network-only" });
+          const res = await apollo.query({
+            query: BINDER_QUERY,
+            variables: { id: bId },
+            fetchPolicy: "network-only",
+          });
           binderData = res.data;
         } catch (fetchErr) {
           log("[Binder/addCard] binder fetch failed:", fetchErr?.message);
         }
       }
-      let pages = Array.isArray(binderData?.binder?.pages) ? binderData.binder.pages : [];
+      let pages = Array.isArray(binderData?.binder?.pages)
+        ? binderData.binder.pages
+        : [];
 
       // Binder exists but has no pages yet — auto-create the first page
       if (!pages.length) {
@@ -612,13 +677,18 @@ export default function useBinderActions() {
           const { data: createData } = await savePagesMut({
             variables: {
               binderId: bId,
-              pages: [{ title: "Page 1", layout: defaultLayout, pageOrder: 0, slots: [] }],
+              pages: [
+                {
+                  title: "Page 1",
+                  layout: defaultLayout,
+                  pageOrder: 0,
+                  slots: [],
+                },
+              ],
             },
           });
           const newBinder =
-            createData?.saveBinderPagesAndSlots ??
-            createData?.binder ??
-            null;
+            createData?.saveBinderPagesAndSlots ?? createData?.binder ?? null;
           pages = Array.isArray(newBinder?.pages) ? newBinder.pages : [];
         } catch (createErr) {
           log("[Binder/addCard] auto-create page failed:", createErr?.message);
@@ -628,8 +698,11 @@ export default function useBinderActions() {
       const p = pages[Number(pageIndex) || 0];
       if (!p?.id) throw new Error("Unable to resolve pageId from binder cache");
       pid = sid(p.id);
-      pos0 =
-        isFiniteNum(slotIndex) ? Number(slotIndex) : Array.isArray(p.slots) ? p.slots.length : 0;
+      pos0 = isFiniteNum(slotIndex)
+        ? Number(slotIndex)
+        : Array.isArray(p.slots)
+          ? p.slots.length
+          : 0;
     }
     const pos1 = Number(pos0) + 1;
 
@@ -645,9 +718,33 @@ export default function useBinderActions() {
     };
     log("[Binder/addCard fast] vars:", fastVars);
     try {
+      // No per-card refetchQueries: when several cards are added in a row, Apollo
+      // dedupes identical in-flight refetches and the result written to the cache
+      // predates the later cards. Instead, append the returned slot to the page's
+      // cached slots list so the UI updates immediately; callers do one refetch
+      // after a batch (see DEC-0015).
       const { data } = await addCardMut({
         variables: fastVars,
-        refetchQueries: bId ? [{ query: BINDER_QUERY, variables: { id: bId } }] : undefined,
+        update(cache, { data: res }) {
+          const slot = res?.addCardToBinder;
+          if (!slot?.id) return;
+          const slotRef = cache.identify(slot);
+          const pageRef = cache.identify({
+            __typename: "BinderPageType",
+            id: pid,
+          });
+          if (!slotRef || !pageRef) return;
+          cache.modify({
+            id: pageRef,
+            fields: {
+              slots(existing = [], { readField, toReference }) {
+                if (existing.some((s) => readField("id", s) === slot.id))
+                  return existing;
+                return [...existing, toReference(slotRef)];
+              },
+            },
+          });
+        },
       });
       const added = data?.addCardToBinder ?? null;
       log("[Binder/addCard fast] ok:", !!added);
@@ -661,14 +758,17 @@ export default function useBinderActions() {
         bId ||
         (() => {
           try {
-            const mine = apollo.readQuery({ query: MY_BINDERS_QUERY })?.myBinders || [];
+            const mine =
+              apollo.readQuery({ query: MY_BINDERS_QUERY })?.myBinders || [];
             for (const b of mine) {
               try {
                 const cached = apollo.readQuery({
                   query: BINDER_QUERY,
                   variables: { id: sid(b.id) },
                 });
-                const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
+                const pages = Array.isArray(cached?.binder?.pages)
+                  ? cached.binder.pages
+                  : [];
                 if (pages.some((pg) => sid(pg?.id) === pid)) return sid(b.id);
               } catch {}
             }
@@ -696,12 +796,17 @@ export default function useBinderActions() {
       const pagesPayload = buildPagesPayload(cachedBinder, patch);
 
       log("[Binder/addCard fallback] binderId:", binderIdToUse);
-      log("[Binder/addCard fallback] payload summary:", summarizePagesPayload(pagesPayload));
+      log(
+        "[Binder/addCard fallback] payload summary:",
+        summarizePagesPayload(pagesPayload),
+      );
 
       try {
+        // The response returns the full binder (pages + slots), which Apollo writes
+        // straight into the normalized cache. A per-card refetch here would race
+        // the same way as the fast path, so it's left to the caller (DEC-0015).
         const { data } = await savePagesMut({
           variables: { binderId: binderIdToUse, pages: pagesPayload },
-          refetchQueries: [{ query: BINDER_QUERY, variables: { id: binderIdToUse } }],
         });
         const ok = data?.saveBinderPagesAndSlots ?? data?.binder ?? null;
         log("[Binder/addCard fallback] ok:", !!ok);
@@ -724,18 +829,26 @@ export default function useBinderActions() {
    */
   async function moveSlot({ binderId, fromPage, fromSlot, toPage, toSlot }) {
     const bId = sid(binderId);
-    const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id: bId } });
-    const pages = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
+    const cached = apollo.readQuery({
+      query: BINDER_QUERY,
+      variables: { id: bId },
+    });
+    const pages = Array.isArray(cached?.binder?.pages)
+      ? cached.binder.pages
+      : [];
 
-    const fromPgIdx   = Number(fromPage) || 0;
-    const toPgIdx     = Number(toPage)   || 0;
+    const fromPgIdx = Number(fromPage) || 0;
+    const toPgIdx = Number(toPage) || 0;
     const fromSlotIdx = Number(fromSlot) || 0;
 
     const fromPg = pages[fromPgIdx];
-    const toPg   = pages[toPgIdx];
-    if (!fromPg || !toPg) throw new Error("Unable to resolve source or destination page");
+    const toPg = pages[toPgIdx];
+    if (!fromPg || !toPg)
+      throw new Error("Unable to resolve source or destination page");
 
-    const slotToMove = Array.isArray(fromPg?.slots) ? fromPg.slots[fromSlotIdx] : null;
+    const slotToMove = Array.isArray(fromPg?.slots)
+      ? fromPg.slots[fromSlotIdx]
+      : null;
     if (!slotToMove) throw new Error("Unable to resolve source slot");
 
     const cardId = slotCardId(slotToMove);
@@ -749,10 +862,10 @@ export default function useBinderActions() {
         return ao - bo;
       })
       .map((p, idx) => {
-        const layout   = p?.layout || "pocket-9";
+        const layout = p?.layout || "pocket-9";
         const capacity = CAPACITY[layout] ?? 9;
-        const isFrom   = idx === fromPgIdx;
-        const isTo     = idx === toPgIdx;
+        const isFrom = idx === fromPgIdx;
+        const isTo = idx === toPgIdx;
 
         let slots = (Array.isArray(p?.slots) ? p.slots : [])
           .filter(Boolean)
@@ -760,7 +873,10 @@ export default function useBinderActions() {
           .map((s, i) => ({
             ...(s?.id ? { id: sid(s.id) } : {}),
             cardId: sid(slotCardId(s) || ""),
-            position: Number.isFinite(s?.position) && Number(s.position) > 0 ? Number(s.position) : i + 1,
+            position:
+              Number.isFinite(s?.position) && Number(s.position) > 0
+                ? Number(s.position)
+                : i + 1,
             quantity: isFiniteNum(s?.quantity) ? Number(s.quantity) : 1,
             ...(s?.notes ? { notes: s.notes } : {}),
           }));
@@ -769,7 +885,9 @@ export default function useBinderActions() {
           slots.push({
             cardId: sid(cardId),
             position: Number(toSlot) + 1,
-            quantity: isFiniteNum(slotToMove?.quantity) ? Number(slotToMove.quantity) : 1,
+            quantity: isFiniteNum(slotToMove?.quantity)
+              ? Number(slotToMove.quantity)
+              : 1,
             ...(slotToMove?.notes ? { notes: slotToMove.notes } : {}),
           });
         }
@@ -783,7 +901,10 @@ export default function useBinderActions() {
         };
       });
 
-    log("[Binder/moveSlot] payload summary:", summarizePagesPayload(pagesPayload));
+    log(
+      "[Binder/moveSlot] payload summary:",
+      summarizePagesPayload(pagesPayload),
+    );
     try {
       await savePagesMut({
         variables: { binderId: bId, pages: pagesPayload },
@@ -791,7 +912,13 @@ export default function useBinderActions() {
       });
       return true;
     } catch (e) {
-      logError("Binder/moveSlot", e, { binderId: bId, fromPage, fromSlot, toPage, toSlot });
+      logError("Binder/moveSlot", e, {
+        binderId: bId,
+        fromPage,
+        fromSlot,
+        toPage,
+        toSlot,
+      });
       throw e;
     }
   }
@@ -802,12 +929,17 @@ export default function useBinderActions() {
    * the complete pages payload with the target slot omitted, then call saveBinderPagesAndSlots.
    */
   async function removeSlot({ binderId, pageIndex, slotIndex }) {
-    const bId     = sid(binderId);
-    const pgIdx   = Number(pageIndex) || 0;
+    const bId = sid(binderId);
+    const pgIdx = Number(pageIndex) || 0;
     const slotIdx = Number(slotIndex) || 0;
 
-    const cached = apollo.readQuery({ query: BINDER_QUERY, variables: { id: bId } });
-    const pages  = Array.isArray(cached?.binder?.pages) ? cached.binder.pages : [];
+    const cached = apollo.readQuery({
+      query: BINDER_QUERY,
+      variables: { id: bId },
+    });
+    const pages = Array.isArray(cached?.binder?.pages)
+      ? cached.binder.pages
+      : [];
 
     const pagesPayload = pages
       .slice()
@@ -817,7 +949,7 @@ export default function useBinderActions() {
         return ao - bo;
       })
       .map((p, idx) => {
-        const layout   = p?.layout || "pocket-9";
+        const layout = p?.layout || "pocket-9";
         const capacity = CAPACITY[layout] ?? 9;
         const isTarget = idx === pgIdx;
 
@@ -827,7 +959,10 @@ export default function useBinderActions() {
           .map((s, i) => ({
             ...(s?.id ? { id: sid(s.id) } : {}),
             cardId: sid(slotCardId(s) || ""),
-            position: Number.isFinite(s?.position) && Number(s.position) > 0 ? Number(s.position) : i + 1,
+            position:
+              Number.isFinite(s?.position) && Number(s.position) > 0
+                ? Number(s.position)
+                : i + 1,
             quantity: isFiniteNum(s?.quantity) ? Number(s.quantity) : 1,
             ...(s?.notes ? { notes: s.notes } : {}),
           }));
@@ -841,7 +976,10 @@ export default function useBinderActions() {
         };
       });
 
-    log("[Binder/removeSlot] payload summary:", summarizePagesPayload(pagesPayload));
+    log(
+      "[Binder/removeSlot] payload summary:",
+      summarizePagesPayload(pagesPayload),
+    );
     try {
       await savePagesMut({
         variables: { binderId: bId, pages: pagesPayload },
@@ -867,7 +1005,3 @@ export default function useBinderActions() {
     removeSlot,
   };
 }
-
-
-
-

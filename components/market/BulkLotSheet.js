@@ -27,6 +27,7 @@ import { useRouter } from "expo-router";
 import { useApolloClient, useMutation } from "@apollo/client";
 import * as ImagePicker from "expo-image-picker";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 import {
   MyCollectionForListingDocument,
   MyMarketListingsDocument,
@@ -193,15 +194,7 @@ function TrackedPicker({ collection, loading, selected, onChange }) {
                 onPress={() => toggle(entry)}
                 style={[styles.cardTile, picked && styles.cardTilePicked]}
               >
-                {img ? (
-                  <Image source={{ uri: img }} style={styles.cardImage} />
-                ) : (
-                  <View style={[styles.cardImage, styles.cardImageFallback]}>
-                    <Text style={styles.cardFallbackText} numberOfLines={2}>
-                      {entry.card?.name ?? entry.cardId}
-                    </Text>
-                  </View>
-                )}
+                <CardImage uri={img} name={entry.card?.name} cardId={entry.cardId} style={styles.cardImage} resizeMode="cover" />
                 {picked && (
                   <View style={styles.cardPickedOverlay}>
                     <Text style={styles.cardPickedCheck}>✓</Text>
@@ -217,9 +210,7 @@ function TrackedPicker({ collection, loading, selected, onChange }) {
         <View style={styles.selectedList}>
           {selected.map((s) => (
             <View key={s.key} style={styles.selectedRow}>
-              {s.image
-                ? <Image source={{ uri: s.image }} style={styles.selectedThumb} />
-                : <View style={styles.selectedThumb} />}
+              <CardImage uri={s.image} name={s.name} cardId={s.cardId} style={styles.selectedThumb} resizeMode="cover" />
               <Text style={styles.selectedName} numberOfLines={1}>{s.name}</Text>
               {s.condition
                 ? <Text style={styles.selectedMeta}>{s.condition}</Text>

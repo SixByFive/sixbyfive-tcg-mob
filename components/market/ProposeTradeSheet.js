@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -15,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useApolloClient, useMutation } from "@apollo/client";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 import {
   MyCollectionForTradeDocument,
   MyWalletDocument,
@@ -39,7 +39,7 @@ function CollectionRow({ entry, selected, onToggle }) {
       style={[styles.colRow, isSelected && styles.colRowSelected]}
     >
       <View style={styles.colThumb}>
-        {img && <Image source={{ uri: img }} style={StyleSheet.absoluteFill} resizeMode="contain" />}
+        <CardImage uri={img} name={card.name} cardId={entry.cardId} style={StyleSheet.absoluteFill} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.colName} numberOfLines={1}>{card.name || entry.cardId}</Text>
@@ -216,9 +216,7 @@ export default function ProposeTradeSheet({ listing, visible, onClose }) {
                 <Text style={styles.summaryLabel}>They send you</Text>
                 <View style={styles.summaryCard}>
                   <View style={styles.summaryThumb}>
-                    {imageUrl && (
-                      <Image source={{ uri: imageUrl }} style={StyleSheet.absoluteFill} resizeMode="contain" />
-                    )}
+                    <CardImage uri={imageUrl} name={info.name} cardId={info.id || listing.cardId} style={StyleSheet.absoluteFill} />
                   </View>
                   <Text style={styles.summaryCardName} numberOfLines={2}>
                     {info.name || listing.cardId || "Card"}
@@ -248,9 +246,7 @@ export default function ProposeTradeSheet({ listing, visible, onClose }) {
                   <View style={styles.selectedPills}>
                     {[...selected.values()].map((e) => (
                       <Pressable key={e.id} onPress={() => toggleEntry(e)} style={styles.selectedPill}>
-                        {e.card?.images?.small && (
-                          <Image source={{ uri: e.card.images.small }} style={styles.pillThumb} resizeMode="contain" />
-                        )}
+                        <CardImage uri={e.card?.images?.small} name={e.card?.name} cardId={e.cardId} style={styles.pillThumb} />
                         <Text style={styles.pillName} numberOfLines={1}>
                           {e.card?.name || e.cardId}
                         </Text>

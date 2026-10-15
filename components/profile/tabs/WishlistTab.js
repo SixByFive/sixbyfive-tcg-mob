@@ -30,6 +30,7 @@ import {
   View,
 } from "react-native";
 import { COLORS } from "../../../theme/colors";
+import CardImageFallback from "../../common/CardImageFallback";
 
 import { gql, useApolloClient, useLazyQuery, useQuery } from "@apollo/client";
 import { CardByIdDocument } from "../../../graphql/documents";
@@ -244,19 +245,26 @@ function buildImageCandidates(cardish) {
 }
 
 // CHANGED: add FallbackImage for grid tiles (same pattern as CardsTab)
-function FallbackImage({ sources, style }) {
+function FallbackImage({ sources, style, name, cardId }) {
   const [idx, setIdx] = useState(0);
+  const [exhausted, setExhausted] = useState(false);
   const list = Array.isArray(sources) ? sources : [];
   const uri = list[idx] || null;
 
-  if (!uri) return <View style={[style, { backgroundColor: COLORS.alt }]} />;
+  if (!uri || exhausted) {
+    return (
+      <View style={[style, { backgroundColor: COLORS.alt, overflow: "hidden" }]}>
+        <CardImageFallback name={name} cardId={cardId} />
+      </View>
+    );
+  }
 
   return (
     <Image
       source={{ uri }}
       style={style}
       resizeMode="cover"
-      onError={() => setIdx((i) => (i + 1 < list.length ? i + 1 : i))}
+      onError={() => (idx + 1 < list.length ? setIdx(idx + 1) : setExhausted(true))}
     />
   );
 }
@@ -973,6 +981,8 @@ export default function WishlistTab({
                   <FallbackImage
                     sources={candidates}
                     style={styles.gridThumb}
+                    name={item.name}
+                    cardId={item.id}
                   />
 
                   {/* Status pill (top-left) - EXACT look/feel */}

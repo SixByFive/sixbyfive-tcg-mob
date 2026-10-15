@@ -2,7 +2,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -16,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { gql, useApolloClient, useMutation } from "@apollo/client";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 import {
   MyCollectionForListingDocument,
   PriceSuggestionDocument,
@@ -288,7 +288,7 @@ export default function CreateListingSheet({ visible, onClose, onCreated }) {
                   return (
                     <Pressable key={`${entry.cardId}-${i}`} onPress={() => selectCard(entry)} style={styles.pickRow}>
                       <View style={styles.pickThumb}>
-                        {img && <Image source={{ uri: img }} style={StyleSheet.absoluteFill} resizeMode="contain" />}
+                        <CardImage uri={img} name={c?.name} cardId={entry.cardId} style={StyleSheet.absoluteFill} />
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.pickName} numberOfLines={1}>{c?.name || entry.cardId}</Text>
@@ -311,7 +311,7 @@ export default function CreateListingSheet({ visible, onClose, onCreated }) {
             {/* Card preview */}
             <View style={styles.previewRow}>
               <View style={styles.previewThumb}>
-                {imageUrl && <Image source={{ uri: imageUrl }} style={styles.previewImg} resizeMode="contain" />}
+                <CardImage uri={imageUrl} name={card?.name} cardId={selectedEntry.cardId} style={styles.previewImg} />
               </View>
               <View style={{ flex: 1, gap: 3 }}>
                 <Text style={styles.previewName}>{card?.name || selectedEntry.cardId}</Text>

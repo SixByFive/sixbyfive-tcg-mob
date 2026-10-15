@@ -3,7 +3,6 @@ import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo, useState } from "react";
 import {
     FlatList,
-    Image,
     Modal,
     Pressable,
     StyleSheet,
@@ -12,6 +11,7 @@ import {
     View,
 } from "react-native";
 import { COLORS } from "../../../theme/colors";
+import CardImage from "../../common/CardImage";
 
 const CARD_RATIO = 63 / 88;
 
@@ -98,11 +98,7 @@ export default function ShowcaseEditorSheet({
             <View style={styles.selGrid}>
               {selectedItems.map((it, i) => (
                 <View key={`${it.id}-${i}`} style={styles.selCard}>
-                  {it?.image ? (
-                    <Image source={{ uri: it.image }} style={styles.selThumb} resizeMode="cover" />
-                  ) : (
-                    <View style={styles.selThumb} />
-                  )}
+                  <CardImage uri={it?.image} name={it?.name} cardId={it?.id} style={styles.selThumb} resizeMode="cover" />
                   <View style={styles.selTools}>
                     <Pressable onPress={() => move(i, "left")} hitSlop={8} style={styles.toolBtn}>
                       <Ionicons name="chevron-back" size={14} color={COLORS.text} />
@@ -141,11 +137,7 @@ export default function ShowcaseEditorSheet({
             const disabled = !picked && selectedIds.length >= max;
             return (
               <View style={styles.row}>
-                {item?.image ? (
-                  <Image source={{ uri: item.image }} style={styles.rowThumb} />
-                ) : (
-                  <View style={styles.rowThumb} />
-                )}
+                <CardImage uri={item?.image} name={item?.name} cardId={item?.id} style={styles.rowThumb} resizeMode="cover" />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rowTitle} numberOfLines={1}>{item.name}</Text>
                   <Text style={styles.rowSub} numberOfLines={1}>

@@ -1,8 +1,9 @@
 // components/market/MyListingRow.js
 
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 
 const STATUS_COLOR = {
   ACTIVE:        "#10b981",
@@ -21,9 +22,7 @@ export default function MyListingRow({ item, onEdit, onRemove, onSubmitProof }) 
   return (
     <View style={styles.row}>
       <View style={styles.thumbWrap}>
-        {imageUrl && (
-          <Image source={{ uri: imageUrl }} resizeMode="contain" style={StyleSheet.absoluteFill} />
-        )}
+        <CardImage uri={imageUrl} name={info.name} cardId={info.id || item?.cardId} style={StyleSheet.absoluteFill} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.rowTitle} numberOfLines={1}>

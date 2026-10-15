@@ -9,9 +9,10 @@
 
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 import { getBestPrice, normalizeImageUrl } from "../../utils/cards";
+import CardImage from "../common/CardImage";
 import AvgPriceBlock from "./AvgPriceBlock";
 
 /* ---------- local helpers for robust fallback ---------- */
@@ -154,13 +155,12 @@ function CardTileInner({
       android_ripple={{ color: "#00000022" }}
     >
       <View style={styles.cardImageWrap}>
-        {imageUri ? (
-          <Image
-            source={{ uri: imageUri }}
-            style={styles.cardImage}
-            resizeMode="contain"
-          />
-        ) : null}
+        <CardImage
+          uri={imageUri}
+          name={item?.name}
+          cardId={item?.id}
+          style={styles.cardImage}
+        />
       </View>
 
       <View style={styles.cardInfo}>

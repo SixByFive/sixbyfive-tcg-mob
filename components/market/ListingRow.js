@@ -1,8 +1,9 @@
 // components/market/ListingRow.js
 
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 
 export default function ListingRow({ item, onPress }) {
   const info = item?.cardInfo || {};
@@ -15,11 +16,7 @@ export default function ListingRow({ item, onPress }) {
   return (
     <Pressable style={styles.card} onPress={onPress}>
       <View style={styles.imageWrap}>
-        {imageUrl ? (
-          <Image source={{ uri: imageUrl }} resizeMode="contain" style={styles.image} />
-        ) : (
-          <View style={styles.imagePlaceholder} />
-        )}
+        <CardImage uri={imageUrl} name={info.name} cardId={info.id || item?.cardId} style={styles.image} />
         <View style={styles.priceBadge}>
           <Text style={styles.priceText}>
             {item?.price ? `£${Number(item.price).toFixed(2)}` : "Trade"}

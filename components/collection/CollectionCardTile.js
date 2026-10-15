@@ -2,9 +2,10 @@
 
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
 import { normalizeImageUrl } from "../../utils/cards";
+import CardImage from "../common/CardImage";
 
 /* =================== Price helpers (provider-agnostic) =================== */
 
@@ -168,13 +169,12 @@ export default function CollectionCardTile({
     <View style={styles.card}>
       <Pressable onPress={onView} android_ripple={{ color: "#00000022" }}>
         <View style={styles.cardImageWrap}>
-          {imageUri ? (
-            <Image
-              source={{ uri: imageUri }}
-              style={styles.cardImage}
-              resizeMode="contain"
-            />
-          ) : null}
+          <CardImage
+            uri={imageUri}
+            name={item?.name}
+            cardId={item?.id}
+            style={styles.cardImage}
+          />
 
           {/* Owned quantity pill */}
           <View style={styles.qtyPill}>

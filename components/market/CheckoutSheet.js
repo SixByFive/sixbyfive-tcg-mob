@@ -11,7 +11,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -28,6 +27,7 @@ import { useMutation, useQuery } from "@apollo/client";
 import { useRouter } from "expo-router";
 import { CardField, useConfirmPayment } from "@stripe/stripe-react-native";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 import {
   WalletBalanceDocument,
   CreateCartOrdersDocument,
@@ -294,15 +294,7 @@ export default function CheckoutSheet({ visible, listing, onClose, onSuccess }) 
                 <View style={styles.section}>
                   <SectionLabel>Order summary</SectionLabel>
                   <View style={styles.listingRow}>
-                    {cardImg ? (
-                      <Image
-                        source={{ uri: cardImg }}
-                        style={styles.cardThumb}
-                        resizeMode="contain"
-                      />
-                    ) : (
-                      <View style={[styles.cardThumb, styles.cardThumbFallback]} />
-                    )}
+                    <CardImage uri={cardImg} name={cardName} cardId={listing?.cardId} style={styles.cardThumb} />
                     <View style={{ flex: 1, gap: 3 }}>
                       <Text style={styles.cardName} numberOfLines={2}>{cardName}</Text>
                       {setName ? <Text style={styles.cardMeta}>{setName}</Text> : null}

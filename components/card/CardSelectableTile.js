@@ -1,7 +1,8 @@
 // components/cards/CardSelectableTile.js
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 
 export default function CardSelectableTile({
   card,
@@ -26,11 +27,13 @@ export default function CardSelectableTile({
     >
       {/* Thumbnail */}
       <View style={styles.thumbWrap}>
-        {card?.image ? (
-          <Image source={{ uri: card.image }} style={styles.thumb} resizeMode="cover" />
-        ) : (
-          <View style={[styles.thumb, styles.thumbPlaceholder]} />
-        )}
+        <CardImage
+          uri={card?.image}
+          name={card?.name}
+          cardId={card?.id}
+          style={styles.thumb}
+          resizeMode="cover"
+        />
 
         {/* “Not owned” ribbon (Search) */}
         {notOwned && (

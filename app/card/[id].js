@@ -362,7 +362,12 @@ export default function CardDetailsScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          <CardImageBlock imageUri={primaryImage} key={primaryImage || "noimg"} />
+          <CardImageBlock
+            imageUri={primaryImage}
+            name={card.name}
+            cardId={card.id}
+            key={primaryImage || "noimg"}
+          />
 
           <InfoCard
             name={card.name}

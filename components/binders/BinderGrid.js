@@ -25,6 +25,7 @@ import {
   View,
 } from "react-native";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 
 import useBinderActions from "../../hooks/useBinderActions";
 import useToast from "../../hooks/useToast";
@@ -489,12 +490,13 @@ export default function BinderGrid({
                       isSource(idx) && styles.cellDraggingSource,
                     ]}
                   >
-                    {slot?.image ? (
+                    {slot?.image || slot?.id ? (
                       <>
-                        <Image
-                          source={{ uri: slot.image }}
+                        <CardImage
+                          uri={slot.image}
+                          name={slot.label}
+                          cardId={slot.id}
                           style={[styles.thumb, isSource(idx) && styles.thumbDraggingSource]}
-                          resizeMode="contain"
                         />
                         {showOverlay && (
                           <View style={styles.badge}>

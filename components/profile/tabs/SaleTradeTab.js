@@ -1,7 +1,8 @@
 // components/profile/tabs/SaleTradeTab.js
 import React, { useMemo, useState } from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../../theme/colors";
+import CardImage from "../../common/CardImage";
 
 const FILTERS = [
   { key: "all",     label: "All" },
@@ -14,16 +15,10 @@ function isBulk(item) {
   return k === "BULK_TRACKED" || k === "BULK_RANDOM";
 }
 
-function MiniCard({ title = "Card", image, badge, onPress }) {
+function MiniCard({ title = "Card", image, cardId, badge, onPress }) {
   return (
     <Pressable onPress={onPress} style={styles.miniCard}>
-      {image ? (
-        <Image source={{ uri: image }} style={styles.miniThumb} />
-      ) : (
-        <View style={[styles.miniThumb, styles.miniThumbFallback]}>
-          <Text style={styles.miniThumbText} numberOfLines={2}>{title}</Text>
-        </View>
-      )}
+      <CardImage uri={image} name={title} cardId={cardId} style={styles.miniThumb} resizeMode="cover" />
       <Text style={styles.miniTitle} numberOfLines={1}>{title}</Text>
       {badge ? (
         <View style={styles.badge}>
@@ -91,6 +86,7 @@ export default function SaleTradeTab({
               key={String(c.id)}
               title={c.name || "Card"}
               image={c.image}
+              cardId={c.cardId || c.id}
               badge={isBulk(c) ? (c.listingKind === "BULK_RANDOM" ? "Random" : "Bulk") : null}
               onPress={() => onOpenCard?.(c)}
             />

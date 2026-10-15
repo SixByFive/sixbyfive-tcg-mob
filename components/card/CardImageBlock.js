@@ -1,19 +1,14 @@
 // components/card/CardImageBlock.js
 
 import React from "react";
-import { Image, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 
-export default function CardImageBlock({ imageUri }) {
+export default function CardImageBlock({ imageUri, name, cardId }) {
   return (
     <View style={styles.imageWrap}>
-      {imageUri ? (
-        <Image source={{ uri: imageUri }} style={styles.image} resizeMode="contain" />
-      ) : (
-        <View style={[styles.image, { alignItems: "center", justifyContent: "center" }]}>
-          <Text style={{ color: COLORS.textMuted }}>No image</Text>
-        </View>
-      )}
+      <CardImage uri={imageUri} name={name} cardId={cardId} style={styles.image} />
     </View>
   );
 }

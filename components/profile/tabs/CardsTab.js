@@ -29,6 +29,7 @@ import {
   View,
 } from "react-native";
 import { COLORS } from "../../../theme/colors";
+import CardImageFallback from "../../common/CardImageFallback";
 import inferSetEra from "../../../utils/setEra.native";
 import {
   parseCardId,
@@ -214,19 +215,26 @@ function buildImageCandidates(card) {
   });
 }
 
-function FallbackImage({ sources, style }) {
+function FallbackImage({ sources, style, name, cardId }) {
   const [idx, setIdx] = useState(0);
+  const [exhausted, setExhausted] = useState(false);
   const list = Array.isArray(sources) ? sources : [];
   const uri = list[idx] || null;
 
-  if (!uri) return <View style={[style, { backgroundColor: COLORS.alt }]} />;
+  if (!uri || exhausted) {
+    return (
+      <View style={[style, { backgroundColor: COLORS.alt, overflow: "hidden" }]}>
+        <CardImageFallback name={name} cardId={cardId} />
+      </View>
+    );
+  }
 
   return (
     <Image
       source={{ uri }}
       style={style}
       resizeMode="cover"
-      onError={() => setIdx((i) => (i + 1 < list.length ? i + 1 : i))}
+      onError={() => (idx + 1 < list.length ? setIdx(idx + 1) : setExhausted(true))}
     />
   );
 }
@@ -847,7 +855,7 @@ export default function CardsTab({
                 style={styles.gridItem}
                 android_ripple={{ color: "#00000022" }}
               >
-                <FallbackImage sources={candidates} style={styles.gridThumb} />
+                <FallbackImage sources={candidates} style={styles.gridThumb} name={c.name} cardId={c.id} />
 
                 <Text style={styles.gridCaption} numberOfLines={1}>
                   {c.name || "Card"}

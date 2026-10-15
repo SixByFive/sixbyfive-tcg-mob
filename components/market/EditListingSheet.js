@@ -6,7 +6,6 @@
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -20,6 +19,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMutation } from "@apollo/client";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 import {
   UpdateListingDocument,
   MyMarketListingsDocument,
@@ -149,11 +149,7 @@ export default function EditListingSheet({ visible, listing, onClose, onSaved })
             {/* ── Card summary ────────────────────────────────────────── */}
             <View style={styles.section}>
               <View style={styles.cardRow}>
-                {cardImg ? (
-                  <Image source={{ uri: cardImg }} style={styles.thumb} resizeMode="contain" />
-                ) : (
-                  <View style={[styles.thumb, styles.thumbFallback]} />
-                )}
+                <CardImage uri={cardImg} name={cardName} cardId={listing?.cardId} style={styles.thumb} />
                 <View style={{ flex: 1, gap: 3 }}>
                   <Text style={styles.cardName} numberOfLines={2}>{cardName}</Text>
                   {setName ? <Text style={styles.cardMeta}>{setName}</Text> : null}

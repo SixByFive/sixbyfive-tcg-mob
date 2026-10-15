@@ -1,7 +1,8 @@
 // components/market/OrderRow.js
 import React from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { COLORS } from "../../theme/colors";
+import CardImage from "../common/CardImage";
 
 const FULFILMENT_META = {
   pending:           { label: "Pending",           color: "#eab308" },
@@ -38,11 +39,7 @@ export default function OrderRow({ order, myUserId, onPress }) {
 
   return (
     <Pressable style={styles.row} onPress={onPress}>
-      {cardInfo?.imageSmall ? (
-        <Image source={{ uri: cardInfo.imageSmall }} style={styles.image} resizeMode="contain" />
-      ) : (
-        <View style={[styles.image, { backgroundColor: COLORS.alt }]} />
-      )}
+      <CardImage uri={cardInfo?.imageSmall} name={cardInfo?.name} cardId={cardInfo?.id} style={styles.image} />
 
       <View style={{ flex: 1, gap: 5 }}>
         <View style={styles.topRow}>
