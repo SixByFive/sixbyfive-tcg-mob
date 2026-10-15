@@ -86,8 +86,6 @@ const USER_PROFILE_PUBLIC = gql`
       avatar
       favouritePokemon
       status
-      createdAt
-      updatedAt
 
       user {
         id

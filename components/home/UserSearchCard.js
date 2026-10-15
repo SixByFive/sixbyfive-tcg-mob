@@ -57,8 +57,9 @@ export default function UserSearchCard({
     const list = data?.searchUsers ?? [];
     return list.map((u) => ({
       id: u.id ?? u.userId ?? String(u.user?.id ?? ""),
-      username: u.user?.username ?? "",
-      displayName: u.user?.username ?? "",
+      // searchUsers returns a flat PublicUser; keep u.user as a fallback for profile-shaped rows
+      username: u.username ?? u.user?.username ?? "",
+      displayName: u.username ?? u.user?.username ?? "",
       avatarUrl: u.user?.avatar || u.avatar || undefined,
       isFollowing: false,
     }));

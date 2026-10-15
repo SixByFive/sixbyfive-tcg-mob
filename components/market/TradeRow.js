@@ -22,12 +22,9 @@ function fmtDate(d) {
 export default function TradeRow({ trade, myUserId, direction, onMessage, onRespond, onCancel, onShip }) {
   const statusMeta = STATUS_META[trade.status] || { label: trade.status, color: COLORS.textMuted };
 
-  // Cards belonging to each party
-  const myParty = myUserId === trade.partyAId ? "A" : "B";
-  const theirParty = myParty === "A" ? "B" : "A";
-
-  const myCards = (trade.cards || []).filter((c) => c.party === myParty);
-  const theirCards = (trade.cards || []).filter((c) => c.party === theirParty);
+  // Cards belonging to each party (TradeCard.userId is the owner)
+  const myCards = (trade.cards || []).filter((c) => String(c.userId) === String(myUserId));
+  const theirCards = (trade.cards || []).filter((c) => String(c.userId) !== String(myUserId));
 
   const myCardCount = myCards.length;
   const theirCardCount = theirCards.length;

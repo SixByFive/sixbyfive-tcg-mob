@@ -212,8 +212,8 @@ const VERIFY_2FA = gql`
 `;
 
 const DISABLE_2FA = gql`
-  mutation DisableTwoFactor {
-    disableTwoFactor
+  mutation DisableTwoFactor($code: String!) {
+    disableTwoFactor(code: $code)
   }
 `;
 
@@ -912,6 +912,7 @@ export default function Settings() {
     try {
       const { data } = await client.mutate({
         mutation: DISABLE_2FA,
+        variables: { code: twoFA.verifyCode },
         fetchPolicy: "no-cache",
       });
 
@@ -2115,13 +2116,24 @@ export default function Settings() {
               <Text style={[styles.inputLabel, { color: "#16a34a" }]}>
                 2FA is currently ENABLED on your account.
               </Text>
+              <Text style={[styles.inputLabel, { marginTop: 10 }]}>
+                Enter your current 6-digit code to disable
+              </Text>
+              <TextInput
+                value={twoFA.verifyCode}
+                onChangeText={(t) => setTwoFA((s) => ({ ...s, verifyCode: t }))}
+                style={styles.input}
+                maxLength={6}
+                inputMode="numeric"
+                keyboardType="number-pad"
+              />
               <Pressable
                 onPress={disable2FA}
-                disabled={twoFA.loading}
+                disabled={twoFA.loading || !twoFA.verifyCode}
                 style={[
                   styles.btn,
                   styles.btnWarning,
-                  twoFA.loading && styles.btnDisabled,
+                  (twoFA.loading || !twoFA.verifyCode) && styles.btnDisabled,
                 ]}
               >
                 <Text style={styles.btnWarningText}>

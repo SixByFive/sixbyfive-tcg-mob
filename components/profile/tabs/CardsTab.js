@@ -95,10 +95,10 @@ const MY_COLLECTION_MIN = gql`
 
 const Q_CARD_cardsearchCardById = gql`
   query CardById_cardsearch($id: ID!, $variant: String) {
-    cardsearchCardById(cardId: $id, variant: $variant) {
+    cardsearchCard(id: $id, variant: $variant) {
       id
       cardId
-      latestPrices(variant: $variant) {
+      latestPrices {
         provider
         currency
         gbp
@@ -114,16 +114,15 @@ const Q_CARD_cardsearchCardById = gql`
 `;
 
 const Q_ROOT_cardsearchPriceLatest = gql`
-  query PriceLatest_cardsearch($id: ID!, $variant: String) {
-    cardsearchPriceLatest(cardId: $id, variant: $variant) {
-      provider
-      currency
-      low
-      mid
-      high
-      market
-      updatedAt
+  query PriceRollups_cardsearch($id: ID!, $variant: String) {
+    cardsearchPriceRollups(cardId: $id, variant: $variant) {
       variant
+      currency
+      latest {
+        date
+        market
+        mid
+      }
     }
   }
 `;
@@ -568,7 +567,7 @@ export default function CardsTab({
             errorPolicy: "all",
           });
 
-          const card = data?.cardsearchCardById;
+          const card = data?.cardsearchCard;
           const lp = Array.isArray(card?.latestPrices) ? card.latestPrices : [];
           if (lp.length) {
             const normalized = normalizePricesArray(lp);
@@ -589,9 +588,20 @@ export default function CardsTab({
             errorPolicy: "all",
           });
 
-          const rows = Array.isArray(data?.cardsearchPriceLatest)
-            ? data.cardsearchPriceLatest
-            : [];
+          // PriceRollup nests the latest price; flatten to the row shape normalizePricesArray expects
+          const rows = (
+            Array.isArray(data?.cardsearchPriceRollups)
+              ? data.cardsearchPriceRollups
+              : []
+          )
+            .filter((r) => r?.latest)
+            .map((r) => ({
+              variant: r.variant,
+              currency: r.currency,
+              market: r.latest.market,
+              mid: r.latest.mid,
+              updatedAt: r.latest.date,
+            }));
           if (rows.length) {
             const normalized = normalizePricesArray(rows);
             const picked =

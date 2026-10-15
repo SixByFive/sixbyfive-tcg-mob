@@ -793,7 +793,7 @@ export const MyTradesDocument = gql`
       addressBSet
       trackingNumberA
       trackingNumberB
-      cards { cardId party quantity condition variation }
+      cards { cardId userId quantity condition variation }
     }
   }
 `;
@@ -1086,8 +1086,8 @@ export const ConfirmTradeReceivedDocument = gql`
 export const RaiseTradeDisputeDocument = gql`
   mutation RaiseTradeDispute($id: ID!, $reason: String!) {
     raiseTradeDispute(id: $id, reason: $reason) {
-      id
-      status
+      dispute { id status }
+      trade { id status }
     }
   }
 `;
