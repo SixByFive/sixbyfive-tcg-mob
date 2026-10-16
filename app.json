@@ -69,7 +69,6 @@
           "backgroundColor": "#000000"
         }
       ],
-      "react-native-vision-camera",
       "expo-asset"
     ],
     "experiments": {
